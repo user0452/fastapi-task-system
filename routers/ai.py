@@ -8,7 +8,7 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 @router.post("/command")
-def ai_command(command: AICommandRequest, authorization: str = Header(None)):
+def ai_command(command: AICommandRequest, authorization: str = Header(None, alias="Authorization")):
     user = get_current_user(authorization)
     if user is None:
         return error(message="未登录", code=401)

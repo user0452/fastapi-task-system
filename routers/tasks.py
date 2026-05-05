@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Header
+from typing import Annotated
 from typing import Optional
 
 from models import TaskCreate, TaskUpdate
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
 @router.get("/tasks/{task_id}")
-def get_task(task_id: int, authorization: str = Header(None)):
+def get_task(task_id: int, authorization: str = Header(None, alias="Authorization")):
     conn = get_conn()
     cursor = conn.cursor()
     try:
@@ -39,7 +40,7 @@ def get_tasks(
     page: int = 1,
     size: int = 10,
     status: Optional[str] = None,
-    authorization: str = Header(None),
+    authorization: str = Header(None, alias="Authorization"),
 ):
     user = get_current_user(authorization)
     if user is None:
@@ -95,7 +96,7 @@ def get_tasks(
 
 
 @router.post("/tasks")
-def create_task(task: TaskCreate, authorization: str = Header(None)):
+def create_task(task: TaskCreate, authorization: str = Header(None, alias="Authorization")):
     user = get_current_user(authorization)
     if user is None:
         return error(message="未登录", code=401)
@@ -136,7 +137,7 @@ def create_task(task: TaskCreate, authorization: str = Header(None)):
 def update_task(
     task_id: int,
     task_data: TaskUpdate,
-    authorization: str = Header(None),
+    authorization: str = Header(None, alias="Authorization"),
 ):
     conn = get_conn()
     cursor = conn.cursor()
@@ -201,7 +202,7 @@ def update_task(
 
 
 @router.delete("/tasks/{task_id}")
-def delete_task(task_id: int, authorization: str = Header(None)):
+def delete_task(task_id: int, authorization: str = Header(None, alias="Authorization")):
     conn = get_conn()
     cursor = conn.cursor()
     try:

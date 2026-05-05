@@ -2,9 +2,13 @@ from datetime import datetime, timedelta
 from fastapi import Header
 from jose import jwt, JWTError
 from passlib.context import CryptContext
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
-SECRET_KEY = "your_secret_key"
-ALGORITHM = "HS256"
+SECRET_KEY = os.getenv("SECRET_KEY","dev_secret_key")
+ALGORITHM = os.getenv("ALGORITHM","HS256")
+ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "2"))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -35,7 +39,7 @@ def error(message="error", code: int = 400):
 
 def create_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(hours=2)
+    expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -49,16 +53,16 @@ def verify_token(token: str):
 
 
 def get_current_user(authorization: str = Header(None)):
-    print("authorization =", authorization)
+    print("收到的 authorization =", authorization)
 
     if authorization is None:
         return None
 
     token = authorization.replace("Bearer ", "")
-    print("token =", token)
+    print("解析出的 token =", token)
 
     payload = verify_token(token)
-    print("payload =", payload)
+    print("解析出的 payload =", payload)
 
     return payload
 
