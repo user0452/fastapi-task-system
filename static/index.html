@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>任务管理系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- 登录/注册页面 -->
+    <div id="auth-page" class="page">
+        <div class="auth-container">
+            <h1>任务管理系统</h1>
+            <div class="tabs">
+                <button class="tab active" data-tab="login">登录</button>
+                <button class="tab" data-tab="register">注册</button>
+            </div>
+
+            <!-- 登录表单 -->
+            <form id="login-form" class="form active">
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input type="text" id="login-username" required>
+                </div>
+                <div class="form-group">
+                    <label>密码</label>
+                    <input type="password" id="login-password" required>
+                </div>
+                <button type="submit" class="btn-primary">登录</button>
+            </form>
+
+            <!-- 注册表单 -->
+            <form id="register-form" class="form">
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input type="text" id="reg-username" required>
+                </div>
+                <div class="form-group">
+                    <label>密码</label>
+                    <input type="password" id="reg-password" required>
+                </div>
+                <div class="form-group">
+                    <label>确认密码</label>
+                    <input type="password" id="reg-confirm" required>
+                </div>
+                <button type="submit" class="btn-primary">注册</button>
+            </form>
+
+            <div id="auth-msg" class="message"></div>
+        </div>
+    </div>
+
+    <!-- 主页面 -->
+    <div id="main-page" class="page hidden">
+        <header>
+            <div class="header-left">
+                <h1>任务管理</h1>
+            </div>
+            <div class="header-right">
+                <span id="username-display"></span>
+                <button id="logout-btn" class="btn-secondary">退出</button>
+            </div>
+        </header>
+
+        <main>
+            <!-- AI 指令区 -->
+            <section class="ai-section">
+                <div class="ai-input-group">
+                    <input type="text" id="ai-input" placeholder="输入指令，如：创建任务：学习 Python">
+                    <button id="ai-btn" class="btn-accent">执行</button>
+                </div>
+                <div id="ai-result" class="ai-result hidden"></div>
+            </section>
+
+            <!-- 任务操作区 -->
+            <section class="task-controls">
+                <div class="filters">
+                    <select id="status-filter">
+                        <option value="">全部状态</option>
+                        <option value="todo">待办</option>
+                        <option value="doing">进行中</option>
+                        <option value="done">已完成</option>
+                    </select>
+                </div>
+                <button id="add-task-btn" class="btn-primary">+ 新建任务</button>
+            </section>
+
+            <!-- 任务列表 -->
+            <section class="task-list">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>标题</th>
+                            <th>描述</th>
+                            <th>状态</th>
+                            <th>优先级</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="task-tbody"></tbody>
+                </table>
+                <div id="empty-msg" class="empty-message hidden">暂无任务</div>
+            </section>
+
+            <!-- 分页 -->
+            <section class="pagination">
+                <button id="prev-page" class="btn-secondary" disabled>上一页</button>
+                <span id="page-info">第 1 页</span>
+                <button id="next-page" class="btn-secondary">下一页</button>
+            </section>
+        </main>
+    </div>
+
+    <!-- 任务编辑弹窗 -->
+    <div id="task-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">新建任务</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <form id="task-form">
+                <input type="hidden" id="task-id">
+                <div class="form-group">
+                    <label>标题</label>
+                    <input type="text" id="task-title" required>
+                </div>
+                <div class="form-group">
+                    <label>描述</label>
+                    <textarea id="task-desc" rows="3"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>状态</label>
+                        <select id="task-status">
+                            <option value="todo">待办</option>
+                            <option value="doing">进行中</option>
+                            <option value="done">已完成</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>优先级</label>
+                        <select id="task-priority">
+                            <option value="low">低</option>
+                            <option value="medium" selected>中</option>
+                            <option value="high">高</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary modal-close">取消</button>
+                    <button type="submit" class="btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 删除确认弹窗 -->
+    <div id="delete-modal" class="modal hidden">
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h2>确认删除</h2>
+                <button class="modal-close" id="delete-cancel-x">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>确定删除这个任务吗？</p>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn-secondary" id="delete-cancel">取消</button>
+                <button type="button" class="btn-danger" id="delete-confirm">删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 提示消息 -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

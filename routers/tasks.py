@@ -16,7 +16,7 @@ from utils import (
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
-@router.get("/tasks/{task_id}")
+@router.get("/{task_id}")
 def get_task(task_id: int, authorization: str = Header(None, alias="Authorization")):
     conn = get_conn()
     cursor = conn.cursor()
@@ -35,7 +35,7 @@ def get_task(task_id: int, authorization: str = Header(None, alias="Authorizatio
         conn.close()
 
 
-@router.get("/tasks")
+@router.get("")
 def get_tasks(
     page: int = 1,
     size: int = 10,
@@ -95,7 +95,7 @@ def get_tasks(
         conn.close()
 
 
-@router.post("/tasks")
+@router.post("")
 def create_task(task: TaskCreate, authorization: str = Header(None, alias="Authorization")):
     user = get_current_user(authorization)
     if user is None:
@@ -133,7 +133,7 @@ def create_task(task: TaskCreate, authorization: str = Header(None, alias="Autho
         conn.close()
 
 
-@router.put("/tasks/{task_id}")
+@router.put("/{task_id}")
 def update_task(
     task_id: int,
     task_data: TaskUpdate,
@@ -201,7 +201,7 @@ def update_task(
         conn.close()
 
 
-@router.delete("/tasks/{task_id}")
+@router.delete("/{task_id}")
 def delete_task(task_id: int, authorization: str = Header(None, alias="Authorization")):
     conn = get_conn()
     cursor = conn.cursor()
