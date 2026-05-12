@@ -8,6 +8,8 @@ wheels/
 .idea/
 .env
 .claude/
+seed.py
+data_manager.py
 # Virtual environments
 .venv
 
