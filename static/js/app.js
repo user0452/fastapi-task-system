@@ -8,7 +8,17 @@ async function api(url, options = {}) {
         ...options,
         headers: { ...headers, ...options.headers }
     });
-    return res.json();
+
+    const text = await res.text();
+    try {
+        return JSON.parse(text);
+    } catch {
+        return {
+            code: res.status || 500,
+            message: text || res.statusText || '请求失败',
+            data: null
+        };
+    }
 }
 
 // 状态

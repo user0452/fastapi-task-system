@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends
 
 from models import AICommandRequest
 from db import get_conn
@@ -8,8 +8,7 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 @router.post("/command")
-def ai_command(command: AICommandRequest, authorization: str = Header(None, alias="Authorization")):
-    user = get_current_user(authorization)
+def ai_command(command: AICommandRequest, user=Depends(get_current_user)):
     if user is None:
         return error(message="未登录", code=401)
 
