@@ -12,7 +12,7 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY","dev_secret_key")
 ALGORITHM = os.getenv("ALGORITHM","HS256")
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "2"))
-security = HTTPBearer(auto_error=False)
+security = HTTPBearer()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -55,21 +55,13 @@ def verify_token(token: str):
         return None
 
 
-def get_current_user(
-    authorization: Optional[str] = None,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-):
-    token = None
+def get_current_user(credentials:HTTPAuthorizationCredentials = Depends( security)):
+    token = credentials.credentials
 
-    if credentials is not None:
-        token = credentials.credentials
-    elif authorization:
-        token = authorization.replace("Bearer ", "")
-
-    if token is None:
-        return None
-
-    return verify_token(token)
+    payload = verify_token(token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="未登录或token无效")
+    return payload
 
 
 def require_current_user(

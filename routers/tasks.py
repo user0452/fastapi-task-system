@@ -37,9 +37,6 @@ def get_tasks(
     status: Optional[str] = None,
     user=Depends(get_current_user),
 ):
-    if user is None:
-        return error(message="未登录", code=401)
-
     if page <= 0 or size <= 0:
         return error(message="page或size参数不合法")
 
@@ -91,8 +88,6 @@ def get_tasks(
 
 @router.post("")
 def create_task(task: TaskCreate, user=Depends(get_current_user)):
-    if user is None:
-        return error(message="未登录", code=401)
 
     if not is_valid_status(task.status):
         return error(message="status参数不合法")
@@ -135,9 +130,6 @@ def update_task(
     conn = get_conn()
     cursor = conn.cursor()
     try:
-        if user is None:
-            return error(message="未登录", code=401)
-
         task, err = get_owned_task(cursor, task_id, user["id"])
         if err is not None:
             return err
@@ -198,9 +190,6 @@ def delete_task(task_id: int, user=Depends(get_current_user)):
     conn = get_conn()
     cursor = conn.cursor()
     try:
-        if user is None:
-            return error(message="未登录", code=401)
-
         task, err = get_owned_task(cursor, task_id, user["id"])
         if err is not None:
             return err
