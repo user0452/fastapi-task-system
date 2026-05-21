@@ -23,7 +23,7 @@ def get_task(task_id: int, user = Depends(get_current_user)):
         task, err = get_owned_task(cursor, task_id, user["id"])
         if err is not None:
             return err
-
+        task.pop("user_id",None)
         return success(data=task)
     finally:
         cursor.close()
@@ -56,7 +56,7 @@ def get_tasks(
             total = cursor.fetchone().get("count(*)")
 
             cursor.execute(
-                "select * from tasks where user_id = %s limit %s offset %s",
+                "select id, title, description, status, priority from tasks where user_id = %s limit %s offset %s",
                 (user["id"], size, start),
             )
             result = cursor.fetchall()
@@ -68,7 +68,7 @@ def get_tasks(
             total = cursor.fetchone().get("count(*)")
 
             cursor.execute(
-                "select * from tasks where status = %s and user_id = %s limit %s offset %s",
+                "select id, title, description, status, priority from tasks where status = %s and user_id = %s limit %s offset %s",
                 (status, user["id"], size, start),
             )
             result = cursor.fetchall()
@@ -176,7 +176,7 @@ def update_task(
 
         conn.commit()
 
-        cursor.execute("select * from tasks where id = %s", (task_id,))
+        cursor.execute("select id, title, description, status, priority from tasks where id = %s", (task_id,))
         result = cursor.fetchone()
 
         return success(data=result, message="更新成功")

@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel,Field
+from typing import Optional,Literal
 
 
 class Task(BaseModel):
@@ -11,27 +11,27 @@ class Task(BaseModel):
 
 
 class TaskCreate(BaseModel):
-    title: str
-    description: str
-    status: str = "todo"
-    priority: str = "medium"
+    title: str = Field(...,min_length=1,max_length=100)
+    description: Optional[str] = Field(default="",max_length=500)
+    status: Optional[Literal["todo","doing","done"]] = None
+    priority: Optional[Literal["low", "medium", "high"]] = None
 
 
 class TaskUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-    priority: Optional[str] = None
+    title: Optional[str] = Field(default=None,min_length=1,max_length=100)
+    description: Optional[str] = Field(default=None,max_length=500)
+    status: Optional[Literal["todo","doing","done"]] = None
+    priority: Optional[Literal["low", "medium", "high"]] = None
 
 
 class UserRegister(BaseModel):
-    username: str
-    password: str
+    username: str = Field(...,min_length=3,max_length=30)
+    password: str = Field(...,min_length=6,max_length=30)
 
 
 class UserLogin(BaseModel):
-    username: str
-    password: str
+    username: str = Field(...,min_length=3,max_length=30)
+    password: str = Field(...,min_length=6,max_length=30)
 
 class AICommandRequest(BaseModel):
-    text: str
+    text: str = Field(...,min_length=1,max_length=500)
