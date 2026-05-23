@@ -56,7 +56,7 @@ def get_tasks(
             total = cursor.fetchone().get("count(*)")
 
             cursor.execute(
-                "select id, title, description, status, priority from tasks where user_id = %s limit %s offset %s",
+                "select id, title, description, status, priority, created_at, updated_at from tasks where user_id = %s limit %s offset %s",
                 (user["id"], size, start),
             )
             result = cursor.fetchall()
@@ -68,7 +68,7 @@ def get_tasks(
             total = cursor.fetchone().get("count(*)")
 
             cursor.execute(
-                "select id, title, description, status, priority from tasks where status = %s and user_id = %s limit %s offset %s",
+                "select id, title, description, status, priority, created_at, updated_at from tasks where status = %s and user_id = %s limit %s offset %s",
                 (status, user["id"], size, start),
             )
             result = cursor.fetchall()
@@ -105,15 +105,10 @@ def create_task(task: TaskCreate, user=Depends(get_current_user)):
         )
         conn.commit()
         new_id = cursor.lastrowid
-
+        cursor.execute("select id, title, description, status, priority,created_at,updated_at from tasks where id = %s", (new_id,))
+        result = cursor.fetchone()
         return success(
-            data={
-                "id": new_id,
-                "title": task.title,
-                "description": task.description,
-                "status": task.status,
-                "priority": task.priority,
-            },
+            data=result,
             message="创建成功",
         )
     finally:
@@ -176,7 +171,7 @@ def update_task(
 
         conn.commit()
 
-        cursor.execute("select id, title, description, status, priority from tasks where id = %s", (task_id,))
+        cursor.execute("select id, title, description, status, priority,created_at,updated_at from tasks where id = %s", (task_id,))
         result = cursor.fetchone()
 
         return success(data=result, message="更新成功")
