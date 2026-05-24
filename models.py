@@ -1,5 +1,6 @@
 from pydantic import BaseModel,Field
 from typing import Optional,Literal
+from llm_client import parse_exam_shedule
 
 
 class Task(BaseModel):
@@ -35,3 +36,14 @@ class UserLogin(BaseModel):
 
 class AICommandRequest(BaseModel):
     text: str = Field(...,min_length=1,max_length=500)
+
+class ExamScheduleParseRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=3000)
+
+class ExamInfo(BaseModel):
+    course: str = Field(...,min_length=1,max_length=100)
+    exam_date: str = Field(...,min_length=1,max_length=10)
+    exam_time:Optional[str] = None
+
+class ReviewPlanPreviewRequest(BaseModel):
+    exams:list[ExamInfo]

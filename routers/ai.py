@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
 
-from models import AICommandRequest
+from models import AICommandRequest,ExamScheduleParseRequest,ReviewPlanPreviewRequest
 from db import get_conn
 from utils import success, error, get_current_user, parse_command
+from llm_client import parse_exam_shedule,preview_review_plan
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -79,3 +80,30 @@ def ai_command(command: AICommandRequest, user=Depends(get_current_user)):
     finally:
         cursor.close()
         conn.close()
+
+@router.post("/parse-exam-shedule")
+def parse_exam_shedule_api(
+        request: ExamScheduleParseRequest,
+        user=Depends(get_current_user)
+):
+    try:
+        result = parse_exam_shedule(request.text)
+        return success(data=result,message='解析成功')
+    except ValueError as e:
+        return error(message=str(e),code = 400)
+    except Exception as e:
+        return error(message = f"AI解析失败：{str(e)}",code= 500)
+
+@router.post("/preview-review-plan")
+def preview_review_plan_api(
+        request: ReviewPlanPreviewRequest,
+        user=Depends(get_current_user)
+):
+     try:
+         exams = [exam.model_dump() for exam in request.exams]
+         result = preview_review_plan(exams)
+         return success(data=result,message='生成预览成功')
+     except ValueError as e:
+         return error(message=str(e),code = 400)
+     except Exception as e:
+         return error(message = f"AI生成预览失败：{str(e)}",code= 500)
