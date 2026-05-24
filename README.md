@@ -1,722 +1,332 @@
-﻿# ````markdown
+# FastAPI Task System
+
+一个基于 **FastAPI + MySQL + JWT** 的多用户任务管理系统，支持用户注册登录、任务 CRUD、分页查询、状态筛选、优先级管理、静态前端页面，以及 AI 命令和复习计划相关扩展接口。
+
+> 前端说明：当前 `static/` 下的前端工作台界面由 **OpenAI Codex** 辅助设计和实现，包括玻璃质感 UI、任务面板、筛选搜索、AI 复习计划页面和交互脚本。
+
+## 功能概览
+
+- 用户注册、登录、密码哈希存储
+- JWT Bearer Token 身份认证
+- 多用户任务数据隔离
+- 任务创建、查询、更新、删除
+- 任务分页查询、状态筛选、优先级筛选和前端搜索
+- 前端统计卡片：全部、待办、进行中、已完成
+- 规则版 AI 命令：创建任务、批量修改状态、删除指定状态任务
+- 考试安排解析接口
+- 复习计划预览接口
+- 前端支持将复习计划预览导入为任务
+
+## 技术栈
+
+- Python 3.13
+- FastAPI
+- Uvicorn
+- MySQL
+- PyMySQL
+- Pydantic
+- python-jose
+- Passlib + bcrypt
+- python-dotenv
+- LangChain + langchain-openai
+- HTML / CSS / JavaScript
+- uv
+
+## 项目结构
+
+```text
+fastapi_study/
+├── main.py
+├── db.py
+├── models.py
+├── utils.py
+├── llm_client.py
+├── routers/
+│   ├── users.py
+│   ├── tasks.py
+│   └── ai.py
+├── static/
+│   ├── index.html      # Codex 辅助重构的前端页面
+│   ├── css/style.css   # 玻璃质感 UI 样式
+│   └── js/app.js       # 前端交互逻辑
+├── sql/init.sql
+├── ai_playground/
+│   └── test_langchain_llm.py
+├── .env.example
+├── pyproject.toml
+├── uv.lock
+└── README.md
+```
+
+## 环境准备
+
+### 1. 安装依赖
+
+```bash
+uv sync
+```
+
+### 2. 初始化数据库
+
+确保本机 MySQL 服务已启动，然后执行：
+
+```bash
+mysql -u root -p < sql/init.sql
+```
+
+初始化脚本会创建 `task_db2` 数据库，以及 `users`、`tasks`、`operation_logs` 三张表。
+
+### 3. 配置环境变量
+
+复制 `.env.example` 为 `.env`，并按本地环境修改：
+
+```env
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=task_db2
+
+SECRET_KEY=your_secret_key
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_HOURS=2
 
-# \# FastAPI Task System
+DEEPSEEK_API_KEY=your_api_key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+```
+
+`DEEPSEEK_*` 配置只在调用考试安排解析和复习计划预览接口时需要。基础用户、任务和规则版 AI 命令不依赖大模型配置。
 
-# 
+## 启动项目
 
-# 一个基于 \*\*FastAPI + MySQL + JWT\*\* 的多用户任务管理系统，支持用户注册登录、任务 CRUD、分页查询、状态筛选、前后端联调，并预留 AI 命令接口用于后续扩展智能任务管理能力。
+```bash
+uv run uvicorn main:app --reload
+```
 
-# 
+启动后访问：
 
-# \## 技术栈
+- 前端页面：<http://127.0.0.1:8000>
+- Swagger 文档：<http://127.0.0.1:8000/docs>
+- ReDoc 文档：<http://127.0.0.1:8000/redoc>
 
-# 
+## 前端页面
 
-# \- Python
+当前前端为 Codex 辅助实现的静态工作台，主要包含：
 
-# \- FastAPI
+- 登录 / 注册页
+- 侧边导航和玻璃质感工作台布局
+- 任务统计卡片
+- 任务列表、分页、搜索、状态筛选、优先级筛选
+- 新建、编辑、删除任务弹窗
+- 规则命令面板
+- 考试安排解析面板
+- 复习计划预览和导入任务面板
 
-# \- MySQL
+前端文件位于：
 
-# \- PyMySQL
+- `static/index.html`
+- `static/css/style.css`
+- `static/js/app.js`
 
-# \- Pydantic
+## API 说明
 
-# \- JWT（python-jose）
+接口统一返回类似下面的结构：
 
-# \- Passlib + bcrypt
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {}
+}
+```
 
-# \- python-dotenv
+需要登录的接口请携带请求头：
 
-# \- Uvicorn
+```http
+Authorization: Bearer <token>
+```
 
-# \- HTML / CSS / JavaScript
+### 用户注册
 
-# 
+```http
+POST /users/register
+```
 
-# \## 核心功能
+```json
+{
+  "username": "testuser",
+  "password": "123456"
+}
+```
 
-# 
+### 用户登录
 
-# \### 用户模块
+```http
+POST /users/login
+```
 
-# 
+```json
+{
+  "username": "testuser",
+  "password": "123456"
+}
+```
 
-# \- 用户注册
+响应中的 `data.token` 用于后续鉴权。
 
-# \- 用户登录
+### 查询任务列表
 
-# \- 密码哈希存储
+```http
+GET /tasks?page=1&size=10
+GET /tasks?page=1&size=10&status=todo
+```
 
-# \- 登录成功后返回 JWT Token
+`status` 可选值：
 
-# 
+- `todo`
+- `doing`
+- `done`
 
-# \### 任务模块
+### 查询单个任务
 
-# 
+```http
+GET /tasks/{task_id}
+```
 
-# \- 创建任务
+### 创建任务
 
-# \- 查询任务列表
+```http
+POST /tasks
+```
 
-# \- 查询单个任务
+```json
+{
+  "title": "复习 MySQL",
+  "description": "练习 join 和 group by",
+  "status": "todo",
+  "priority": "high"
+}
+```
 
-# \- 更新任务
+### 更新任务
 
-# \- 删除任务
+```http
+PUT /tasks/{task_id}
+```
 
-# \- 分页查询
+```json
+{
+  "status": "doing",
+  "priority": "medium"
+}
+```
 
-# \- 按任务状态筛选
+### 删除任务
 
-# \- 支持任务优先级
+```http
+DELETE /tasks/{task_id}
+```
 
-# 
+### 规则版 AI 命令
 
-# \### 权限控制
+```http
+POST /ai/command
+```
 
-# 
+```json
+{
+  "text": "创建任务：复习数据库，优先级高"
+}
+```
 
-# \- 使用 JWT 进行身份认证
+当前规则版命令主要用于演示任务创建、批量状态修改、按状态删除等动作。
 
-# \- 请求通过 `Authorization: Bearer <token>` 携带登录状态
+### 考试安排解析
 
-# \- 后端解析 token 获取当前用户
+```http
+POST /ai/parse-exam-shedule
+```
 
-# \- 使用 `user\_id` 实现多用户数据隔离
+> 路由名称目前按代码实现为 `shedule`，不是 `schedule`。
 
-# \- 用户只能操作自己的任务
+```json
+{
+  "text": "高数 2026-06-10 09:00\n英语 2026-06-13 15:00"
+}
+```
 
-# 
+该接口依赖 `.env` 中的 `DEEPSEEK_*` 配置。
 
-# \### 前端页面
+### 复习计划预览
 
-# 
+```http
+POST /ai/preview-review-plan
+```
 
-# 项目包含一个静态前端页面，支持：
+```json
+{
+  "exams": [
+    {
+      "course": "高数",
+      "exam_date": "2026-06-10",
+      "exam_time": "09:00"
+    }
+  ]
+}
+```
 
-# 
+该接口会根据考试安排生成待办任务预览，依赖 `.env` 中的 `DEEPSEEK_*` 配置。
 
-# \- 注册
+## 数据库表
 
-# \- 登录
+`users`
 
-# \- 任务列表展示
+- `id`
+- `username`
+- `password`
 
-# \- 创建任务
+`tasks`
 
-# \- 修改任务
+- `id`
+- `user_id`
+- `title`
+- `description`
+- `status`
+- `priority`
+- `created_at`
+- `updated_at`
 
-# \- 删除任务
+`operation_logs`
 
-# \- 分页查询
+- `id`
+- `user_id`
+- `action`
+- `target_type`
+- `target_id`
+- `detail`
+- `created_at`
 
-# \- 状态筛选
+## 本地检查
 
-# \- AI 命令输入
+后端语法检查：
 
-# 
+```bash
+uv run python -m py_compile main.py db.py models.py utils.py llm_client.py routers/users.py routers/tasks.py routers/ai.py
+```
 
-# \### AI 命令接口（规则版）
+前端脚本语法检查：
 
-# 
+```bash
+node --check static/js/app.js
+```
 
-# 当前项目包含规则版 AI 命令接口，支持部分固定自然语言指令，例如：
+查看已注册路由：
 
-# 
+```bash
+uv run python -c "from main import app; [print(r.path, getattr(r, 'methods', None)) for r in app.routes]"
+```
 
-# \- 创建任务
+## 当前状态
 
-# \- 批量修改任务状态
-
-# \- 删除指定状态任务
-
-# 
-
-# 当前版本不是接入真实大模型，而是通过规则解析实现。后续计划升级为真实大模型结构化输出。
-
-# 
-
-# \## 项目结构
-
-# 
-
-# ```text
-
-# fastapi\_study/
-
-# ├── main.py
-
-# ├── db.py
-
-# ├── models.py
-
-# ├── utils.py
-
-# ├── routers/
-
-# │   ├── users.py
-
-# │   ├── tasks.py
-
-# │   └── ai.py
-
-# ├── static/
-
-# │   ├── index.html
-
-# │   ├── css/
-
-# │   │   └── style.css
-
-# │   └── js/
-
-# │       └── app.js
-
-# ├── .env.example
-
-# ├── pyproject.toml
-
-# └── README.md
-
-# ````
-
-# 
-
-# \## 环境变量配置
-
-# 
-
-# 项目使用 `.env` 管理数据库和 JWT 配置。
-
-# 
-
-# 请在项目根目录创建 `.env` 文件：
-
-# 
-
-# ```env
-
-# DB\_HOST=127.0.0.1
-
-# DB\_PORT=3306
-
-# DB\_USER=root
-
-# DB\_PASSWORD=your\_password
-
-# DB\_NAME=task\_db2
-
-# 
-
-# SECRET\_KEY=your\_secret\_key
-
-# ALGORITHM=HS256
-
-# ACCESS\_TOKEN\_EXPIRE\_HOURS=2
-
-# ```
-
-# 
-
-# `.env` 文件包含数据库密码和密钥信息，不应提交到 GitHub。
-
-# 
-
-# \## 启动方式
-
-# 
-
-# \### 1. 安装依赖
-
-# 
-
-# ```bash
-
-# uv sync
-
-# ```
-
-# 
-
-# \### 2. 配置环境变量
-
-# 
-
-# 复制 `.env.example`，创建 `.env`，并填写本地 MySQL 配置。
-
-# 
-
-# \### 3. 启动后端服务
-
-# 
-
-# ```bash
-
-# uvicorn main:app --reload
-
-# ```
-
-# 
-
-# 启动后访问：
-
-# 
-
-# ```text
-
-# http://127.0.0.1:8000
-
-# ```
-
-# 
-
-# Swagger 接口文档：
-
-# 
-
-# ```text
-
-# http://127.0.0.1:8000/docs
-
-# ```
-
-# 
-
-# \## 主要接口
-
-# 
-
-# \### 用户注册
-
-# 
-
-# ```http
-
-# POST /users/register
-
-# ```
-
-# 
-
-# 请求示例：
-
-# 
-
-# ```json
-
-# {
-
-# &#x20; "username": "testuser",
-
-# &#x20; "password": "123456"
-
-# }
-
-# ```
-
-# 
-
-# \### 用户登录
-
-# 
-
-# ```http
-
-# POST /users/login
-
-# ```
-
-# 
-
-# 请求示例：
-
-# 
-
-# ```json
-
-# {
-
-# &#x20; "username": "testuser",
-
-# &#x20; "password": "123456"
-
-# }
-
-# ```
-
-# 
-
-# 响应示例：
-
-# 
-
-# ```json
-
-# {
-
-# &#x20; "code": 200,
-
-# &#x20; "message": "登录成功",
-
-# &#x20; "data": {
-
-# &#x20;   "token": "jwt\_token"
-
-# &#x20; }
-
-# }
-
-# ```
-
-# 
-
-# \### 查询任务列表
-
-# 
-
-# ```http
-
-# GET /tasks?page=1\&size=10
-
-# ```
-
-# 
-
-# 请求头：
-
-# 
-
-# ```http
-
-# Authorization: Bearer <token>
-
-# ```
-
-# 
-
-# \### 查询单个任务
-
-# 
-
-# ```http
-
-# GET /tasks/{task\_id}
-
-# ```
-
-# 
-
-# 请求头：
-
-# 
-
-# ```http
-
-# Authorization: Bearer <token>
-
-# ```
-
-# 
-
-# \### 创建任务
-
-# 
-
-# ```http
-
-# POST /tasks
-
-# ```
-
-# 
-
-# 请求头：
-
-# 
-
-# ```http
-
-# Authorization: Bearer <token>
-
-# ```
-
-# 
-
-# 请求示例：
-
-# 
-
-# ```json
-
-# {
-
-# &#x20; "title": "复习 MySQL",
-
-# &#x20; "description": "练习 join 和 group by",
-
-# &#x20; "status": "todo",
-
-# &#x20; "priority": "high"
-
-# }
-
-# ```
-
-# 
-
-# \### 更新任务
-
-# 
-
-# ```http
-
-# PUT /tasks/{task\_id}
-
-# ```
-
-# 
-
-# 请求头：
-
-# 
-
-# ```http
-
-# Authorization: Bearer <token>
-
-# ```
-
-# 
-
-# 请求示例：
-
-# 
-
-# ```json
-
-# {
-
-# &#x20; "status": "doing"
-
-# }
-
-# ```
-
-# 
-
-# \### 删除任务
-
-# 
-
-# ```http
-
-# DELETE /tasks/{task\_id}
-
-# ```
-
-# 
-
-# 请求头：
-
-# 
-
-# ```http
-
-# Authorization: Bearer <token>
-
-# ```
-
-# 
-
-# \### AI 命令接口
-
-# 
-
-# ```http
-
-# POST /ai/command
-
-# ```
-
-# 
-
-# 请求头：
-
-# 
-
-# ```http
-
-# Authorization: Bearer <token>
-
-# ```
-
-# 
-
-# 请求示例：
-
-# 
-
-# ```json
-
-# {
-
-# &#x20; "text": "创建任务：复习数据库，优先级高"
-
-# }
-
-# ```
-
-# 
-
-# \## 返回格式示例
-
-# 
-
-# 任务列表接口返回示例：
-
-# 
-
-# ```json
-
-# {
-
-# &#x20; "code": 200,
-
-# &#x20; "message": "success",
-
-# &#x20; "data": {
-
-# &#x20;   "list": \[
-
-# &#x20;     {
-
-# &#x20;       "id": 1,
-
-# &#x20;       "title": "复习 MySQL",
-
-# &#x20;       "description": "练习 join 和 group by",
-
-# &#x20;       "status": "todo",
-
-# &#x20;       "priority": "medium"
-
-# &#x20;     }
-
-# &#x20;   ],
-
-# &#x20;   "total": 1,
-
-# &#x20;   "page": 1,
-
-# &#x20;   "size": 10
-
-# &#x20; }
-
-# }
-
-# ```
-
-# 
-
-# \## 项目亮点
-
-# 
-
-# \* 使用 FastAPI 构建 RESTful API
-
-# \* 使用 MySQL 持久化任务和用户数据
-
-# \* 使用 JWT 实现登录认证
-
-# \* 使用密码哈希保护用户密码
-
-# \* 使用 `user\_id` 实现多用户数据隔离
-
-# \* 支持分页查询和任务状态筛选
-
-# \* 使用 `.env` 管理数据库密码和 JWT 密钥
-
-# \* 已接入静态前端页面，完成基础前后端联调
-
-# \* 预留 AI 命令接口，后续可扩展为 AI 任务拆分和 Agent 工具调用
-
-# 
-
-# \## 后续优化计划
-
-# 
-
-# \### 后端工程化
-
-# 
-
-# \* 使用 HTTPBearer + Depends 优化认证逻辑
-
-# \* 使用 Pydantic Field / Literal 完善参数校验
-
-# \* 为 tasks 表增加 created\_at、updated\_at 字段
-
-# \* 隐藏响应中的内部字段，如 user\_id
-
-# \* 增加统一异常处理
-
-# \* 增加 logging 日志
-
-# \* 增加 operation\_logs 操作日志表
-
-# \* 拆分 service / crud 层
-
-# \* 增加数据库初始化脚本
-
-# 
-
-# \### AI / Agent 方向
-
-# 
-
-# \* 接入真实大模型 API
-
-# \* 实现 AI 任务拆分和任务低阻力重写
-
-# \* 让模型输出结构化 JSON
-
-# \* 后端进行字段校验、权限校验和白名单校验
-
-# \* 高风险操作增加预览和二次确认
-
-# \* 支持导入考试安排文本/截图，自动生成复习任务
-
-# \* 后续扩展为 Agent 工具调用流程
-
-# 
-
-# \### 部署与测试
-
-# 
-
-# \* 增加基础测试
-
-# \* 编写 Dockerfile
-
-# \* 使用 docker-compose 管理 MySQL 和后端服务
-
-# \* 部署到 Linux 服务器
-
-# 
-
-# \## 当前状态
-
-# 
-
-# 项目已完成核心后端功能和基础前端联调，适合作为 Python 后端实习方向的练习项目。当前重点是继续增强工程化能力，并逐步接入 AI / Agent 功能，形成更有区分度的智能任务管理系统。
-
-# 
-
-# ```
-
-# ```
-
-# 
-
+项目已经具备用户认证、任务管理、静态前端和 AI 扩展接口的基础闭环。当前前端由 Codex 辅助完成了一次工作台式 UI 重构；后端保持原有 FastAPI 接口设计，可继续围绕测试、异常处理、操作日志落库、Docker 部署和真实大模型工具调用方向迭代。

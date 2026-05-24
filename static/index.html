@@ -4,177 +4,290 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>任务管理系统</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=2">
 </head>
 <body>
-    <!-- 登录/注册页面 -->
-    <div id="auth-page" class="page">
-        <div class="auth-container">
-            <h1>任务管理系统</h1>
-            <div class="tabs">
-                <button class="tab active" data-tab="login">登录</button>
-                <button class="tab" data-tab="register">注册</button>
+    <section id="auth-page" class="page auth-page">
+        <div class="auth-card glass-panel">
+            <div class="auth-brand">
+                <span class="brand-mark">TS</span>
+                <div>
+                    <h1>任务管理系统</h1>
+                    <p>登录后管理你的任务和复习计划</p>
+                </div>
             </div>
 
-            <!-- 登录表单 -->
-            <form id="login-form" class="form active">
-                <div class="form-group">
-                    <label>用户名</label>
-                    <input type="text" id="login-username" required>
-                </div>
-                <div class="form-group">
-                    <label>密码</label>
-                    <input type="password" id="login-password" required>
-                </div>
-                <button type="submit" class="btn-primary">登录</button>
+            <div class="auth-tabs" role="tablist">
+                <button type="button" class="auth-tab active" data-auth-tab="login">登录</button>
+                <button type="button" class="auth-tab" data-auth-tab="register">注册</button>
+            </div>
+
+            <form id="login-form" class="auth-form active" data-auth-panel="login">
+                <label class="field">
+                    <span>用户名</span>
+                    <input type="text" id="login-username" autocomplete="username" minlength="3" maxlength="30" required>
+                </label>
+                <label class="field">
+                    <span>密码</span>
+                    <input type="password" id="login-password" autocomplete="current-password" minlength="6" maxlength="30" required>
+                </label>
+                <button type="submit" class="btn btn-primary" data-testid="login-submit">登录</button>
             </form>
 
-            <!-- 注册表单 -->
-            <form id="register-form" class="form">
-                <div class="form-group">
-                    <label>用户名</label>
-                    <input type="text" id="reg-username" required>
-                </div>
-                <div class="form-group">
-                    <label>密码</label>
-                    <input type="password" id="reg-password" required>
-                </div>
-                <div class="form-group">
-                    <label>确认密码</label>
-                    <input type="password" id="reg-confirm" required>
-                </div>
-                <button type="submit" class="btn-primary">注册</button>
+            <form id="register-form" class="auth-form" data-auth-panel="register">
+                <label class="field">
+                    <span>用户名</span>
+                    <input type="text" id="reg-username" autocomplete="username" minlength="3" maxlength="30" required>
+                </label>
+                <label class="field">
+                    <span>密码</span>
+                    <input type="password" id="reg-password" autocomplete="new-password" minlength="6" maxlength="30" required>
+                </label>
+                <label class="field">
+                    <span>确认密码</span>
+                    <input type="password" id="reg-confirm" autocomplete="new-password" minlength="6" maxlength="30" required>
+                </label>
+                <button type="submit" class="btn btn-primary" data-testid="register-submit">注册</button>
             </form>
 
-            <div id="auth-msg" class="message"></div>
+            <div id="auth-msg" class="inline-message hidden" role="status"></div>
         </div>
-    </div>
+    </section>
 
-    <!-- 主页面 -->
-    <div id="main-page" class="page hidden">
-        <header>
-            <div class="header-left">
-                <h1>任务管理</h1>
+    <section id="main-page" class="page app-page hidden">
+        <aside class="sidebar glass-panel">
+            <div class="sidebar-brand">
+                <span class="brand-mark">TS</span>
+                <div>
+                    <strong>Task System</strong>
+                    <span>FastAPI 工作台</span>
+                </div>
             </div>
-            <div class="header-right">
+
+            <nav class="side-nav" aria-label="主导航">
+                <button type="button" class="nav-item active" data-view="tasks">任务中心</button>
+                <button type="button" class="nav-item" data-view="ai">AI 复习计划</button>
+            </nav>
+
+            <div class="user-panel">
                 <span id="username-display"></span>
-                <button id="logout-btn" class="btn-secondary">退出</button>
+                <button type="button" id="logout-btn" class="btn btn-ghost">退出登录</button>
             </div>
-        </header>
+        </aside>
 
-        <main>
-            <!-- AI 指令区 -->
-            <section class="ai-section">
-                <div class="ai-input-group">
-                    <input type="text" id="ai-input" placeholder="输入指令，如：创建任务：学习 Python">
-                    <button id="ai-btn" class="btn-accent">执行</button>
+        <main class="workspace">
+            <header class="topbar glass-panel">
+                <div>
+                    <span class="eyebrow">个人任务面板</span>
+                    <h2 id="workspace-title">任务中心</h2>
                 </div>
-                <div id="ai-result" class="ai-result hidden"></div>
-            </section>
-
-            <!-- 任务操作区 -->
-            <section class="task-controls">
-                <div class="filters">
-                    <select id="status-filter">
-                        <option value="">全部状态</option>
-                        <option value="todo">待办</option>
-                        <option value="doing">进行中</option>
-                        <option value="done">已完成</option>
-                    </select>
+                <div class="topbar-actions">
+                    <button type="button" id="refresh-btn" class="btn btn-ghost">刷新</button>
+                    <button type="button" id="add-task-btn" class="btn btn-primary" data-testid="add-task">新建任务</button>
                 </div>
-                <button id="add-task-btn" class="btn-primary">+ 新建任务</button>
+            </header>
+
+            <section id="tasks-view" class="view active">
+                <div class="metric-grid">
+                    <div class="metric glass-panel">
+                        <span>全部</span>
+                        <strong id="metric-total">0</strong>
+                    </div>
+                    <div class="metric glass-panel">
+                        <span>待办</span>
+                        <strong id="metric-todo">0</strong>
+                    </div>
+                    <div class="metric glass-panel">
+                        <span>进行中</span>
+                        <strong id="metric-doing">0</strong>
+                    </div>
+                    <div class="metric glass-panel">
+                        <span>已完成</span>
+                        <strong id="metric-done">0</strong>
+                    </div>
+                </div>
+
+                <section class="task-panel glass-panel">
+                    <div class="panel-head">
+                        <div>
+                            <h3>任务列表</h3>
+                            <span id="task-count-label">共 0 条</span>
+                        </div>
+                        <div class="filter-row">
+                            <label class="search-field">
+                                <span>搜索</span>
+                                <input type="search" id="task-search" placeholder="标题或描述">
+                            </label>
+                            <label class="compact-field">
+                                <span>状态</span>
+                                <select id="status-filter">
+                                    <option value="">全部</option>
+                                    <option value="todo">待办</option>
+                                    <option value="doing">进行中</option>
+                                    <option value="done">已完成</option>
+                                </select>
+                            </label>
+                            <label class="compact-field">
+                                <span>优先级</span>
+                                <select id="priority-filter">
+                                    <option value="">全部</option>
+                                    <option value="high">高</option>
+                                    <option value="medium">中</option>
+                                    <option value="low">低</option>
+                                </select>
+                            </label>
+                            <label class="compact-field">
+                                <span>每页</span>
+                                <select id="page-size">
+                                    <option value="6">6</option>
+                                    <option value="10" selected>10</option>
+                                    <option value="20">20</option>
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>任务</th>
+                                    <th>状态</th>
+                                    <th>优先级</th>
+                                    <th>更新时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="task-tbody"></tbody>
+                        </table>
+                    </div>
+
+                    <div id="empty-msg" class="empty-state hidden">
+                        <strong>暂无任务</strong>
+                        <span>新建任务后会出现在这里。</span>
+                    </div>
+
+                    <div class="pagination">
+                        <button type="button" id="prev-page" class="btn btn-ghost">上一页</button>
+                        <span id="page-info">第 1 / 1 页</span>
+                        <button type="button" id="next-page" class="btn btn-ghost">下一页</button>
+                    </div>
+                </section>
             </section>
 
-            <!-- 任务列表 -->
-            <section class="task-list">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>标题</th>
-                            <th>描述</th>
-                            <th>状态</th>
-                            <th>优先级</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="task-tbody"></tbody>
-                </table>
-                <div id="empty-msg" class="empty-message hidden">暂无任务</div>
-            </section>
+            <section id="ai-view" class="view">
+                <div class="ai-grid">
+                    <section class="ai-card glass-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3>规则命令</h3>
+                                <span>执行任务创建和批量操作</span>
+                            </div>
+                        </div>
+                        <label class="field">
+                            <span>命令</span>
+                            <input type="text" id="ai-input" placeholder="创建任务：复习数据库，优先级高">
+                        </label>
+                        <div class="quick-actions">
+                            <button type="button" class="chip" data-command="创建任务：复习数据库，优先级高">创建高优先级任务</button>
+                            <button type="button" class="chip" data-command="把所有todo改成doing">todo 转进行中</button>
+                            <button type="button" class="chip danger" data-command="删除所有done任务">删除已完成</button>
+                        </div>
+                        <button type="button" id="ai-btn" class="btn btn-primary">执行命令</button>
+                        <div id="ai-result" class="inline-message hidden" role="status"></div>
+                    </section>
 
-            <!-- 分页 -->
-            <section class="pagination">
-                <button id="prev-page" class="btn-secondary" disabled>上一页</button>
-                <span id="page-info">第 1 页</span>
-                <button id="next-page" class="btn-secondary">下一页</button>
+                    <section class="ai-card glass-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3>考试安排解析</h3>
+                                <span>把文本解析成课程和考试时间</span>
+                            </div>
+                        </div>
+                        <label class="field">
+                            <span>考试安排文本</span>
+                            <textarea id="exam-text" rows="7" placeholder="高数 2026-06-10 09:00&#10;英语 2026-06-13 15:00"></textarea>
+                        </label>
+                        <button type="button" id="parse-exam-btn" class="btn btn-primary">解析安排</button>
+                        <div id="exam-list" class="result-list"></div>
+                    </section>
+
+                    <section class="ai-card glass-panel ai-card-wide">
+                        <div class="panel-head">
+                            <div>
+                                <h3>复习计划预览</h3>
+                                <span>生成后可一键导入为任务</span>
+                            </div>
+                            <div class="panel-actions">
+                                <button type="button" id="preview-plan-btn" class="btn btn-ghost">生成预览</button>
+                                <button type="button" id="import-plan-btn" class="btn btn-primary" disabled>导入任务</button>
+                            </div>
+                        </div>
+                        <div id="review-preview" class="preview-grid"></div>
+                    </section>
+                </div>
             </section>
         </main>
-    </div>
+    </section>
 
-    <!-- 任务编辑弹窗 -->
-    <div id="task-modal" class="modal hidden">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="modal-title">新建任务</h2>
-                <button class="modal-close">&times;</button>
+    <div id="task-modal" class="modal hidden" aria-hidden="true">
+        <div class="modal-panel glass-panel">
+            <div class="modal-head">
+                <h3 id="modal-title">新建任务</h3>
+                <button type="button" class="icon-btn modal-close" aria-label="关闭">×</button>
             </div>
             <form id="task-form">
                 <input type="hidden" id="task-id">
-                <div class="form-group">
-                    <label>标题</label>
-                    <input type="text" id="task-title" required>
-                </div>
-                <div class="form-group">
-                    <label>描述</label>
-                    <textarea id="task-desc" rows="3"></textarea>
-                </div>
+                <label class="field">
+                    <span>标题</span>
+                    <input type="text" id="task-title" maxlength="100" required>
+                </label>
+                <label class="field">
+                    <span>描述</span>
+                    <textarea id="task-desc" rows="4" maxlength="500"></textarea>
+                </label>
                 <div class="form-row">
-                    <div class="form-group">
-                        <label>状态</label>
+                    <label class="field">
+                        <span>状态</span>
                         <select id="task-status">
                             <option value="todo">待办</option>
                             <option value="doing">进行中</option>
                             <option value="done">已完成</option>
                         </select>
-                    </div>
-                    <div class="form-group">
-                        <label>优先级</label>
+                    </label>
+                    <label class="field">
+                        <span>优先级</span>
                         <select id="task-priority">
                             <option value="low">低</option>
                             <option value="medium" selected>中</option>
                             <option value="high">高</option>
                         </select>
-                    </div>
+                    </label>
                 </div>
                 <div class="form-actions">
-                    <button type="button" class="btn-secondary modal-close">取消</button>
-                    <button type="submit" class="btn-primary">保存</button>
+                    <button type="button" class="btn btn-ghost modal-close">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- 删除确认弹窗 -->
-    <div id="delete-modal" class="modal hidden">
-        <div class="modal-content modal-small">
-            <div class="modal-header">
-                <h2>确认删除</h2>
-                <button class="modal-close" id="delete-cancel-x">&times;</button>
+    <div id="delete-modal" class="modal hidden" aria-hidden="true">
+        <div class="modal-panel modal-small glass-panel">
+            <div class="modal-head">
+                <h3>确认删除</h3>
+                <button type="button" class="icon-btn" id="delete-cancel-x" aria-label="关闭">×</button>
             </div>
-            <div class="modal-body">
-                <p>确定删除这个任务吗？</p>
-            </div>
+            <p class="modal-copy">删除后不可恢复。</p>
             <div class="form-actions">
-                <button type="button" class="btn-secondary" id="delete-cancel">取消</button>
-                <button type="button" class="btn-danger" id="delete-confirm">删除</button>
+                <button type="button" class="btn btn-ghost" id="delete-cancel">取消</button>
+                <button type="button" class="btn btn-danger" id="delete-confirm">删除</button>
             </div>
         </div>
     </div>
 
-    <!-- 提示消息 -->
-    <div id="toast" class="toast hidden"></div>
+    <div id="toast" class="toast hidden" role="status"></div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=2"></script>
 </body>
 </html>
