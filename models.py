@@ -47,3 +47,12 @@ class ExamInfo(BaseModel):
 
 class ReviewPlanPreviewRequest(BaseModel):
     exams:list[ExamInfo]
+
+class ReviewTaskPreview(BaseModel):
+    title: str = Field(...,min_length=1,max_length=100)
+    description: Optional[str] = Field(...,max_length=500)
+    status:Literal["todo","doing","done"] = "todo"
+    priority:Literal["low", "medium", "high"] = "medium"
+
+class ConfirmReviewPlanRequest(BaseModel):
+    tasks_preview: list[ReviewTaskPreview]

@@ -1,17 +1,15 @@
 from fastapi import APIRouter, Depends
-
+import json
 from models import AICommandRequest,ExamScheduleParseRequest,ReviewPlanPreviewRequest
 from db import get_conn
 from utils import success, error, get_current_user, parse_command
 from llm_client import parse_exam_shedule,preview_review_plan
-
+from models import ConfirmReviewPlanRequest
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 @router.post("/command")
 def ai_command(command: AICommandRequest, user=Depends(get_current_user)):
-    if user is None:
-        return error(message="未登录", code=401)
 
     parsed = parse_command(command.text)
     if parsed is None:
@@ -107,3 +105,66 @@ def preview_review_plan_api(
          return error(message=str(e),code = 400)
      except Exception as e:
          return error(message = f"AI生成预览失败：{str(e)}",code= 500)
+
+@router.post("/confirm-review-plan")
+def confirm_review_plan_api(
+        request: ConfirmReviewPlanRequest,
+        user=Depends(get_current_user)
+):
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        created_tasks = []
+
+        for task in request.tasks_preview:
+            cursor.execute(
+                """insert into tasks (user_id,title,description,status,priority)
+                values (%s,%s,%s,%s,%s)""",
+                (user["id"],task.title,task.description,task.status,task.priority)
+            )
+            task_id = cursor.lastrowid
+            cursor.execute(
+                """
+                select id, title, description, status, priority, created_at, updated_at
+                from tasks
+                where id = %s
+                """,
+                (task_id,),
+            )
+            created_tasks.append(cursor.fetchone())
+
+        log_detail = {
+            "source":"ai_review_plan",
+            "created_count":len(created_tasks),
+            "task_ids":[task["id"] for task in created_tasks],
+        }
+        cursor.execute(
+            """
+            insert into operation_logs (user_id, action, target_type, target_id, detail)
+                values (%s,%s,%s,%s,%s)
+            """,
+            (
+                user["id"],
+                "AI_CONFIRM_REVIEW_PLAN",
+                "task",
+                None,
+                json.dumps(log_detail, ensure_ascii=False),
+            )
+        )
+
+
+        conn.commit()
+        return success(
+            data={
+                "created_count": len(created_tasks),
+                "items": created_tasks,
+            },
+            message="复习任务创建成功",
+        )
+
+    except Exception as e:
+        conn.rollback()
+        return error(message=f"创建复习任务失败：{str(e)}",code= 500)
+    finally:
+        cursor.close()
+        conn.close()
