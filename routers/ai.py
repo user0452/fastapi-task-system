@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Depends
 import json
+
+from pyexpat.errors import messages
+
 from models import AICommandRequest,ExamScheduleParseRequest,ReviewPlanPreviewRequest
 from db import get_conn
 from utils import success, error, get_current_user, parse_command
@@ -165,6 +168,51 @@ def confirm_review_plan_api(
     except Exception as e:
         conn.rollback()
         return error(message=f"创建复习任务失败：{str(e)}",code= 500)
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/operation_logs")
+def ger_operation_logs(
+        page: int = 1,
+        size: int = 10,
+        user=Depends(get_current_user)
+):
+    if page <= 0 or size <= 0:
+        return error(message="page或size参数不合法",code = 400)
+    if size > 100:
+        return error(message="page_size参数不能大于100",code = 400)
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        offset = (page - 1) * size
+        cursor.execute(
+            """
+            select count(*) as total from operation_logs where user_id = %s
+            """
+            , (user["id"],)
+        )
+        total = cursor.fetchone()["total"]
+        cursor.execute(
+            """
+            select id, action, target_type, target_id, detail, created_at
+            from operation_logs
+            where user_id = %s
+            order by id desc
+            limit %s offset %s
+            """,
+            (user["id"],size,offset)
+        )
+        logs = cursor.fetchall()
+        return success(
+            data={
+                "list": logs,
+                "total": total,
+                "page": page,
+                "size": size,
+            },
+            message="获取操作日志成功"
+        )
     finally:
         cursor.close()
         conn.close()
