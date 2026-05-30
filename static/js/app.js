@@ -431,7 +431,7 @@ async function parseExamSchedule() {
     const button = $("#parse-exam-btn");
     setBusy(button, true, "解析中");
 
-    const result = await api("/ai/parse-exam-shedule", {
+    const result = await api("/ai/parse-exam-schedule", {
         method: "POST",
         body: JSON.stringify({ text }),
     });

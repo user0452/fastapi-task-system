@@ -35,7 +35,7 @@ def ask_llm(user_text:str):
     result = llm.invoke(messages)
     return result.content
 
-def parse_exam_shedule(text: str)-> dict:
+def parse_exam_schedule(text: str)-> dict:
     llm = get_llm()
     messages = [
         SystemMessage(
@@ -66,7 +66,6 @@ def parse_exam_shedule(text: str)-> dict:
         return json.loads(content)
     except json.JSONDecodeError:
         raise ValueError(f"模型返回的不是合法json：{ content}")
-
 def preview_review_plan(exams: list[dict])-> dict:
     llm = get_llm()
     messages = [

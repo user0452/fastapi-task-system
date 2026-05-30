@@ -1,6 +1,6 @@
 from pydantic import BaseModel,Field
 from typing import Optional,Literal
-from llm_client import parse_exam_shedule
+
 
 
 class Task(BaseModel):
@@ -14,8 +14,8 @@ class Task(BaseModel):
 class TaskCreate(BaseModel):
     title: str = Field(...,min_length=1,max_length=100)
     description: Optional[str] = Field(default="",max_length=500)
-    status: Optional[Literal["todo","doing","done"]] = None
-    priority: Optional[Literal["low", "medium", "high"]] = None
+    status: Optional[Literal["todo","doing","done"]] = "todo"
+    priority: Optional[Literal["low", "medium", "high"]] = "medium"
 
 
 class TaskUpdate(BaseModel):
@@ -50,7 +50,7 @@ class ReviewPlanPreviewRequest(BaseModel):
 
 class ReviewTaskPreview(BaseModel):
     title: str = Field(...,min_length=1,max_length=100)
-    description: Optional[str] = Field(...,max_length=500)
+    description: Optional[str] = Field(default="",max_length=500)
     status:Literal["todo","doing","done"] = "todo"
     priority:Literal["low", "medium", "high"] = "medium"
 

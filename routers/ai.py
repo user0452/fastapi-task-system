@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Depends
 import json
 
-from pyexpat.errors import messages
-
-from models import AICommandRequest,ExamScheduleParseRequest,ReviewPlanPreviewRequest
+from models import (
+    AICommandRequest,
+    ExamScheduleParseRequest,
+    ReviewPlanPreviewRequest,
+    ConfirmReviewPlanRequest,
+)
 from db import get_conn
 from utils import success, error, get_current_user, parse_command
-from llm_client import parse_exam_shedule,preview_review_plan
-from models import ConfirmReviewPlanRequest
+from llm_client import parse_exam_schedule, preview_review_plan
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 
@@ -82,13 +84,14 @@ def ai_command(command: AICommandRequest, user=Depends(get_current_user)):
         cursor.close()
         conn.close()
 
-@router.post("/parse-exam-shedule")
-def parse_exam_shedule_api(
+
+@router.post("/parse-exam-schedule")
+def parse_exam_schedule_api(
         request: ExamScheduleParseRequest,
         user=Depends(get_current_user)
 ):
     try:
-        result = parse_exam_shedule(request.text)
+        result = parse_exam_schedule(request.text)
         return success(data=result,message='解析成功')
     except ValueError as e:
         return error(message=str(e),code = 400)
@@ -173,7 +176,7 @@ def confirm_review_plan_api(
         conn.close()
 
 @router.get("/operation_logs")
-def ger_operation_logs(
+def get_operation_logs(
         page: int = 1,
         size: int = 10,
         user=Depends(get_current_user)

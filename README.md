@@ -245,10 +245,10 @@ POST /ai/command
 ### 考试安排解析
 
 ```http
-POST /ai/parse-exam-shedule
+POST /ai/parse-exam-schedule
 ```
 
-> 路由名称目前按代码实现为 `shedule`，不是 `schedule`。
+> 当前路由名称为 `schedule`。
 
 ```json
 {
