@@ -8,6 +8,7 @@ const state = {
     tasks: [],
     exams: [],
     previewTasks: [],
+    operationLogs: [],
     deleteTargetId: null,
 };
 
@@ -203,7 +204,7 @@ async function loadMetrics() {
 }
 
 async function loadDashboard() {
-    await Promise.all([loadMetrics(), loadTasks()]);
+    await Promise.all([loadMetrics(), loadTasks(), loadOperationLogs()]);
 }
 
 async function loadAllFilteredTasks() {
@@ -391,6 +392,58 @@ function renderPreviewTasks() {
     `).join("");
 }
 
+function renderOperationLogs() {
+    const container = $("#log-list");
+    if (!container) return;
+
+    if (!state.operationLogs.length) {
+        container.innerHTML = `<div class="result-item"><span>暂无 AI 操作日志</span></div>`;
+        return;
+    }
+
+    container.innerHTML = state.operationLogs.map((log) => {
+        let detail = "";
+        if (typeof log.detail === "string" && log.detail.trim()) {
+            try {
+                const parsed = JSON.parse(log.detail);
+                detail = Object.entries(parsed)
+                    .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`)
+                    .join(" | ");
+            } catch {
+                detail = log.detail;
+            }
+        }
+
+        return `
+            <div class="result-item">
+                <strong>${escapeHtml(log.action || "未知操作")}</strong>
+                <span>${formatDate(log.created_at)}${log.target_type ? ` · ${escapeHtml(log.target_type)}` : ""}</span>
+                ${detail ? `<span>${escapeHtml(detail)}</span>` : ""}
+            </div>
+        `;
+    }).join("");
+}
+
+async function loadOperationLogs() {
+    const result = await api("/ai/operation_logs?page=1&size=10");
+    if (result.code === 401) {
+        logout();
+        showInlineMessage($("#auth-msg"), "登录已失效，请重新登录", "error");
+        result.authExpired = true;
+        return result;
+    }
+
+    if (result.code !== 200) {
+        state.operationLogs = [];
+        renderOperationLogs();
+        return result;
+    }
+
+    state.operationLogs = result.data?.list || [];
+    renderOperationLogs();
+    return result;
+}
+
 async function executeAiCommand() {
     const input = $("#ai-input");
     const text = input.value.trim();
@@ -481,36 +534,22 @@ async function importPreviewTasks() {
 
     const button = $("#import-plan-btn");
     setBusy(button, true, "导入中");
+    const result = await api("/ai/confirm-review-plan", {
+        method: "POST",
+        body: JSON.stringify({ tasks_preview: state.previewTasks }),
+    });
+    setBusy(button, false);
 
-    let success = 0;
-    let failed = 0;
-    for (const task of state.previewTasks) {
-        const result = await api("/tasks", {
-            method: "POST",
-            body: JSON.stringify({
-                title: task.title,
-                description: task.description || "",
-                status: ["todo", "doing", "done"].includes(task.status) ? task.status : "todo",
-                priority: ["low", "medium", "high"].includes(task.priority) ? task.priority : "medium",
-            }),
-        });
-        if (result.code === 200) {
-            success += 1;
-        } else {
-            failed += 1;
-        }
+    if (result.code !== 200) {
+        showToast(normalizeMessage(result.message, "导入失败"), "error");
+        return;
     }
 
-    setBusy(button, false);
+    const createdCount = result.data?.created_count ?? state.previewTasks.length;
     state.previewTasks = [];
     renderPreviewTasks();
     await loadDashboard();
-
-    if (failed) {
-        showToast(`导入完成：成功 ${success} 条，失败 ${failed} 条`, "error");
-    } else {
-        showToast(`已导入 ${success} 条任务`);
-    }
+    showToast(`已通过确认接口导入 ${createdCount} 条任务`);
 }
 
 function bindEvents() {
@@ -701,8 +740,10 @@ function bindEvents() {
     $("#parse-exam-btn").addEventListener("click", parseExamSchedule);
     $("#preview-plan-btn").addEventListener("click", previewReviewPlan);
     $("#import-plan-btn").addEventListener("click", importPreviewTasks);
+    $("#refresh-logs-btn").addEventListener("click", () => loadOperationLogs());
 }
 
 bindEvents();
 renderPreviewTasks();
+renderOperationLogs();
 checkAuth();

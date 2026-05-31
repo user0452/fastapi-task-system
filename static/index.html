@@ -216,7 +216,7 @@
                         <div class="panel-head">
                             <div>
                                 <h3>复习计划预览</h3>
-                                <span>生成后可一键导入为任务</span>
+                                <span>生成后通过后端确认接口统一导入为任务</span>
                             </div>
                             <div class="panel-actions">
                                 <button type="button" id="preview-plan-btn" class="btn btn-ghost">生成预览</button>
@@ -224,6 +224,19 @@
                             </div>
                         </div>
                         <div id="review-preview" class="preview-grid"></div>
+                    </section>
+
+                    <section class="ai-card glass-panel ai-card-wide">
+                        <div class="panel-head">
+                            <div>
+                                <h3>AI 操作日志</h3>
+                                <span>显示复习计划确认导入等后端记录</span>
+                            </div>
+                            <div class="panel-actions">
+                                <button type="button" id="refresh-logs-btn" class="btn btn-ghost">刷新日志</button>
+                            </div>
+                        </div>
+                        <div id="log-list" class="result-list"></div>
                     </section>
                 </div>
             </section>

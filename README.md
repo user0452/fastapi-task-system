@@ -15,7 +15,9 @@
 - 规则版 AI 命令：创建任务、批量修改状态、删除指定状态任务
 - 考试安排解析接口
 - 复习计划预览接口
-- 前端支持将复习计划预览导入为任务
+- 复习计划确认导入接口
+- AI 操作日志查询接口
+- 前端支持将复习计划预览通过后端确认接口导入为任务，并展示最近 AI 操作日志
 
 ## 技术栈
 
@@ -122,6 +124,7 @@ uv run uvicorn main:app --reload
 - 规则命令面板
 - 考试安排解析面板
 - 复习计划预览和导入任务面板
+- AI 操作日志面板
 
 前端文件位于：
 
@@ -277,6 +280,35 @@ POST /ai/preview-review-plan
 ```
 
 该接口会根据考试安排生成待办任务预览，依赖 `.env` 中的 `DEEPSEEK_*` 配置。
+
+### 确认导入复习计划
+
+```http
+POST /ai/confirm-review-plan
+```
+
+```json
+{
+  "tasks_preview": [
+    {
+      "title": "高数第一轮复习",
+      "description": "整理极限与导数重点",
+      "status": "todo",
+      "priority": "medium"
+    }
+  ]
+}
+```
+
+该接口会一次性创建复习任务，并写入 `operation_logs`。
+
+### 查询 AI 操作日志
+
+```http
+GET /ai/operation_logs?page=1&size=10
+```
+
+用于查看最近的 AI 确认导入记录等操作日志。
 
 ## 数据库表
 
