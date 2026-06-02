@@ -5,6 +5,7 @@ DEFAULT COLLATE utf8mb4_unicode_ci;
 USE task_db2;
 
 DROP TABLE IF EXISTS operation_logs;
+DROP TABLE IF EXISTS student_profiles;
 DROP TABLE IF EXISTS tasks;
 DROP TABLE IF EXISTS users;
 
@@ -46,6 +47,19 @@ CREATE TABLE operation_logs (
     INDEX idx_logs_action (action),
 
     CONSTRAINT fk_logs_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE student_profiles (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL UNIQUE,
+    profile_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_profiles_user
         FOREIGN KEY (user_id)
         REFERENCES users(id)
         ON DELETE CASCADE
