@@ -64,3 +64,6 @@ class StudentProfile(BaseModel):
     weaknesses: list[str] = Field(default_factory=list)
     available_time:Optional[ str] = None
     learning_preference:Optional[ str] = None
+
+class StudentProfileGenerateRequest(BaseModel):
+    text: str = Field(...,min_length=1,max_length=3000)

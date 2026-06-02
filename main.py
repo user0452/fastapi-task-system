@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from routers import users, tasks,ai
+from routers import users, tasks,ai,profiles
 app = FastAPI()
-
+app.include_router(profiles.router)
 app.include_router(users.router)
 app.include_router(tasks.router)
 app.include_router(ai.router)
@@ -14,3 +14,4 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
+
