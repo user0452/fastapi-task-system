@@ -47,3 +47,45 @@ def generate_profile_api(request: StudentProfileGenerateRequest, user=Depends(ge
             message=f"学生画像生成失败:{str(e)}",
             code = 500
         )
+
+@router.get("/me")
+def get_my_profile(user=Depends(get_current_user)):
+    "获取当前用户的学生画像"
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            select id,user_id,profile_json,created_at,updated_at
+            from student_profiles
+            where user_id = %s
+            """,
+            (user["id"],)
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return success(
+                data=None,
+                message="当前用户没有学生画像"
+            )
+        profile = json.loads(row["profile_json"])
+        if isinstance(profile,str):
+            profile = json.loads(profile)
+        return success(
+            data={
+                "id":row["id"],
+                "user_id":row["user_id"],
+                "profile":profile,
+                "created_at":row["created_at"],
+                "updated_at":row["updated_at"]
+            },
+            message="获取学生画像成功"
+        )
+    except Exception as e:
+        return error(
+            message=f"获取学生画像失败:{str(e)}",
+            code = 500
+        )
+    finally:
+        cursor.close()
+        conn.close()
