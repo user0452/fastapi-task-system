@@ -56,3 +56,11 @@ class ReviewTaskPreview(BaseModel):
 
 class ConfirmReviewPlanRequest(BaseModel):
     tasks_preview: list[ReviewTaskPreview]
+
+class StudentProfile(BaseModel):
+    grade:Optional[ str] = None
+    major:Optional[ str] = None
+    goals: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    available_time:Optional[ str] = None
+    learning_preference:Optional[ str] = None
