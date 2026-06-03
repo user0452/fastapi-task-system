@@ -16,6 +16,9 @@ def generate_learning_resource(
             content=(
                 "你是一个个性化学习资源生成助手。\n"
                 "请根据课程名、知识点和学生画像，生成一份适合该学生学习的知识点讲解资源。\n"
+                "必须严格围绕用户提供的课程名和知识点生成内容。\n"
+                "如果课程名或知识点过于宽泛，可以生成该课程的复习总览，但不能擅自切换到其他课程方向。\n"
+                "学生画像只用于调整讲解难度、例子风格和表达方式，不能改变课程主题。\n"
                 "你必须只返回 JSON，不要返回解释文字，不要使用 Markdown。\n"
                 "返回格式必须严格如下：\n"
                 "{\n"
@@ -33,7 +36,7 @@ def generate_learning_resource(
         HumanMessage(
             content=f"课程名：{course_name}\n"
                     f"知识点：{topic}\n"
-                    f"学生画像：{json.dumps(profile)}"
+                    f"学生画像：{json.dumps(profile,ensure_ascii=False)}"
         )
     ]
     result = llm.invoke(messages)

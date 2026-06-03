@@ -74,3 +74,7 @@ class LearningResource(BaseModel):
     content:str = Field(...,min_length=1)
     key_points:list[str] = Field(default_factory=list)
     examples:list[str] = Field(default_factory=list)
+
+class LearningResourceGenerateRequest(BaseModel):
+    course_name: str = Field(...,min_length=1,max_length=100)
+    topic: str = Field(...,min_length=1,max_length=100)
