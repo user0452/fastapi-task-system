@@ -6,6 +6,7 @@ USE task_db2;
 
 DROP TABLE IF EXISTS operation_logs;
 DROP TABLE IF EXISTS student_profiles;
+DROP TABLE IF EXISTS learning_resources;
 DROP TABLE IF EXISTS tasks;
 DROP TABLE IF EXISTS users;
 
@@ -60,6 +61,26 @@ CREATE TABLE student_profiles (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
     CONSTRAINT fk_profiles_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE learning_resources (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    course_name VARCHAR(100) NOT NULL,
+    topic VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(50) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    resource_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_resources_user_id (user_id),
+    INDEX idx_resources_course_topic (user_id, course_name, topic),
+
+    CONSTRAINT fk_resources_user
         FOREIGN KEY (user_id)
         REFERENCES users(id)
         ON DELETE CASCADE

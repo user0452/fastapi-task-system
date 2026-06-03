@@ -36,6 +36,17 @@ def generate_resource_api(request: LearningResourceGenerateRequest, user=Depends
                 topic=request.topic,
                 profile=profile
             )
+            resouce_json = json.dumps(resource,ensure_ascii=False)
+            cursor.execute(
+                 """
+                 insert into learning_resources (
+                 user_id,course_name,topic,resource_type,title,content,resource_json
+                 )values (%s,%s,%s,%s,%s,%s,%s)
+                 """,
+                (user["id"],request.course_name,request.topic,resource["resource_type"],resource["title"],resource["content"],resouce_json)
+            )
+            conn.commit()
+            resource["id"] = cursor.lastrowid
             return success(
                 data=resource,
                 message="生成学习资源成功"
