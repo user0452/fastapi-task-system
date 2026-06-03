@@ -67,3 +67,10 @@ class StudentProfile(BaseModel):
 
 class StudentProfileGenerateRequest(BaseModel):
     text: str = Field(...,min_length=1,max_length=3000)
+
+class LearningResource(BaseModel):
+    title:str = Field(...,min_length=1,max_length=100)
+    resource_type:Literal["explanation"] = "explanation"
+    content:str = Field(...,min_length=1)
+    key_points:list[str] = Field(default_factory=list)
+    examples:list[str] = Field(default_factory=list)
