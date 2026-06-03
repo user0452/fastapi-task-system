@@ -1,6 +1,5 @@
 import json
 from fastapi import APIRouter, Depends
-from pyexpat.errors import messages
 from db import get_conn
 from agents.profile_agent import generate_student_profile
 from models import StudentProfileGenerateRequest
