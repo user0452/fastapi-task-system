@@ -67,6 +67,7 @@
             <nav class="side-nav" aria-label="主导航">
                 <button type="button" class="nav-item active" data-view="tasks">任务中心</button>
                 <button type="button" class="nav-item" data-view="ai">AI 复习计划</button>
+                <button type="button" class="nav-item" data-view="a3">A3 学习智能体</button>
             </nav>
 
             <div class="user-panel">
@@ -237,6 +238,124 @@
                             </div>
                         </div>
                         <div id="log-list" class="result-list"></div>
+                    </section>
+                </div>
+            </section>
+
+            <section id="a3-view" class="view">
+                <div class="ai-grid">
+                    <section class="ai-card glass-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3>当前学生画像</h3>
+                                <span id="profile-current-meta">加载中</span>
+                            </div>
+                            <div class="panel-actions">
+                                <button type="button" id="refresh-profile-btn" class="btn btn-ghost">刷新画像</button>
+                            </div>
+                        </div>
+                        <pre id="profile-current-json" class="json-box">正在加载...</pre>
+                    </section>
+
+                    <section class="ai-card glass-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3>生成学生画像</h3>
+                                <span>保存为当前用户画像</span>
+                            </div>
+                        </div>
+                        <label class="field">
+                            <span>学生描述</span>
+                            <textarea id="profile-text" rows="6" placeholder="我是软件工程大三，算法弱，每天能学2小时"></textarea>
+                        </label>
+                        <button type="button" id="generate-profile-btn" class="btn btn-primary">生成画像</button>
+                        <div id="profile-msg" class="inline-message hidden" role="status"></div>
+                        <pre id="profile-generate-result" class="json-box hidden"></pre>
+                    </section>
+
+                    <section class="ai-card glass-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3>生成学习资源</h3>
+                                <span>基于课程、知识点和当前画像</span>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <label class="field">
+                                <span>课程名</span>
+                                <input type="text" id="resource-course" placeholder="高等数学">
+                            </label>
+                            <label class="field">
+                                <span>知识点</span>
+                                <input type="text" id="resource-topic" placeholder="导数">
+                            </label>
+                        </div>
+                        <button type="button" id="generate-resource-btn" class="btn btn-primary">生成资源</button>
+                        <div id="resource-generate-msg" class="inline-message hidden" role="status"></div>
+                        <div id="resource-generate-result" class="result-list"></div>
+                    </section>
+
+                    <section class="ai-card glass-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3>生成练习题</h3>
+                                <span>展示题集标题和题目</span>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <label class="field">
+                                <span>课程名</span>
+                                <input type="text" id="quiz-course" placeholder="软件测试">
+                            </label>
+                            <label class="field">
+                                <span>知识点</span>
+                                <input type="text" id="quiz-topic" placeholder="等价类划分">
+                            </label>
+                        </div>
+                        <button type="button" id="generate-quiz-btn" class="btn btn-primary">生成题集</button>
+                        <div id="quiz-generate-msg" class="inline-message hidden" role="status"></div>
+                        <div id="quiz-result" class="quiz-box"></div>
+                    </section>
+
+                    <section class="ai-card glass-panel ai-card-wide">
+                        <div class="panel-head">
+                            <div>
+                                <h3>学习资源列表</h3>
+                                <span id="resource-list-meta">共 0 条</span>
+                            </div>
+                            <div class="panel-actions">
+                                <button type="button" id="refresh-resources-btn" class="btn btn-ghost">刷新资源</button>
+                            </div>
+                        </div>
+                        <div class="table-wrap resource-table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>标题</th>
+                                        <th>课程</th>
+                                        <th>知识点</th>
+                                        <th>创建时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="resource-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div id="resource-empty" class="empty-state hidden">
+                            <strong>暂无学习资源</strong>
+                            <span>生成资源后会出现在这里。</span>
+                        </div>
+                    </section>
+
+                    <section class="ai-card glass-panel ai-card-wide">
+                        <div class="panel-head">
+                            <div>
+                                <h3>学习资源详情</h3>
+                                <span id="resource-detail-meta">点击列表项查看</span>
+                            </div>
+                        </div>
+                        <div id="resource-detail" class="resource-detail empty-detail">
+                            <span>尚未选择学习资源</span>
+                        </div>
                     </section>
                 </div>
             </section>

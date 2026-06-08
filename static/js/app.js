@@ -9,6 +9,9 @@ const state = {
     exams: [],
     previewTasks: [],
     operationLogs: [],
+    resources: [],
+    resourcesTotal: 0,
+    selectedResourceId: null,
     deleteTargetId: null,
 };
 
@@ -94,6 +97,38 @@ function formatDate(value) {
     });
 }
 
+function prettyJson(value) {
+    return JSON.stringify(value ?? null, null, 2);
+}
+
+function valueToText(value) {
+    if (value === null || value === undefined || value === "") return "";
+    if (typeof value === "string") return value;
+    return JSON.stringify(value, null, 2);
+}
+
+function renderMultiline(value) {
+    const text = valueToText(value);
+    return text ? escapeHtml(text).replace(/\n/g, "<br>") : "暂无";
+}
+
+function normalizeListValue(value) {
+    if (!value) return [];
+    return Array.isArray(value) ? value : [value];
+}
+
+function renderPlainList(value) {
+    const list = normalizeListValue(value);
+    if (!list.length) {
+        return `<span class="muted-text">暂无</span>`;
+    }
+    return `
+        <ul class="plain-list">
+            ${list.map((item) => `<li>${renderMultiline(item)}</li>`).join("")}
+        </ul>
+    `;
+}
+
 function showToast(message, type = "success") {
     const toast = $("#toast");
     toast.textContent = message;
@@ -112,6 +147,13 @@ function showInlineMessage(element, message, type = "success") {
 function hideInlineMessage(element) {
     element.textContent = "";
     element.className = "inline-message hidden";
+}
+
+function handleAuthExpired(result) {
+    if (result.code !== 401) return false;
+    logout();
+    showInlineMessage($("#auth-msg"), "登录已失效，请重新登录", "error");
+    return true;
 }
 
 function setBusy(button, busy, busyText = "处理中") {
@@ -148,7 +190,25 @@ function switchView(target) {
     $$(".view").forEach((view) => {
         view.classList.toggle("active", view.id === `${target}-view`);
     });
-    $("#workspace-title").textContent = target === "ai" ? "AI 复习计划" : "任务中心";
+
+    const titleMap = {
+        tasks: "任务中心",
+        ai: "AI 复习计划",
+        a3: "A3 学习智能体",
+    };
+    const eyebrowMap = {
+        tasks: "个人任务面板",
+        ai: "AI 工作区",
+        a3: "个性化学习",
+    };
+
+    $(".eyebrow").textContent = eyebrowMap[target] || "FastAPI 工作台";
+    $("#workspace-title").textContent = titleMap[target] || "任务中心";
+    $("#add-task-btn").classList.toggle("hidden", target !== "tasks");
+
+    if (target === "a3") {
+        loadA3Dashboard();
+    }
 }
 
 function logout() {
@@ -157,6 +217,9 @@ function logout() {
     state.tasks = [];
     state.exams = [];
     state.previewTasks = [];
+    state.resources = [];
+    state.resourcesTotal = 0;
+    state.selectedResourceId = null;
     $("#login-form").reset();
     $("#register-form").reset();
     showPage("auth");
@@ -173,6 +236,7 @@ function checkAuth() {
     $("#username-display").textContent = username;
     showPage("main");
     loadDashboard();
+    loadA3Dashboard();
 }
 
 async function fetchTasks(page, size, status = "") {
@@ -552,6 +616,311 @@ async function importPreviewTasks() {
     showToast(`已通过确认接口导入 ${createdCount} 条任务`);
 }
 
+async function loadA3Dashboard() {
+    if (!localStorage.getItem("token")) return;
+    await Promise.all([loadCurrentProfile(), loadResources()]);
+}
+
+function renderCurrentProfile(payload) {
+    const meta = $("#profile-current-meta");
+    const box = $("#profile-current-json");
+
+    if (!payload) {
+        meta.textContent = "暂无画像";
+        box.textContent = "暂无画像";
+        return;
+    }
+
+    const profile = payload.profile || payload;
+    const updatedAt = payload.updated_at || payload.created_at;
+    meta.textContent = updatedAt ? `更新于 ${formatDate(updatedAt)}` : "已保存";
+    box.textContent = prettyJson(profile);
+}
+
+async function loadCurrentProfile() {
+    const result = await api("/profiles/me");
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        $("#profile-current-meta").textContent = "获取失败";
+        $("#profile-current-json").textContent = normalizeMessage(result.message, "获取学生画像失败");
+        return;
+    }
+
+    renderCurrentProfile(result.data);
+}
+
+async function generateProfile() {
+    const input = $("#profile-text");
+    const text = input.value.trim();
+    const messageBox = $("#profile-msg");
+    const resultBox = $("#profile-generate-result");
+
+    if (!text) {
+        showInlineMessage(messageBox, "请输入学生描述", "error");
+        return;
+    }
+
+    const button = $("#generate-profile-btn");
+    setBusy(button, true, "生成中");
+    hideInlineMessage(messageBox);
+
+    const result = await api("/profiles/generate", {
+        method: "POST",
+        body: JSON.stringify({ text }),
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showInlineMessage(messageBox, normalizeMessage(result.message, "生成学生画像失败"), "error");
+        return;
+    }
+
+    resultBox.textContent = prettyJson(result.data);
+    resultBox.classList.remove("hidden");
+    showInlineMessage(messageBox, normalizeMessage(result.message, "生成学生画像成功"), "success");
+    await loadCurrentProfile();
+}
+
+function getResourceViewModel(resource) {
+    const nested = resource?.resource || {};
+    return {
+        id: resource?.id || nested.id,
+        title: resource?.title || nested.title || "未命名资源",
+        course_name: resource?.course_name || nested.course_name || "",
+        topic: resource?.topic || nested.topic || "",
+        created_at: resource?.created_at || nested.created_at,
+        content: resource?.content || nested.content || "",
+        key_points: resource?.key_points || nested.key_points || [],
+        examples: resource?.examples || nested.examples || [],
+        raw: resource,
+    };
+}
+
+function renderResourceSnapshot(resource) {
+    const item = getResourceViewModel(resource);
+    return `
+        <div class="resource-snapshot">
+            <strong>${escapeHtml(item.title)}</strong>
+            <span class="resource-meta">${escapeHtml(item.course_name || "-")} · ${escapeHtml(item.topic || "-")}</span>
+            <section>
+                <h4>内容</h4>
+                <p>${renderMultiline(item.content)}</p>
+            </section>
+            <section>
+                <h4>关键点</h4>
+                ${renderPlainList(item.key_points)}
+            </section>
+            <section>
+                <h4>示例</h4>
+                ${renderPlainList(item.examples)}
+            </section>
+        </div>
+    `;
+}
+
+async function fetchResources(page = 1, size = 10) {
+    const params = new URLSearchParams({ page: String(page), size: String(size) });
+    const primary = await api(`/resources?${params.toString()}`);
+    if (primary.code !== 404) return primary;
+
+    const fallback = await api(`/resources/resources?${params.toString()}`);
+    fallback.usedFallback = true;
+    return fallback;
+}
+
+async function loadResources() {
+    const result = await fetchResources(1, 10);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        state.resources = [];
+        state.resourcesTotal = 0;
+        renderResourceList(0);
+        $("#resource-list-meta").textContent = normalizeMessage(result.message, "获取学习资源失败");
+        return;
+    }
+
+    const data = result.data || {};
+    const list = data.list || data.items || (Array.isArray(data) ? data : []);
+    state.resources = list;
+    state.resourcesTotal = data.total ?? list.length;
+    renderResourceList();
+}
+
+function renderResourceList(total = state.resourcesTotal) {
+    const tbody = $("#resource-tbody");
+    const tableWrap = $(".resource-table-wrap");
+    const empty = $("#resource-empty");
+
+    $("#resource-list-meta").textContent = `共 ${total} 条`;
+
+    if (!state.resources.length) {
+        tbody.innerHTML = "";
+        tableWrap.classList.add("hidden");
+        empty.classList.remove("hidden");
+        return;
+    }
+
+    tableWrap.classList.remove("hidden");
+    empty.classList.add("hidden");
+    tbody.innerHTML = state.resources.map((resource) => {
+        const active = String(resource.id) === String(state.selectedResourceId) ? "active" : "";
+        return `
+            <tr class="clickable-row ${active}" tabindex="0" data-resource-id="${escapeHtml(resource.id)}">
+                <td><strong>${escapeHtml(resource.title || "未命名资源")}</strong></td>
+                <td>${escapeHtml(resource.course_name || "-")}</td>
+                <td>${escapeHtml(resource.topic || "-")}</td>
+                <td>${formatDate(resource.created_at)}</td>
+            </tr>
+        `;
+    }).join("");
+}
+
+function renderResourceDetail(resource = null) {
+    const container = $("#resource-detail");
+    const meta = $("#resource-detail-meta");
+
+    if (!resource) {
+        meta.textContent = "点击列表项查看";
+        container.className = "resource-detail empty-detail";
+        container.innerHTML = `<span>尚未选择学习资源</span>`;
+        return;
+    }
+
+    const item = getResourceViewModel(resource);
+    const metaParts = [item.course_name, item.topic, item.created_at ? formatDate(item.created_at) : ""].filter(Boolean);
+    meta.textContent = metaParts.length ? metaParts.join(" · ") : "资源详情";
+    container.className = "resource-detail";
+    container.innerHTML = renderResourceSnapshot(item.raw);
+}
+
+async function openResourceDetail(id) {
+    state.selectedResourceId = id;
+    renderResourceList();
+    $("#resource-detail-meta").textContent = "加载中";
+    $("#resource-detail").className = "resource-detail empty-detail";
+    $("#resource-detail").innerHTML = `<span>正在加载...</span>`;
+
+    const result = await api(`/resources/${id}`);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        renderResourceDetail();
+        showToast(normalizeMessage(result.message, "获取学习资源详情失败"), "error");
+        return;
+    }
+
+    renderResourceDetail(result.data);
+    renderResourceList();
+}
+
+async function generateResource() {
+    const courseName = $("#resource-course").value.trim();
+    const topic = $("#resource-topic").value.trim();
+    const messageBox = $("#resource-generate-msg");
+    const resultBox = $("#resource-generate-result");
+
+    if (!courseName || !topic) {
+        showInlineMessage(messageBox, "请输入课程名和知识点", "error");
+        return;
+    }
+
+    const button = $("#generate-resource-btn");
+    setBusy(button, true, "生成中");
+    hideInlineMessage(messageBox);
+
+    const result = await api("/resources/generate", {
+        method: "POST",
+        body: JSON.stringify({ course_name: courseName, topic }),
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showInlineMessage(messageBox, normalizeMessage(result.message, "生成学习资源失败"), "error");
+        return;
+    }
+
+    const generatedResource = {
+        ...result.data,
+        course_name: result.data?.course_name || courseName,
+        topic: result.data?.topic || topic,
+    };
+    resultBox.innerHTML = renderResourceSnapshot(generatedResource);
+    showInlineMessage(messageBox, normalizeMessage(result.message, "生成学习资源成功"), "success");
+    await loadResources();
+    if (result.data?.id) {
+        await openResourceDetail(result.data.id);
+    }
+}
+
+function renderQuiz(quiz = null) {
+    const container = $("#quiz-result");
+    if (!quiz) {
+        container.innerHTML = "";
+        return;
+    }
+
+    const questions = normalizeListValue(quiz.questions);
+    container.innerHTML = `
+        <div class="quiz-title">
+            <strong>${escapeHtml(quiz.title || "练习题集")}</strong>
+            <span>${escapeHtml(quiz.course_name || "-")} · ${escapeHtml(quiz.topic || "-")}</span>
+        </div>
+        <div class="quiz-question-list">
+            ${questions.length ? questions.map((question, index) => {
+                const meta = [question.question_type, question.difficulty].filter(Boolean).join(" · ");
+                return `
+                    <article class="quiz-question">
+                        <div class="quiz-question-head">
+                            <strong>第 ${index + 1} 题</strong>
+                            ${meta ? `<span>${escapeHtml(meta)}</span>` : ""}
+                        </div>
+                        <p>${renderMultiline(question.question || question)}</p>
+                        ${question.options ? `<div class="quiz-options">${renderPlainList(question.options)}</div>` : ""}
+                        ${question.answer ? `<div class="quiz-answer"><span>答案</span><p>${renderMultiline(question.answer)}</p></div>` : ""}
+                    </article>
+                `;
+            }).join("") : `<pre class="json-box">${escapeHtml(prettyJson(quiz))}</pre>`}
+        </div>
+    `;
+}
+
+async function generateQuiz() {
+    const courseName = $("#quiz-course").value.trim();
+    const topic = $("#quiz-topic").value.trim();
+    const messageBox = $("#quiz-generate-msg");
+
+    if (!courseName || !topic) {
+        showInlineMessage(messageBox, "请输入课程名和知识点", "error");
+        return;
+    }
+
+    const button = $("#generate-quiz-btn");
+    setBusy(button, true, "生成中");
+    hideInlineMessage(messageBox);
+
+    const result = await api("/quizzes/generate", {
+        method: "POST",
+        body: JSON.stringify({ course_name: courseName, topic }),
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showInlineMessage(messageBox, normalizeMessage(result.message, "生成练习题失败"), "error");
+        return;
+    }
+
+    renderQuiz(result.data);
+    showInlineMessage(messageBox, normalizeMessage(result.message, "生成练习题成功"), "success");
+}
+
 function bindEvents() {
     $$(".auth-tab").forEach((tab) => {
         tab.addEventListener("click", () => switchAuthTab(tab.dataset.authTab));
@@ -580,7 +949,7 @@ function bindEvents() {
         localStorage.setItem("username", username);
         $("#username-display").textContent = username;
         showPage("main");
-        await loadDashboard();
+        await Promise.all([loadDashboard(), loadA3Dashboard()]);
     });
 
     $("#register-form").addEventListener("submit", async (event) => {
@@ -618,7 +987,14 @@ function bindEvents() {
     });
 
     $("#logout-btn").addEventListener("click", logout);
-    $("#refresh-btn").addEventListener("click", () => loadDashboard());
+    $("#refresh-btn").addEventListener("click", () => {
+        const activeView = $(".nav-item.active")?.dataset.view;
+        if (activeView === "a3") {
+            loadA3Dashboard();
+            return;
+        }
+        loadDashboard();
+    });
     $("#add-task-btn").addEventListener("click", () => openTaskModal());
 
     $("#status-filter").addEventListener("change", (event) => {
@@ -741,9 +1117,32 @@ function bindEvents() {
     $("#preview-plan-btn").addEventListener("click", previewReviewPlan);
     $("#import-plan-btn").addEventListener("click", importPreviewTasks);
     $("#refresh-logs-btn").addEventListener("click", () => loadOperationLogs());
+
+    $("#refresh-profile-btn").addEventListener("click", loadCurrentProfile);
+    $("#generate-profile-btn").addEventListener("click", generateProfile);
+    $("#refresh-resources-btn").addEventListener("click", loadResources);
+    $("#generate-resource-btn").addEventListener("click", generateResource);
+    $("#generate-quiz-btn").addEventListener("click", generateQuiz);
+
+    $("#resource-tbody").addEventListener("click", (event) => {
+        const row = event.target.closest("tr[data-resource-id]");
+        if (!row) return;
+        openResourceDetail(row.dataset.resourceId);
+    });
+
+    $("#resource-tbody").addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        const row = event.target.closest("tr[data-resource-id]");
+        if (!row) return;
+        event.preventDefault();
+        openResourceDetail(row.dataset.resourceId);
+    });
 }
 
 bindEvents();
 renderPreviewTasks();
 renderOperationLogs();
+renderResourceList();
+renderResourceDetail();
+renderQuiz();
 checkAuth();
