@@ -869,7 +869,7 @@ function renderQuiz(quiz = null) {
 }
 
 function getQuizViewModel(quiz) {
-    const nested = quiz?.quiz_json || {};
+    const nested = quiz?.quiz_set || quiz?.quiz_json || {};
     const nestedQuestions = Array.isArray(nested.questions) ? nested.questions : [];
     const directQuestions = Array.isArray(quiz?.questions) ? quiz.questions : [];
     return {
@@ -1029,7 +1029,7 @@ async function generateQuiz() {
         return;
     }
 
-    renderQuiz(result.data);
+    renderQuiz(result.data?.quiz_set || result.data);
     showInlineMessage(messageBox, normalizeMessage(result.message, "生成练习题成功"), "success");
     await loadQuizzes();
 }
