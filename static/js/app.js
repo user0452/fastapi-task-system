@@ -12,6 +12,9 @@ const state = {
     resources: [],
     resourcesTotal: 0,
     selectedResourceId: null,
+    quizzes: [],
+    quizzesTotal: 0,
+    selectedQuizId: null,
     deleteTargetId: null,
 };
 
@@ -220,6 +223,9 @@ function logout() {
     state.resources = [];
     state.resourcesTotal = 0;
     state.selectedResourceId = null;
+    state.quizzes = [];
+    state.quizzesTotal = 0;
+    state.selectedQuizId = null;
     $("#login-form").reset();
     $("#register-form").reset();
     showPage("auth");
@@ -618,7 +624,7 @@ async function importPreviewTasks() {
 
 async function loadA3Dashboard() {
     if (!localStorage.getItem("token")) return;
-    await Promise.all([loadCurrentProfile(), loadResources()]);
+    await Promise.all([loadCurrentProfile(), loadResources(), loadQuizzes()]);
 }
 
 function renderCurrentProfile(payload) {
@@ -723,12 +729,7 @@ function renderResourceSnapshot(resource) {
 
 async function fetchResources(page = 1, size = 10) {
     const params = new URLSearchParams({ page: String(page), size: String(size) });
-    const primary = await api(`/resources?${params.toString()}`);
-    if (primary.code !== 404) return primary;
-
-    const fallback = await api(`/resources/resources?${params.toString()}`);
-    fallback.usedFallback = true;
-    return fallback;
+    return api(`/resources?${params.toString()}`);
 }
 
 async function loadResources() {
@@ -864,12 +865,32 @@ function renderQuiz(quiz = null) {
         container.innerHTML = "";
         return;
     }
+    container.innerHTML = renderQuizSnapshot(quiz);
+}
 
-    const questions = normalizeListValue(quiz.questions);
-    container.innerHTML = `
+function getQuizViewModel(quiz) {
+    const nested = quiz?.quiz_json || {};
+    const nestedQuestions = Array.isArray(nested.questions) ? nested.questions : [];
+    const directQuestions = Array.isArray(quiz?.questions) ? quiz.questions : [];
+    return {
+        id: quiz?.id || nested.id,
+        title: quiz?.title || nested.title || "未命名题集",
+        course_name: quiz?.course_name || nested.course_name || "",
+        topic: quiz?.topic || nested.topic || "",
+        created_at: quiz?.created_at || nested.created_at,
+        questions: nestedQuestions.length ? nestedQuestions : directQuestions,
+        raw: quiz,
+    };
+}
+
+function renderQuizSnapshot(quiz) {
+    const item = getQuizViewModel(quiz);
+    const questions = normalizeListValue(item.questions);
+
+    return `
         <div class="quiz-title">
-            <strong>${escapeHtml(quiz.title || "练习题集")}</strong>
-            <span>${escapeHtml(quiz.course_name || "-")} · ${escapeHtml(quiz.topic || "-")}</span>
+            <strong>${escapeHtml(item.title)}</strong>
+            <span>${escapeHtml(item.course_name || "-")} · ${escapeHtml(item.topic || "-")}</span>
         </div>
         <div class="quiz-question-list">
             ${questions.length ? questions.map((question, index) => {
@@ -885,9 +906,100 @@ function renderQuiz(quiz = null) {
                         ${question.answer ? `<div class="quiz-answer"><span>答案</span><p>${renderMultiline(question.answer)}</p></div>` : ""}
                     </article>
                 `;
-            }).join("") : `<pre class="json-box">${escapeHtml(prettyJson(quiz))}</pre>`}
+            }).join("") : `<pre class="json-box">${escapeHtml(prettyJson(item.raw || quiz))}</pre>`}
         </div>
     `;
+}
+
+async function fetchQuizzes(page = 1, size = 10) {
+    const params = new URLSearchParams({ page: String(page), size: String(size) });
+    return api(`/quizzes?${params.toString()}`);
+}
+
+async function loadQuizzes() {
+    const result = await fetchQuizzes(1, 10);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        state.quizzes = [];
+        state.quizzesTotal = 0;
+        renderQuizList();
+        $("#quiz-list-meta").textContent = normalizeMessage(result.message, "获取题集列表失败");
+        return;
+    }
+
+    const data = result.data || {};
+    const list = data.list || data.items || (Array.isArray(data) ? data : []);
+    state.quizzes = list;
+    state.quizzesTotal = data.total ?? list.length;
+    renderQuizList();
+}
+
+function renderQuizList(total = state.quizzesTotal) {
+    const tbody = $("#quiz-tbody");
+    const tableWrap = $(".quiz-table-wrap");
+    const empty = $("#quiz-empty");
+
+    $("#quiz-list-meta").textContent = `共 ${total} 条`;
+
+    if (!state.quizzes.length) {
+        tbody.innerHTML = "";
+        tableWrap.classList.add("hidden");
+        empty.classList.remove("hidden");
+        return;
+    }
+
+    tableWrap.classList.remove("hidden");
+    empty.classList.add("hidden");
+    tbody.innerHTML = state.quizzes.map((quiz) => {
+        const active = String(quiz.id) === String(state.selectedQuizId) ? "active" : "";
+        return `
+            <tr class="clickable-row ${active}" tabindex="0" data-quiz-id="${escapeHtml(quiz.id)}">
+                <td><strong>${escapeHtml(quiz.title || "未命名题集")}</strong></td>
+                <td>${escapeHtml(quiz.course_name || "-")}</td>
+                <td>${escapeHtml(quiz.topic || "-")}</td>
+                <td>${formatDate(quiz.created_at)}</td>
+            </tr>
+        `;
+    }).join("");
+}
+
+function renderQuizDetail(quiz = null) {
+    const container = $("#quiz-detail");
+    const meta = $("#quiz-detail-meta");
+
+    if (!quiz) {
+        meta.textContent = "点击列表项查看";
+        container.className = "quiz-box empty-detail";
+        container.innerHTML = `<span>尚未选择题集</span>`;
+        return;
+    }
+
+    const item = getQuizViewModel(quiz);
+    const metaParts = [item.course_name, item.topic, item.created_at ? formatDate(item.created_at) : ""].filter(Boolean);
+    meta.textContent = metaParts.length ? metaParts.join(" · ") : "题集详情";
+    container.className = "quiz-box";
+    container.innerHTML = renderQuizSnapshot(item.raw);
+}
+
+async function openQuizDetail(id) {
+    state.selectedQuizId = id;
+    renderQuizList();
+    $("#quiz-detail-meta").textContent = "加载中";
+    $("#quiz-detail").className = "quiz-box empty-detail";
+    $("#quiz-detail").innerHTML = `<span>正在加载...</span>`;
+
+    const result = await api(`/quizzes/${id}`);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        renderQuizDetail();
+        showToast(normalizeMessage(result.message, "获取题集详情失败"), "error");
+        return;
+    }
+
+    renderQuizDetail(result.data);
+    renderQuizList();
 }
 
 async function generateQuiz() {
@@ -919,6 +1031,7 @@ async function generateQuiz() {
 
     renderQuiz(result.data);
     showInlineMessage(messageBox, normalizeMessage(result.message, "生成练习题成功"), "success");
+    await loadQuizzes();
 }
 
 function bindEvents() {
@@ -1121,6 +1234,7 @@ function bindEvents() {
     $("#refresh-profile-btn").addEventListener("click", loadCurrentProfile);
     $("#generate-profile-btn").addEventListener("click", generateProfile);
     $("#refresh-resources-btn").addEventListener("click", loadResources);
+    $("#refresh-quizzes-btn").addEventListener("click", loadQuizzes);
     $("#generate-resource-btn").addEventListener("click", generateResource);
     $("#generate-quiz-btn").addEventListener("click", generateQuiz);
 
@@ -1137,6 +1251,20 @@ function bindEvents() {
         event.preventDefault();
         openResourceDetail(row.dataset.resourceId);
     });
+
+    $("#quiz-tbody").addEventListener("click", (event) => {
+        const row = event.target.closest("tr[data-quiz-id]");
+        if (!row) return;
+        openQuizDetail(row.dataset.quizId);
+    });
+
+    $("#quiz-tbody").addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        const row = event.target.closest("tr[data-quiz-id]");
+        if (!row) return;
+        event.preventDefault();
+        openQuizDetail(row.dataset.quizId);
+    });
 }
 
 bindEvents();
@@ -1144,5 +1272,7 @@ renderPreviewTasks();
 renderOperationLogs();
 renderResourceList();
 renderResourceDetail();
+renderQuizList();
+renderQuizDetail();
 renderQuiz();
 checkAuth();

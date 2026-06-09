@@ -693,6 +693,10 @@ tbody tr:hover {
     min-width: 720px;
 }
 
+.quiz-table-wrap table {
+    min-width: 720px;
+}
+
 .clickable-row {
     cursor: pointer;
 }

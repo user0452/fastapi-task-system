@@ -357,6 +357,47 @@
                             <span>尚未选择学习资源</span>
                         </div>
                     </section>
+
+                    <section class="ai-card glass-panel ai-card-wide">
+                        <div class="panel-head">
+                            <div>
+                                <h3>题集列表</h3>
+                                <span id="quiz-list-meta">共 0 条</span>
+                            </div>
+                            <div class="panel-actions">
+                                <button type="button" id="refresh-quizzes-btn" class="btn btn-ghost">刷新题集</button>
+                            </div>
+                        </div>
+                        <div class="table-wrap quiz-table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>标题</th>
+                                        <th>课程</th>
+                                        <th>知识点</th>
+                                        <th>创建时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="quiz-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div id="quiz-empty" class="empty-state hidden">
+                            <strong>暂无题集</strong>
+                            <span>生成练习题后会出现在这里。</span>
+                        </div>
+                    </section>
+
+                    <section class="ai-card glass-panel ai-card-wide">
+                        <div class="panel-head">
+                            <div>
+                                <h3>题集详情</h3>
+                                <span id="quiz-detail-meta">点击列表项查看</span>
+                            </div>
+                        </div>
+                        <div id="quiz-detail" class="quiz-box empty-detail">
+                            <span>尚未选择题集</span>
+                        </div>
+                    </section>
                 </div>
             </section>
         </main>
