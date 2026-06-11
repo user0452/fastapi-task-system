@@ -78,3 +78,40 @@ class LearningResource(BaseModel):
 class LearningResourceGenerateRequest(BaseModel):
     course_name: str = Field(...,min_length=1,max_length=100)
     topic: str = Field(...,min_length=1,max_length=100)
+
+class QuizQuestion(BaseModel):
+    question:str = Field(...,min_length=1,max_length=500)
+    answer:str = Field(...,min_length=1,max_length=1000)
+    question_type:Literal["choice","short_answer","coding"] = "short_answer"
+    difficulty:Literal["easy", "medium", "hard"] = "easy"
+
+class QuizSet(BaseModel):
+    title:str = Field(...,min_length=1,max_length=100)
+    course_name:str = Field(...,min_length=1,max_length=100)
+    topic:str = Field(...,min_length=1,max_length=100)
+    questions:list[QuizQuestion] = Field(default_factory=list)
+
+class QuizGenerateRequest(BaseModel):
+    course_name: str = Field(...,min_length=1,max_length=100)
+    topic: str = Field(...,min_length=1,max_length=100)
+
+class PlanPreviewRequest(BaseModel):
+    course_name: str = Field(..., min_length=1, max_length=100)
+    topic:str = Field(...,min_length=1,max_length=100)
+    days:int = Field(default=3,ge=1,le=7)
+
+class PlanTaskPreview(BaseModel):
+    title: str = Field(...,min_length=1,max_length=100)
+    description: Optional[str] = Field(default="",max_length=500)
+    status:Literal["todo","doing","done"] = "todo"
+    priority:Literal["low", "medium", "high"] = "medium"
+
+class LearningPlan(BaseModel):
+    plan_title: str = Field(...,min_length=1,max_length=100)
+    course_name:str = Field(...,min_length=1,max_length=100)
+    topic:str = Field(...,min_length=1,max_length=100)
+    days:int = Field(default=3,ge=1,le=30)
+    tasks_preview: list[PlanTaskPreview] = Field(default_factory=list)
+
+class PlanConfirmRequest(BaseModel):
+    tasks_preview: list[PlanTaskPreview] = Field(default_factory=list)

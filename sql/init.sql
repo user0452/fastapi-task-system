@@ -8,6 +8,8 @@ DROP TABLE IF EXISTS operation_logs;
 DROP TABLE IF EXISTS student_profiles;
 DROP TABLE IF EXISTS learning_resources;
 DROP TABLE IF EXISTS tasks;
+DROP TABLE IF EXISTS quiz_questions;
+DROP TABLE IF EXISTS quiz_sets;
 DROP TABLE IF EXISTS users;
 
 CREATE TABLE users (
@@ -84,4 +86,39 @@ CREATE TABLE learning_resources (
         FOREIGN KEY (user_id)
         REFERENCES users(id)
         ON DELETE CASCADE
+);
+
+create table quiz_sets (
+    id int auto_increment primary key,
+    user_id int not null,
+    title varchar(255) not null,
+    course_name varchar(100) not null,
+    topic varchar(100) not null,
+    quiz_json text not null,
+    created_at datetime default current_timestamp,
+
+    index idx_quiz_sets_user_id (user_id),
+    index idx_quiz_sets_course_topic (user_id, course_name, topic),
+
+    constraint fk_quiz_sets_user
+                       foreign key (user_id)
+                       references users(id)
+                       on delete cascade
+);
+
+create table quiz_questions (
+    id int auto_increment primary key,
+    quiz_set_id int not null,
+    question_type varchar(50) not null,
+    question varchar(255) not null,
+    answer varchar(255) not null,
+    difficulty varchar(20) not null,
+    created_at datetime default current_timestamp,
+
+    index idx_questions_quiz_set_id (quiz_set_id),
+    index idx_questions_difficulty (difficulty),
+    constraint fk_questions_quiz_set
+                            foreign key (quiz_set_id)
+                            references quiz_sets(id)
+                            on delete cascade
 );

@@ -15,6 +15,8 @@ const state = {
     quizzes: [],
     quizzesTotal: 0,
     selectedQuizId: null,
+    studyPlanPreview: null,
+    a3Page: "overview",
     deleteTargetId: null,
 };
 
@@ -32,6 +34,13 @@ const priorityMap = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+
+function setText(selector, text) {
+    const element = $(selector);
+    if (element) {
+        element.textContent = text;
+    }
+}
 
 async function api(path, options = {}) {
     const token = localStorage.getItem("token");
@@ -186,7 +195,19 @@ function switchAuthTab(target) {
     hideInlineMessage($("#auth-msg"));
 }
 
+function updateTopNavState() {
+    const activeView = $(".view.active")?.id?.replace("-view", "") || "a3";
+    $$(".top-nav-link").forEach((button) => {
+        const isA3Link = Boolean(button.dataset.a3Goto);
+        const active = activeView === "a3"
+            ? isA3Link && button.dataset.a3Goto === state.a3Page
+            : !isA3Link && button.dataset.view === activeView;
+        button.classList.toggle("active", active);
+    });
+}
+
 function switchView(target) {
+    $("#main-page").dataset.activeView = target;
     $$(".nav-item").forEach((item) => {
         item.classList.toggle("active", item.dataset.view === target);
     });
@@ -195,19 +216,26 @@ function switchView(target) {
     });
 
     const titleMap = {
-        tasks: "任务中心",
-        ai: "AI 复习计划",
-        a3: "A3 学习智能体",
+        tasks: "任务工作台",
+        ai: "智能工具",
+        a3: "A3 学习书案",
     };
     const eyebrowMap = {
-        tasks: "个人任务面板",
-        ai: "AI 工作区",
-        a3: "个性化学习",
+        tasks: "Personal Workspace",
+        ai: "Smart Tools",
+        a3: "A3 Learning Agent",
+    };
+    const subtitleMap = {
+        tasks: "查看任务状态、维护优先级并保持日常执行节奏。",
+        ai: "保留现有规则命令、考试解析和 AI 操作日志能力。",
+        a3: "以画像为底稿，分章管理计划、资源和练习题集。",
     };
 
     $(".eyebrow").textContent = eyebrowMap[target] || "FastAPI 工作台";
-    $("#workspace-title").textContent = titleMap[target] || "任务中心";
+    $("#workspace-title").textContent = titleMap[target] || "任务工作台";
+    $("#workspace-subtitle").textContent = subtitleMap[target] || "查看任务状态、维护优先级并保持日常执行节奏。";
     $("#add-task-btn").classList.toggle("hidden", target !== "tasks");
+    updateTopNavState();
 
     if (target === "a3") {
         loadA3Dashboard();
@@ -226,8 +254,12 @@ function logout() {
     state.quizzes = [];
     state.quizzesTotal = 0;
     state.selectedQuizId = null;
+    state.studyPlanPreview = null;
+    state.a3Page = "overview";
     $("#login-form").reset();
     $("#register-form").reset();
+    renderStudyPlanPreview();
+    switchA3Page("overview");
     showPage("auth");
 }
 
@@ -241,6 +273,7 @@ function checkAuth() {
 
     $("#username-display").textContent = username;
     showPage("main");
+    switchView("a3");
     loadDashboard();
     loadA3Dashboard();
 }
@@ -625,6 +658,176 @@ async function importPreviewTasks() {
 async function loadA3Dashboard() {
     if (!localStorage.getItem("token")) return;
     await Promise.all([loadCurrentProfile(), loadResources(), loadQuizzes()]);
+    updateA3Overview();
+}
+
+function switchA3Page(target = "overview") {
+    state.a3Page = target;
+    $$(".chapter-link").forEach((button) => {
+        button.classList.toggle("active", button.dataset.a3Page === target);
+    });
+    $$(".a3-subpage").forEach((panel) => {
+        panel.classList.toggle("active", panel.dataset.a3Panel === target);
+    });
+    updateA3Overview();
+    updateTopNavState();
+}
+
+function updateA3Overview() {
+    const profileMeta = $("#profile-current-meta")?.textContent || "加载中";
+    const profileStatus = profileMeta.includes("暂无")
+        ? "未建立"
+        : profileMeta.includes("加载")
+            ? "加载中"
+            : "已建立";
+    const planCount = Array.isArray(state.studyPlanPreview?.tasks_preview)
+        ? state.studyPlanPreview.tasks_preview.length
+        : 0;
+
+    setText("#overview-profile-status", profileStatus);
+    setText("#overview-profile-note", profileMeta);
+    setText("#overview-plan-status", planCount ? `${planCount} 项` : "待生成");
+    setText("#overview-resource-total", `${state.resourcesTotal || 0} 条`);
+    setText("#overview-resource-note", `共 ${state.resourcesTotal || 0} 条`);
+    setText("#overview-quiz-total", `${state.quizzesTotal || 0} 套`);
+    setText("#overview-quiz-note", `共 ${state.quizzesTotal || 0} 套`);
+}
+
+function renderStudyPlanPreview(plan = state.studyPlanPreview) {
+    const container = $("#study-plan-result");
+    const meta = $("#study-plan-meta");
+    const confirmButton = $("#confirm-study-plan-btn");
+
+    if (!container || !meta || !confirmButton) return;
+
+    if (!plan || !Array.isArray(plan.tasks_preview) || !plan.tasks_preview.length) {
+        meta.textContent = "根据课程、知识点和画像生成";
+        container.className = "plan-preview empty-detail";
+        container.innerHTML = `<span>尚未生成学习计划</span>`;
+        confirmButton.disabled = true;
+        updateA3Overview();
+        return;
+    }
+
+    const tasks = plan.tasks_preview;
+    const metaParts = [
+        plan.course_name || "",
+        plan.topic || "",
+        plan.days ? `${plan.days} 天` : "",
+    ].filter(Boolean);
+
+    meta.textContent = metaParts.join(" · ") || "学习计划预览";
+    container.className = "plan-preview";
+    container.innerHTML = `
+        <div class="plan-summary">
+            <strong>${escapeHtml(plan.plan_title || "学习计划")}</strong>
+            <span class="plan-summary-meta">共 ${tasks.length} 条任务</span>
+        </div>
+        <div class="plan-task-list">
+            ${tasks.map((task, index) => `
+                <article>
+                    <div class="plan-task-head">
+                        <strong>第 ${index + 1} 项 · ${escapeHtml(task.title || "未命名任务")}</strong>
+                        <div class="plan-task-meta">
+                            <span class="badge status-${escapeHtml(task.status || "todo")}">${statusMap[task.status || "todo"]}</span>
+                            <span class="badge priority-${escapeHtml(task.priority || "medium")}">${priorityMap[task.priority || "medium"]}</span>
+                        </div>
+                    </div>
+                    <p>${renderMultiline(task.description || "无描述")}</p>
+                </article>
+            `).join("")}
+        </div>
+    `;
+    confirmButton.disabled = false;
+    updateA3Overview();
+}
+
+async function previewStudyPlan() {
+    const courseName = $("#plan-course").value.trim();
+    const topic = $("#plan-topic").value.trim();
+    const days = Number($("#plan-days").value);
+    const messageBox = $("#study-plan-msg");
+
+    if (!courseName || !topic) {
+        showInlineMessage(messageBox, "请输入课程名和知识点", "error");
+        return;
+    }
+
+    if (!Number.isInteger(days) || days < 1 || days > 7) {
+        showInlineMessage(messageBox, "计划天数需在 1 到 7 之间", "error");
+        return;
+    }
+
+    const button = $("#preview-study-plan-btn");
+    setBusy(button, true, "生成中");
+    hideInlineMessage(messageBox);
+
+    const result = await api("/plans/preview", {
+        method: "POST",
+        body: JSON.stringify({
+            course_name: courseName,
+            topic,
+            days,
+        }),
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showInlineMessage(messageBox, normalizeMessage(result.message, "生成学习计划失败"), "error");
+        return;
+    }
+
+    state.studyPlanPreview = result.data || null;
+    renderStudyPlanPreview();
+    showInlineMessage(messageBox, normalizeMessage(result.message, "生成学习计划成功"), "success");
+}
+
+async function confirmStudyPlan() {
+    const preview = state.studyPlanPreview;
+    const tasksPreview = Array.isArray(preview?.tasks_preview) ? preview.tasks_preview : [];
+    const messageBox = $("#study-plan-msg");
+
+    if (!tasksPreview.length) {
+        showInlineMessage(messageBox, "请先生成学习计划预览", "error");
+        return;
+    }
+
+    const button = $("#confirm-study-plan-btn");
+    setBusy(button, true, "导入中");
+    hideInlineMessage(messageBox);
+
+    const result = await api("/plans/confirm", {
+        method: "POST",
+        body: JSON.stringify({ tasks_preview: tasksPreview }),
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showInlineMessage(messageBox, normalizeMessage(result.message, "导入学习计划失败"), "error");
+        return;
+    }
+
+    const createdCount = Number(result.data?.created_count ?? tasksPreview.length);
+    const expectedCount = tasksPreview.length;
+    await loadDashboard();
+
+    if (createdCount >= expectedCount) {
+        state.studyPlanPreview = null;
+        renderStudyPlanPreview();
+        showInlineMessage(messageBox, normalizeMessage(result.message, `已导入 ${createdCount} 条任务`), "success");
+        return;
+    }
+
+    renderStudyPlanPreview();
+    showInlineMessage(
+        messageBox,
+        `后端已返回创建 ${createdCount}/${expectedCount} 条任务，预览已保留，请按当前后端结果继续处理。`,
+        "error",
+    );
 }
 
 function renderCurrentProfile(payload) {
@@ -634,6 +837,7 @@ function renderCurrentProfile(payload) {
     if (!payload) {
         meta.textContent = "暂无画像";
         box.textContent = "暂无画像";
+        updateA3Overview();
         return;
     }
 
@@ -641,6 +845,7 @@ function renderCurrentProfile(payload) {
     const updatedAt = payload.updated_at || payload.created_at;
     meta.textContent = updatedAt ? `更新于 ${formatDate(updatedAt)}` : "已保存";
     box.textContent = prettyJson(profile);
+    updateA3Overview();
 }
 
 async function loadCurrentProfile() {
@@ -650,6 +855,7 @@ async function loadCurrentProfile() {
     if (result.code !== 200) {
         $("#profile-current-meta").textContent = "获取失败";
         $("#profile-current-json").textContent = normalizeMessage(result.message, "获取学生画像失败");
+        updateA3Overview();
         return;
     }
 
@@ -741,6 +947,7 @@ async function loadResources() {
         state.resourcesTotal = 0;
         renderResourceList(0);
         $("#resource-list-meta").textContent = normalizeMessage(result.message, "获取学习资源失败");
+        updateA3Overview();
         return;
     }
 
@@ -749,6 +956,7 @@ async function loadResources() {
     state.resources = list;
     state.resourcesTotal = data.total ?? list.length;
     renderResourceList();
+    updateA3Overview();
 }
 
 function renderResourceList(total = state.resourcesTotal) {
@@ -757,6 +965,7 @@ function renderResourceList(total = state.resourcesTotal) {
     const empty = $("#resource-empty");
 
     $("#resource-list-meta").textContent = `共 ${total} 条`;
+    updateA3Overview();
 
     if (!state.resources.length) {
         tbody.innerHTML = "";
@@ -925,6 +1134,7 @@ async function loadQuizzes() {
         state.quizzesTotal = 0;
         renderQuizList();
         $("#quiz-list-meta").textContent = normalizeMessage(result.message, "获取题集列表失败");
+        updateA3Overview();
         return;
     }
 
@@ -933,6 +1143,7 @@ async function loadQuizzes() {
     state.quizzes = list;
     state.quizzesTotal = data.total ?? list.length;
     renderQuizList();
+    updateA3Overview();
 }
 
 function renderQuizList(total = state.quizzesTotal) {
@@ -941,6 +1152,7 @@ function renderQuizList(total = state.quizzesTotal) {
     const empty = $("#quiz-empty");
 
     $("#quiz-list-meta").textContent = `共 ${total} 条`;
+    updateA3Overview();
 
     if (!state.quizzes.length) {
         tbody.innerHTML = "";
@@ -1032,6 +1244,9 @@ async function generateQuiz() {
     renderQuiz(result.data?.quiz_set || result.data);
     showInlineMessage(messageBox, normalizeMessage(result.message, "生成练习题成功"), "success");
     await loadQuizzes();
+    if (result.data?.id) {
+        await openQuizDetail(result.data.id);
+    }
 }
 
 function bindEvents() {
@@ -1062,6 +1277,7 @@ function bindEvents() {
         localStorage.setItem("username", username);
         $("#username-display").textContent = username;
         showPage("main");
+        switchView("a3");
         await Promise.all([loadDashboard(), loadA3Dashboard()]);
     });
 
@@ -1097,6 +1313,37 @@ function bindEvents() {
 
     $$(".nav-item").forEach((item) => {
         item.addEventListener("click", () => switchView(item.dataset.view));
+    });
+
+    $$(".top-nav-link").forEach((button) => {
+        button.addEventListener("click", () => {
+            if (button.dataset.a3Goto) {
+                switchView("a3");
+                switchA3Page(button.dataset.a3Goto);
+                return;
+            }
+            if (button.dataset.view) {
+                switchView(button.dataset.view);
+            }
+        });
+    });
+
+    $$("[data-view]:not(.nav-item):not(.top-nav-link)").forEach((button) => {
+        button.addEventListener("click", () => switchView(button.dataset.view));
+    });
+
+    $$(".chapter-link").forEach((button) => {
+        button.addEventListener("click", () => {
+            switchView("a3");
+            switchA3Page(button.dataset.a3Page);
+        });
+    });
+
+    $$("[data-a3-goto]:not(.top-nav-link)").forEach((button) => {
+        button.addEventListener("click", () => {
+            switchView("a3");
+            switchA3Page(button.dataset.a3Goto);
+        });
     });
 
     $("#logout-btn").addEventListener("click", logout);
@@ -1235,6 +1482,8 @@ function bindEvents() {
     $("#generate-profile-btn").addEventListener("click", generateProfile);
     $("#refresh-resources-btn").addEventListener("click", loadResources);
     $("#refresh-quizzes-btn").addEventListener("click", loadQuizzes);
+    $("#preview-study-plan-btn").addEventListener("click", previewStudyPlan);
+    $("#confirm-study-plan-btn").addEventListener("click", confirmStudyPlan);
     $("#generate-resource-btn").addEventListener("click", generateResource);
     $("#generate-quiz-btn").addEventListener("click", generateQuiz);
 
@@ -1275,4 +1524,6 @@ renderResourceDetail();
 renderQuizList();
 renderQuizDetail();
 renderQuiz();
+renderStudyPlanPreview();
+switchA3Page("overview");
 checkAuth();

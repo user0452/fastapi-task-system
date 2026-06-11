@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 180" role="img" aria-label="ink cloud wash">
+  <defs>
+    <linearGradient id="fade" x1="0" x2="1">
+      <stop offset="0" stop-color="#244d45" stop-opacity="0"/>
+      <stop offset=".2" stop-color="#244d45" stop-opacity=".24"/>
+      <stop offset=".78" stop-color="#244d45" stop-opacity=".2"/>
+      <stop offset="1" stop-color="#244d45" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="blur" x="-10%" y="-60%" width="120%" height="220%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+  </defs>
+  <path d="M18 112c74-52 132-64 198-36 32 14 58 14 84 0 56-31 112-22 176 26 36 27 78 34 126 19" fill="none" stroke="url(#fade)" stroke-width="18" stroke-linecap="round" filter="url(#blur)"/>
+  <path d="M36 118c64-30 116-36 170-16 47 17 87 13 121-10 44-31 93-27 147 12 37 27 77 35 117 23" fill="none" stroke="#1f3f39" stroke-width="3" stroke-opacity=".12" stroke-linecap="round"/>
+  <path d="M164 95c24-22 44-33 62-35 11 17 26 30 45 39M330 88c34-28 64-41 91-41 16 26 36 46 60 60" fill="none" stroke="#1f3f39" stroke-width="2" stroke-opacity=".1" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

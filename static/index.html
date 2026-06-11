@@ -3,84 +3,187 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>任务管理系统</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=2">
+    <title>Task System | 学习工作台</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
 </head>
 <body>
     <section id="auth-page" class="page auth-page">
-        <div class="auth-card glass-panel">
-            <div class="auth-brand">
-                <span class="brand-mark">TS</span>
-                <div>
-                    <h1>任务管理系统</h1>
-                    <p>登录后管理你的任务和复习计划</p>
+        <div class="auth-shell">
+            <div class="auth-copy">
+                <span class="section-kicker">Task System</span>
+                <h1>任务与学习工作台</h1>
+                <p>统一管理任务、学习资源、题集和个性化学习计划。</p>
+                <div class="auth-copy-list">
+                    <span>任务状态与优先级管理</span>
+                    <span>学生画像驱动的资源与题集生成</span>
+                    <span>学习计划预览后再导入任务</span>
                 </div>
             </div>
 
-            <div class="auth-tabs" role="tablist">
-                <button type="button" class="auth-tab active" data-auth-tab="login">登录</button>
-                <button type="button" class="auth-tab" data-auth-tab="register">注册</button>
+            <div class="auth-card glass-panel">
+                <div class="auth-brand">
+                    <span class="brand-mark">TS</span>
+                    <div>
+                        <h2>登录</h2>
+                        <p>使用现有账号进入当前工作区</p>
+                    </div>
+                </div>
+
+                <div class="auth-tabs" role="tablist">
+                    <button type="button" class="auth-tab active" data-auth-tab="login">登录</button>
+                    <button type="button" class="auth-tab" data-auth-tab="register">注册</button>
+                </div>
+
+                <form id="login-form" class="auth-form active" data-auth-panel="login">
+                    <label class="field">
+                        <span>用户名</span>
+                        <input type="text" id="login-username" autocomplete="username" minlength="3" maxlength="30" required>
+                    </label>
+                    <label class="field">
+                        <span>密码</span>
+                        <input type="password" id="login-password" autocomplete="current-password" minlength="6" maxlength="30" required>
+                    </label>
+                    <button type="submit" class="btn btn-primary" data-testid="login-submit">登录</button>
+                </form>
+
+                <form id="register-form" class="auth-form" data-auth-panel="register">
+                    <label class="field">
+                        <span>用户名</span>
+                        <input type="text" id="reg-username" autocomplete="username" minlength="3" maxlength="30" required>
+                    </label>
+                    <label class="field">
+                        <span>密码</span>
+                        <input type="password" id="reg-password" autocomplete="new-password" minlength="6" maxlength="30" required>
+                    </label>
+                    <label class="field">
+                        <span>确认密码</span>
+                        <input type="password" id="reg-confirm" autocomplete="new-password" minlength="6" maxlength="30" required>
+                    </label>
+                    <button type="submit" class="btn btn-primary" data-testid="register-submit">注册</button>
+                </form>
+
+                <div id="auth-msg" class="inline-message hidden" role="status"></div>
             </div>
-
-            <form id="login-form" class="auth-form active" data-auth-panel="login">
-                <label class="field">
-                    <span>用户名</span>
-                    <input type="text" id="login-username" autocomplete="username" minlength="3" maxlength="30" required>
-                </label>
-                <label class="field">
-                    <span>密码</span>
-                    <input type="password" id="login-password" autocomplete="current-password" minlength="6" maxlength="30" required>
-                </label>
-                <button type="submit" class="btn btn-primary" data-testid="login-submit">登录</button>
-            </form>
-
-            <form id="register-form" class="auth-form" data-auth-panel="register">
-                <label class="field">
-                    <span>用户名</span>
-                    <input type="text" id="reg-username" autocomplete="username" minlength="3" maxlength="30" required>
-                </label>
-                <label class="field">
-                    <span>密码</span>
-                    <input type="password" id="reg-password" autocomplete="new-password" minlength="6" maxlength="30" required>
-                </label>
-                <label class="field">
-                    <span>确认密码</span>
-                    <input type="password" id="reg-confirm" autocomplete="new-password" minlength="6" maxlength="30" required>
-                </label>
-                <button type="submit" class="btn btn-primary" data-testid="register-submit">注册</button>
-            </form>
-
-            <div id="auth-msg" class="inline-message hidden" role="status"></div>
         </div>
     </section>
 
     <section id="main-page" class="page app-page hidden">
+        <header class="app-header">
+            <div class="app-brand">
+                <span class="brand-mark">A3</span>
+                <div>
+                    <strong>个性化学习资源生成与学习规划系统</strong>
+                    <span>Personalized learning workspace</span>
+                </div>
+            </div>
+
+            <nav class="top-nav" aria-label="顶部导航">
+                <button type="button" class="top-nav-link active" data-a3-goto="overview">首页</button>
+                <button type="button" class="top-nav-link" data-a3-goto="profile">学生画像</button>
+                <button type="button" class="top-nav-link" data-a3-goto="resources">学习资源</button>
+                <button type="button" class="top-nav-link" data-a3-goto="quizzes">练习题</button>
+                <button type="button" class="top-nav-link" data-a3-goto="plan">学习计划</button>
+                <button type="button" class="top-nav-link" data-view="tasks">任务中心</button>
+                <button type="button" class="top-nav-link" data-view="ai">数据看板</button>
+            </nav>
+
+            <div class="header-tools">
+                <span class="scheme-badge">方案 8</span>
+                <button type="button" class="icon-lite" aria-label="通知">铃</button>
+                <span class="teacher-avatar">师</span>
+                <span id="username-display"></span>
+                <button type="button" id="logout-btn" class="btn btn-ghost">退出</button>
+            </div>
+        </header>
+
         <aside class="sidebar glass-panel">
             <div class="sidebar-brand">
                 <span class="brand-mark">TS</span>
                 <div>
-                    <strong>Task System</strong>
-                    <span>FastAPI 工作台</span>
+                    <strong>A3 工作台</strong>
+                    <span>学习流程导航</span>
                 </div>
             </div>
 
             <nav class="side-nav" aria-label="主导航">
-                <button type="button" class="nav-item active" data-view="tasks">任务中心</button>
-                <button type="button" class="nav-item" data-view="ai">AI 复习计划</button>
-                <button type="button" class="nav-item" data-view="a3">A3 学习智能体</button>
+                <div class="side-group">
+                    <h4>学生画像</h4>
+                    <button type="button" class="chapter-link" data-a3-page="profile">
+                        <span>当前学生画像</span>
+                        <small>画像档案</small>
+                    </button>
+                    <button type="button" class="side-sub-link" data-a3-goto="profile">
+                        <span>生成学生画像</span>
+                        <small>描述生成</small>
+                    </button>
+                </div>
+
+                <div class="side-group">
+                    <h4>学习资源</h4>
+                    <button type="button" class="chapter-link" data-a3-page="resources">
+                        <span>生成学习资源</span>
+                        <small>课程与知识点</small>
+                    </button>
+                    <button type="button" class="side-sub-link" data-a3-goto="resources">
+                        <span>资源列表</span>
+                        <small>历史资源</small>
+                    </button>
+                </div>
+
+                <div class="side-group">
+                    <h4>练习题</h4>
+                    <button type="button" class="chapter-link" data-a3-page="quizzes">
+                        <span>生成练习题</span>
+                        <small>个性化题集</small>
+                    </button>
+                    <button type="button" class="side-sub-link" data-a3-goto="quizzes">
+                        <span>题集列表</span>
+                        <small>题集详情</small>
+                    </button>
+                </div>
+
+                <div class="side-group">
+                    <h4>学习计划</h4>
+                    <button type="button" class="chapter-link" data-a3-page="plan">
+                        <span>生成学习计划预览</span>
+                        <small>预览任务</small>
+                    </button>
+                    <button type="button" class="side-sub-link" data-a3-goto="plan">
+                        <span>导入任务中心</span>
+                        <small>确认写入</small>
+                    </button>
+                </div>
+
+                <div class="side-group">
+                    <h4>任务中心</h4>
+                    <button type="button" class="nav-item" data-view="tasks">
+                        <span class="nav-item-label">任务中心</span>
+                        <span class="nav-item-copy">任务列表</span>
+                    </button>
+                </div>
+
+                <div class="side-group">
+                    <h4>系统管理</h4>
+                    <button type="button" class="nav-item" data-view="ai">
+                        <span class="nav-item-label">操作日志</span>
+                        <span class="nav-item-copy">AI 工具</span>
+                    </button>
+                </div>
             </nav>
 
-            <div class="user-panel">
-                <span id="username-display"></span>
-                <button type="button" id="logout-btn" class="btn btn-ghost">退出登录</button>
+            <div class="sidebar-note">
+                <span class="section-kicker">Workspace</span>
+                <p>保留现有登录态与 Bearer token，请求继续走当前 FastAPI 接口。</p>
             </div>
         </aside>
 
         <main class="workspace">
             <header class="topbar glass-panel">
-                <div>
-                    <span class="eyebrow">个人任务面板</span>
-                    <h2 id="workspace-title">任务中心</h2>
+                <div class="topbar-copy">
+                    <span class="eyebrow">Personal Workspace</span>
+                    <h2 id="workspace-title">任务工作台</h2>
+                    <p id="workspace-subtitle">查看任务状态、维护优先级并保持日常执行节奏。</p>
                 </div>
                 <div class="topbar-actions">
                     <button type="button" id="refresh-btn" class="btn btn-ghost">刷新</button>
@@ -89,315 +192,544 @@
             </header>
 
             <section id="tasks-view" class="view active">
-                <div class="metric-grid">
-                    <div class="metric glass-panel">
-                        <span>全部</span>
-                        <strong id="metric-total">0</strong>
+                <div class="view-stack">
+                    <div class="metric-grid">
+                        <div class="metric glass-panel">
+                            <span>全部</span>
+                            <strong id="metric-total">0</strong>
+                        </div>
+                        <div class="metric glass-panel">
+                            <span>待办</span>
+                            <strong id="metric-todo">0</strong>
+                        </div>
+                        <div class="metric glass-panel">
+                            <span>进行中</span>
+                            <strong id="metric-doing">0</strong>
+                        </div>
+                        <div class="metric glass-panel">
+                            <span>已完成</span>
+                            <strong id="metric-done">0</strong>
+                        </div>
                     </div>
-                    <div class="metric glass-panel">
-                        <span>待办</span>
-                        <strong id="metric-todo">0</strong>
-                    </div>
-                    <div class="metric glass-panel">
-                        <span>进行中</span>
-                        <strong id="metric-doing">0</strong>
-                    </div>
-                    <div class="metric glass-panel">
-                        <span>已完成</span>
-                        <strong id="metric-done">0</strong>
-                    </div>
+
+                    <section class="task-panel glass-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3>任务列表</h3>
+                                <span id="task-count-label">共 0 条</span>
+                            </div>
+                            <div class="filter-row">
+                                <label class="search-field">
+                                    <span>搜索</span>
+                                    <input type="search" id="task-search" placeholder="标题或描述">
+                                </label>
+                                <label class="compact-field">
+                                    <span>状态</span>
+                                    <select id="status-filter">
+                                        <option value="">全部</option>
+                                        <option value="todo">待办</option>
+                                        <option value="doing">进行中</option>
+                                        <option value="done">已完成</option>
+                                    </select>
+                                </label>
+                                <label class="compact-field">
+                                    <span>优先级</span>
+                                    <select id="priority-filter">
+                                        <option value="">全部</option>
+                                        <option value="high">高</option>
+                                        <option value="medium">中</option>
+                                        <option value="low">低</option>
+                                    </select>
+                                </label>
+                                <label class="compact-field">
+                                    <span>每页</span>
+                                    <select id="page-size">
+                                        <option value="6">6</option>
+                                        <option value="10" selected>10</option>
+                                        <option value="20">20</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>任务</th>
+                                        <th>状态</th>
+                                        <th>优先级</th>
+                                        <th>更新时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="task-tbody"></tbody>
+                            </table>
+                        </div>
+
+                        <div id="empty-msg" class="empty-state hidden">
+                            <strong>暂无任务</strong>
+                            <span>新建任务后会出现在这里。</span>
+                        </div>
+
+                        <div class="pagination">
+                            <button type="button" id="prev-page" class="btn btn-ghost">上一页</button>
+                            <span id="page-info">第 1 / 1 页</span>
+                            <button type="button" id="next-page" class="btn btn-ghost">下一页</button>
+                        </div>
+                    </section>
                 </div>
-
-                <section class="task-panel glass-panel">
-                    <div class="panel-head">
-                        <div>
-                            <h3>任务列表</h3>
-                            <span id="task-count-label">共 0 条</span>
-                        </div>
-                        <div class="filter-row">
-                            <label class="search-field">
-                                <span>搜索</span>
-                                <input type="search" id="task-search" placeholder="标题或描述">
-                            </label>
-                            <label class="compact-field">
-                                <span>状态</span>
-                                <select id="status-filter">
-                                    <option value="">全部</option>
-                                    <option value="todo">待办</option>
-                                    <option value="doing">进行中</option>
-                                    <option value="done">已完成</option>
-                                </select>
-                            </label>
-                            <label class="compact-field">
-                                <span>优先级</span>
-                                <select id="priority-filter">
-                                    <option value="">全部</option>
-                                    <option value="high">高</option>
-                                    <option value="medium">中</option>
-                                    <option value="low">低</option>
-                                </select>
-                            </label>
-                            <label class="compact-field">
-                                <span>每页</span>
-                                <select id="page-size">
-                                    <option value="6">6</option>
-                                    <option value="10" selected>10</option>
-                                    <option value="20">20</option>
-                                </select>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="table-wrap">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>任务</th>
-                                    <th>状态</th>
-                                    <th>优先级</th>
-                                    <th>更新时间</th>
-                                    <th>操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="task-tbody"></tbody>
-                        </table>
-                    </div>
-
-                    <div id="empty-msg" class="empty-state hidden">
-                        <strong>暂无任务</strong>
-                        <span>新建任务后会出现在这里。</span>
-                    </div>
-
-                    <div class="pagination">
-                        <button type="button" id="prev-page" class="btn btn-ghost">上一页</button>
-                        <span id="page-info">第 1 / 1 页</span>
-                        <button type="button" id="next-page" class="btn btn-ghost">下一页</button>
-                    </div>
-                </section>
             </section>
 
             <section id="ai-view" class="view">
-                <div class="ai-grid">
-                    <section class="ai-card glass-panel">
-                        <div class="panel-head">
-                            <div>
-                                <h3>规则命令</h3>
-                                <span>执行任务创建和批量操作</span>
-                            </div>
-                        </div>
-                        <label class="field">
-                            <span>命令</span>
-                            <input type="text" id="ai-input" placeholder="创建任务：复习数据库，优先级高">
-                        </label>
-                        <div class="quick-actions">
-                            <button type="button" class="chip" data-command="创建任务：复习数据库，优先级高">创建高优先级任务</button>
-                            <button type="button" class="chip" data-command="把所有todo改成doing">todo 转进行中</button>
-                            <button type="button" class="chip danger" data-command="删除所有done任务">删除已完成</button>
-                        </div>
-                        <button type="button" id="ai-btn" class="btn btn-primary">执行命令</button>
-                        <div id="ai-result" class="inline-message hidden" role="status"></div>
-                    </section>
+                <div class="view-stack">
+                    <div class="section-headline">
+                        <span class="section-kicker">Smart Tools</span>
+                        <h3>保留能力</h3>
+                        <p>延续现有 `/ai/*` 工作流，用于命令执行、考试解析和操作日志查看。</p>
+                    </div>
 
-                    <section class="ai-card glass-panel">
-                        <div class="panel-head">
-                            <div>
-                                <h3>考试安排解析</h3>
-                                <span>把文本解析成课程和考试时间</span>
+                    <div class="ai-grid">
+                        <section class="ai-card glass-panel">
+                            <div class="panel-head">
+                                <div>
+                                    <h3>规则命令</h3>
+                                    <span>执行任务创建和批量操作</span>
+                                </div>
                             </div>
-                        </div>
-                        <label class="field">
-                            <span>考试安排文本</span>
-                            <textarea id="exam-text" rows="7" placeholder="高数 2026-06-10 09:00&#10;英语 2026-06-13 15:00"></textarea>
-                        </label>
-                        <button type="button" id="parse-exam-btn" class="btn btn-primary">解析安排</button>
-                        <div id="exam-list" class="result-list"></div>
-                    </section>
+                            <label class="field">
+                                <span>命令</span>
+                                <input type="text" id="ai-input" placeholder="创建任务：复习数据库，优先级高">
+                            </label>
+                            <div class="quick-actions">
+                                <button type="button" class="chip" data-command="创建任务：复习数据库，优先级高">创建高优先级任务</button>
+                                <button type="button" class="chip" data-command="把所有todo改成doing">todo 转进行中</button>
+                                <button type="button" class="chip danger" data-command="删除所有done任务">删除已完成</button>
+                            </div>
+                            <button type="button" id="ai-btn" class="btn btn-primary">执行命令</button>
+                            <div id="ai-result" class="inline-message hidden" role="status"></div>
+                        </section>
 
-                    <section class="ai-card glass-panel ai-card-wide">
-                        <div class="panel-head">
-                            <div>
-                                <h3>复习计划预览</h3>
-                                <span>生成后通过后端确认接口统一导入为任务</span>
+                        <section class="ai-card glass-panel">
+                            <div class="panel-head">
+                                <div>
+                                    <h3>考试安排解析</h3>
+                                    <span>把文本解析成课程和考试时间</span>
+                                </div>
                             </div>
-                            <div class="panel-actions">
-                                <button type="button" id="preview-plan-btn" class="btn btn-ghost">生成预览</button>
-                                <button type="button" id="import-plan-btn" class="btn btn-primary" disabled>导入任务</button>
-                            </div>
-                        </div>
-                        <div id="review-preview" class="preview-grid"></div>
-                    </section>
+                            <label class="field">
+                                <span>考试安排文本</span>
+                                <textarea id="exam-text" rows="7" placeholder="高数 2026-06-10 09:00&#10;英语 2026-06-13 15:00"></textarea>
+                            </label>
+                            <button type="button" id="parse-exam-btn" class="btn btn-primary">解析安排</button>
+                            <div id="exam-list" class="result-list"></div>
+                        </section>
 
-                    <section class="ai-card glass-panel ai-card-wide">
-                        <div class="panel-head">
-                            <div>
-                                <h3>AI 操作日志</h3>
-                                <span>显示复习计划确认导入等后端记录</span>
+                        <section class="ai-card glass-panel ai-card-wide">
+                            <div class="panel-head">
+                                <div>
+                                    <h3>复习计划预览</h3>
+                                    <span>生成后通过后端确认接口统一导入为任务</span>
+                                </div>
+                                <div class="panel-actions">
+                                    <button type="button" id="preview-plan-btn" class="btn btn-ghost">生成预览</button>
+                                    <button type="button" id="import-plan-btn" class="btn btn-primary" disabled>导入任务</button>
+                                </div>
                             </div>
-                            <div class="panel-actions">
-                                <button type="button" id="refresh-logs-btn" class="btn btn-ghost">刷新日志</button>
+                            <div id="review-preview" class="preview-grid"></div>
+                        </section>
+
+                        <section class="ai-card glass-panel ai-card-wide">
+                            <div class="panel-head">
+                                <div>
+                                    <h3>AI 操作日志</h3>
+                                    <span>显示复习计划确认导入等后端记录</span>
+                                </div>
+                                <div class="panel-actions">
+                                    <button type="button" id="refresh-logs-btn" class="btn btn-ghost">刷新日志</button>
+                                </div>
                             </div>
-                        </div>
-                        <div id="log-list" class="result-list"></div>
-                    </section>
+                            <div id="log-list" class="result-list"></div>
+                        </section>
+                    </div>
                 </div>
             </section>
 
             <section id="a3-view" class="view">
-                <div class="ai-grid">
-                    <section class="ai-card glass-panel">
-                        <div class="panel-head">
-                            <div>
-                                <h3>当前学生画像</h3>
-                                <span id="profile-current-meta">加载中</span>
+                <div class="a3-layout">
+                    <div class="a3-pages">
+                        <section class="a3-subpage active" data-a3-panel="overview">
+                            <div class="dashboard-grid">
+                                <section class="dashboard-card profile-overview-card">
+                                    <div class="brush-title">
+                                        <h3>当前学生画像</h3>
+                                        <button type="button" class="btn btn-ink" data-a3-goto="profile">生成学生画像</button>
+                                    </div>
+                                    <div class="profile-overview">
+                                        <div class="portrait-frame portrait-student" aria-label="学生画像插画"></div>
+                                        <div class="profile-copy">
+                                            <h4>张若曦 <span>高一 · 文科</span></h4>
+                                            <p>知之者不如好之者，好之者不如乐之者。</p>
+                                            <div class="profile-lines">
+                                                <span>年级班级：高一（1）班</span>
+                                                <span>学科优势：语文、历史、政治</span>
+                                                <span>学习风格：视觉型，偏好图文与结构化内容</span>
+                                                <span>最近测评：<strong id="overview-profile-note">加载中</strong></span>
+                                            </div>
+                                        </div>
+                                        <div class="radar-paper">
+                                            <span style="--x: 50%; --y: 12%">语文 85</span>
+                                            <span style="--x: 80%; --y: 42%">数学 55</span>
+                                            <span style="--x: 66%; --y: 78%">英语 68</span>
+                                            <span style="--x: 28%; --y: 78%">物理 52</span>
+                                            <span style="--x: 14%; --y: 44%">历史 82</span>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section class="dashboard-card plan-overview-card">
+                                    <div class="brush-title">
+                                        <h3>学习计划预览</h3>
+                                        <button type="button" class="text-link" data-a3-goto="plan">查看完整计划</button>
+                                    </div>
+                                    <div class="plan-line">
+                                        <article class="active">
+                                            <strong>第 1 周</strong>
+                                            <span>诗歌鉴赏入门</span>
+                                            <small>3 个任务 · 进行中</small>
+                                        </article>
+                                        <article>
+                                            <strong>第 2 周</strong>
+                                            <span>文言实词与虚词</span>
+                                            <small>4 个任务 · 未开始</small>
+                                        </article>
+                                        <article>
+                                            <strong>第 3 周</strong>
+                                            <span>历史必修一：文明的起源</span>
+                                            <small>3 个任务 · 未开始</small>
+                                        </article>
+                                        <article>
+                                            <strong>第 4 周</strong>
+                                            <span>政治生活：公民权利与义务</span>
+                                            <small><span id="overview-plan-status">待生成</span></small>
+                                        </article>
+                                    </div>
+                                    <button type="button" class="btn btn-ink" data-a3-goto="plan">导入任务中心</button>
+                                </section>
+
+                                <section class="dashboard-card task-overview-card">
+                                    <div class="brush-title">
+                                        <h3>任务中心</h3>
+                                        <button type="button" class="text-link" data-view="tasks">全部任务</button>
+                                    </div>
+                                    <div class="task-card-list">
+                                        <article>
+                                            <span class="task-icon red">文</span>
+                                            <div>
+                                                <strong>诗歌鉴赏：《登高》阅读分析</strong>
+                                                <small>语文 · 学习 · 进行中</small>
+                                            </div>
+                                        </article>
+                                        <article>
+                                            <span class="task-icon green">练</span>
+                                            <div>
+                                                <strong>文言实词专项练习（50题）</strong>
+                                                <small>语文 · 练习 · 进行中</small>
+                                            </div>
+                                        </article>
+                                        <article>
+                                            <span class="task-icon ochre">史</span>
+                                            <div>
+                                                <strong>历史思维导图：古代文明</strong>
+                                                <small>历史 · 学习 · 未开始</small>
+                                            </div>
+                                        </article>
+                                    </div>
+                                </section>
+
+                                <section class="dashboard-card list-overview-card">
+                                    <div class="brush-title">
+                                        <h3>学习资源</h3>
+                                        <button type="button" class="text-link" data-a3-goto="resources">更多资源</button>
+                                    </div>
+                                    <div class="ink-table-list">
+                                        <article>
+                                            <strong>《登高》重点句式解析课件</strong>
+                                            <span>语文 · PPT · 12.4MB</span>
+                                        </article>
+                                        <article>
+                                            <strong>古代文明发展的时间轴</strong>
+                                            <span>历史 · 思维导图 · 1.8MB</span>
+                                        </article>
+                                        <article>
+                                            <strong>公民权利与义务知识梳理</strong>
+                                            <span>政治 · PDF · 2.3MB</span>
+                                        </article>
+                                    </div>
+                                    <button type="button" class="btn btn-outline-wide" data-a3-goto="resources">
+                                        生成学习资源 · <span id="overview-resource-total">0 条</span>
+                                    </button>
+                                </section>
+
+                                <section class="dashboard-card list-overview-card">
+                                    <div class="brush-title">
+                                        <h3>练习题</h3>
+                                        <button type="button" class="text-link" data-a3-goto="quizzes">更多题集</button>
+                                    </div>
+                                    <div class="ink-table-list">
+                                        <article>
+                                            <strong>诗歌鉴赏综合训练（30题）</strong>
+                                            <span>语文 · 难度：中等</span>
+                                        </article>
+                                        <article>
+                                            <strong>文言文阅读理解专项（40题）</strong>
+                                            <span>语文 · 难度：偏难</span>
+                                        </article>
+                                        <article>
+                                            <strong>选择题强化训练（高一政治）</strong>
+                                            <span>政治 · 难度：中等</span>
+                                        </article>
+                                    </div>
+                                    <button type="button" class="btn btn-outline-wide" data-a3-goto="quizzes">
+                                        生成练习题 · <span id="overview-quiz-total">0 套</span>
+                                    </button>
+                                </section>
+
+                                <section class="dashboard-card log-overview-card">
+                                    <div class="brush-title">
+                                        <h3>操作日志</h3>
+                                    </div>
+                                    <div class="log-ink-list">
+                                        <article><span></span>生成学习资源：《公民权利与义务知识梳理》<time>14:32</time></article>
+                                        <article><span></span>生成练习题集：《诗歌鉴赏综合训练》<time>14:28</time></article>
+                                        <article><span></span>导入学习计划到任务中心<time>14:25</time></article>
+                                        <article><span></span>生成学生画像<time>14:20</time></article>
+                                    </div>
+                                    <strong class="hidden" id="overview-profile-status">加载中</strong>
+                                    <strong class="hidden" id="overview-resource-note">共 0 条</strong>
+                                    <strong class="hidden" id="overview-quiz-note">共 0 套</strong>
+                                </section>
                             </div>
-                            <div class="panel-actions">
+                        </section>
+
+                        <section class="a3-subpage" data-a3-panel="profile">
+                            <div class="page-title-row">
+                                <div>
+                                    <span class="section-kicker">Student Profile</span>
+                                    <h3>学生画像</h3>
+                                </div>
                                 <button type="button" id="refresh-profile-btn" class="btn btn-ghost">刷新画像</button>
                             </div>
-                        </div>
-                        <pre id="profile-current-json" class="json-box">正在加载...</pre>
-                    </section>
+                            <div class="a3-two-column">
+                                <section class="ai-card glass-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>当前画像</h3>
+                                            <span id="profile-current-meta">加载中</span>
+                                        </div>
+                                    </div>
+                                    <pre id="profile-current-json" class="json-box">正在加载...</pre>
+                                </section>
 
-                    <section class="ai-card glass-panel">
-                        <div class="panel-head">
-                            <div>
-                                <h3>生成学生画像</h3>
-                                <span>保存为当前用户画像</span>
+                                <section class="ai-card glass-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>生成画像</h3>
+                                            <span>保存为当前用户画像</span>
+                                        </div>
+                                    </div>
+                                    <label class="field">
+                                        <span>学生描述</span>
+                                        <textarea id="profile-text" rows="8" placeholder="我是软件工程大三，算法弱，每天能学2小时"></textarea>
+                                    </label>
+                                    <button type="button" id="generate-profile-btn" class="btn btn-primary">生成画像</button>
+                                    <div id="profile-msg" class="inline-message hidden" role="status"></div>
+                                    <pre id="profile-generate-result" class="json-box hidden"></pre>
+                                </section>
                             </div>
-                        </div>
-                        <label class="field">
-                            <span>学生描述</span>
-                            <textarea id="profile-text" rows="6" placeholder="我是软件工程大三，算法弱，每天能学2小时"></textarea>
-                        </label>
-                        <button type="button" id="generate-profile-btn" class="btn btn-primary">生成画像</button>
-                        <div id="profile-msg" class="inline-message hidden" role="status"></div>
-                        <pre id="profile-generate-result" class="json-box hidden"></pre>
-                    </section>
+                        </section>
 
-                    <section class="ai-card glass-panel">
-                        <div class="panel-head">
-                            <div>
-                                <h3>生成学习资源</h3>
-                                <span>基于课程、知识点和当前画像</span>
+                        <section class="a3-subpage" data-a3-panel="plan">
+                            <div class="page-title-row">
+                                <div>
+                                    <span class="section-kicker">Learning Plan</span>
+                                    <h3>学习计划</h3>
+                                </div>
+                                <div class="panel-actions">
+                                    <button type="button" id="preview-study-plan-btn" class="btn btn-ghost">生成预览</button>
+                                    <button type="button" id="confirm-study-plan-btn" class="btn btn-primary" disabled>导入任务</button>
+                                </div>
                             </div>
-                        </div>
-                        <div class="form-row">
-                            <label class="field">
-                                <span>课程名</span>
-                                <input type="text" id="resource-course" placeholder="高等数学">
-                            </label>
-                            <label class="field">
-                                <span>知识点</span>
-                                <input type="text" id="resource-topic" placeholder="导数">
-                            </label>
-                        </div>
-                        <button type="button" id="generate-resource-btn" class="btn btn-primary">生成资源</button>
-                        <div id="resource-generate-msg" class="inline-message hidden" role="status"></div>
-                        <div id="resource-generate-result" class="result-list"></div>
-                    </section>
+                            <section class="ai-card glass-panel">
+                                <div class="panel-head">
+                                    <div>
+                                        <h3>计划预览</h3>
+                                        <span id="study-plan-meta">根据课程、知识点和画像生成</span>
+                                    </div>
+                                </div>
+                                <div class="form-row form-row-compact">
+                                    <label class="field">
+                                        <span>课程名</span>
+                                        <input type="text" id="plan-course" placeholder="软件测试">
+                                    </label>
+                                    <label class="field">
+                                        <span>知识点</span>
+                                        <input type="text" id="plan-topic" placeholder="等价类划分">
+                                    </label>
+                                    <label class="field field-small">
+                                        <span>天数</span>
+                                        <input type="number" id="plan-days" min="1" max="7" value="3">
+                                    </label>
+                                </div>
+                                <div id="study-plan-msg" class="inline-message hidden" role="status"></div>
+                                <div id="study-plan-result" class="plan-preview empty-detail">
+                                    <span>尚未生成学习计划</span>
+                                </div>
+                            </section>
+                        </section>
 
-                    <section class="ai-card glass-panel">
-                        <div class="panel-head">
-                            <div>
-                                <h3>生成练习题</h3>
-                                <span>展示题集标题和题目</span>
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <label class="field">
-                                <span>课程名</span>
-                                <input type="text" id="quiz-course" placeholder="软件测试">
-                            </label>
-                            <label class="field">
-                                <span>知识点</span>
-                                <input type="text" id="quiz-topic" placeholder="等价类划分">
-                            </label>
-                        </div>
-                        <button type="button" id="generate-quiz-btn" class="btn btn-primary">生成题集</button>
-                        <div id="quiz-generate-msg" class="inline-message hidden" role="status"></div>
-                        <div id="quiz-result" class="quiz-box"></div>
-                    </section>
-
-                    <section class="ai-card glass-panel ai-card-wide">
-                        <div class="panel-head">
-                            <div>
-                                <h3>学习资源列表</h3>
-                                <span id="resource-list-meta">共 0 条</span>
-                            </div>
-                            <div class="panel-actions">
+                        <section class="a3-subpage" data-a3-panel="resources">
+                            <div class="page-title-row">
+                                <div>
+                                    <span class="section-kicker">Resources</span>
+                                    <h3>学习资源</h3>
+                                </div>
                                 <button type="button" id="refresh-resources-btn" class="btn btn-ghost">刷新资源</button>
                             </div>
-                        </div>
-                        <div class="table-wrap resource-table-wrap">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>标题</th>
-                                        <th>课程</th>
-                                        <th>知识点</th>
-                                        <th>创建时间</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="resource-tbody"></tbody>
-                            </table>
-                        </div>
-                        <div id="resource-empty" class="empty-state hidden">
-                            <strong>暂无学习资源</strong>
-                            <span>生成资源后会出现在这里。</span>
-                        </div>
-                    </section>
+                            <div class="a3-work-grid">
+                                <section class="ai-card glass-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>生成资源</h3>
+                                            <span>基于课程、知识点和当前画像</span>
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="field">
+                                            <span>课程名</span>
+                                            <input type="text" id="resource-course" placeholder="高等数学">
+                                        </label>
+                                        <label class="field">
+                                            <span>知识点</span>
+                                            <input type="text" id="resource-topic" placeholder="导数">
+                                        </label>
+                                    </div>
+                                    <button type="button" id="generate-resource-btn" class="btn btn-primary">生成资源</button>
+                                    <div id="resource-generate-msg" class="inline-message hidden" role="status"></div>
+                                    <div id="resource-generate-result" class="result-list"></div>
+                                </section>
 
-                    <section class="ai-card glass-panel ai-card-wide">
-                        <div class="panel-head">
-                            <div>
-                                <h3>学习资源详情</h3>
-                                <span id="resource-detail-meta">点击列表项查看</span>
-                            </div>
-                        </div>
-                        <div id="resource-detail" class="resource-detail empty-detail">
-                            <span>尚未选择学习资源</span>
-                        </div>
-                    </section>
+                                <section class="ai-card glass-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>资源列表</h3>
+                                            <span id="resource-list-meta">共 0 条</span>
+                                        </div>
+                                    </div>
+                                    <div class="table-wrap resource-table-wrap">
+                                        <table>
+                                            <thead>
+                                                <tr>
+                                                    <th>标题</th>
+                                                    <th>课程</th>
+                                                    <th>知识点</th>
+                                                    <th>创建时间</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="resource-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                    <div id="resource-empty" class="empty-state hidden">
+                                        <strong>暂无学习资源</strong>
+                                        <span>生成资源后会出现在这里。</span>
+                                    </div>
+                                </section>
 
-                    <section class="ai-card glass-panel ai-card-wide">
-                        <div class="panel-head">
-                            <div>
-                                <h3>题集列表</h3>
-                                <span id="quiz-list-meta">共 0 条</span>
+                                <section class="ai-card glass-panel a3-detail-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>资源详情</h3>
+                                            <span id="resource-detail-meta">点击列表项查看</span>
+                                        </div>
+                                    </div>
+                                    <div id="resource-detail" class="resource-detail empty-detail">
+                                        <span>尚未选择学习资源</span>
+                                    </div>
+                                </section>
                             </div>
-                            <div class="panel-actions">
+                        </section>
+
+                        <section class="a3-subpage" data-a3-panel="quizzes">
+                            <div class="page-title-row">
+                                <div>
+                                    <span class="section-kicker">Quizzes</span>
+                                    <h3>练习题集</h3>
+                                </div>
                                 <button type="button" id="refresh-quizzes-btn" class="btn btn-ghost">刷新题集</button>
                             </div>
-                        </div>
-                        <div class="table-wrap quiz-table-wrap">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>标题</th>
-                                        <th>课程</th>
-                                        <th>知识点</th>
-                                        <th>创建时间</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="quiz-tbody"></tbody>
-                            </table>
-                        </div>
-                        <div id="quiz-empty" class="empty-state hidden">
-                            <strong>暂无题集</strong>
-                            <span>生成练习题后会出现在这里。</span>
-                        </div>
-                    </section>
+                            <div class="a3-work-grid">
+                                <section class="ai-card glass-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>生成题集</h3>
+                                            <span>展示题集标题和题目</span>
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="field">
+                                            <span>课程名</span>
+                                            <input type="text" id="quiz-course" placeholder="软件测试">
+                                        </label>
+                                        <label class="field">
+                                            <span>知识点</span>
+                                            <input type="text" id="quiz-topic" placeholder="等价类划分">
+                                        </label>
+                                    </div>
+                                    <button type="button" id="generate-quiz-btn" class="btn btn-primary">生成题集</button>
+                                    <div id="quiz-generate-msg" class="inline-message hidden" role="status"></div>
+                                    <div id="quiz-result" class="quiz-box"></div>
+                                </section>
 
-                    <section class="ai-card glass-panel ai-card-wide">
-                        <div class="panel-head">
-                            <div>
-                                <h3>题集详情</h3>
-                                <span id="quiz-detail-meta">点击列表项查看</span>
+                                <section class="ai-card glass-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>题集列表</h3>
+                                            <span id="quiz-list-meta">共 0 条</span>
+                                        </div>
+                                    </div>
+                                    <div class="table-wrap quiz-table-wrap">
+                                        <table>
+                                            <thead>
+                                                <tr>
+                                                    <th>标题</th>
+                                                    <th>课程</th>
+                                                    <th>知识点</th>
+                                                    <th>创建时间</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="quiz-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                    <div id="quiz-empty" class="empty-state hidden">
+                                        <strong>暂无题集</strong>
+                                        <span>生成练习题后会出现在这里。</span>
+                                    </div>
+                                </section>
+
+                                <section class="ai-card glass-panel a3-detail-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>题集详情</h3>
+                                            <span id="quiz-detail-meta">点击列表项查看</span>
+                                        </div>
+                                    </div>
+                                    <div id="quiz-detail" class="quiz-box empty-detail">
+                                        <span>尚未选择题集</span>
+                                    </div>
+                                </section>
                             </div>
-                        </div>
-                        <div id="quiz-detail" class="quiz-box empty-detail">
-                            <span>尚未选择题集</span>
-                        </div>
-                    </section>
+                        </section>
+                    </div>
                 </div>
             </section>
         </main>
@@ -461,6 +793,6 @@
 
     <div id="toast" class="toast hidden" role="status"></div>
 
-    <script src="/static/js/app.js?v=2"></script>
+    <script src="/static/js/app.js?v=5"></script>
 </body>
 </html>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="420" viewBox="0 0 420 420">
+  <rect width="420" height="420" fill="#fbf7ec"/>
+  <filter id="noise">
+    <feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" seed="18"/>
+    <feColorMatrix type="matrix" values="0 0 0 0 0.38 0 0 0 0 0.31 0 0 0 0 0.2 0 0 0 0.13 0"/>
+  </filter>
+  <rect width="420" height="420" filter="url(#noise)" opacity="0.28"/>
+  <g fill="none" stroke="#6e6048" stroke-width="0.7" stroke-linecap="round" opacity="0.08">
+    <path d="M12 44c86-18 148 13 214-2 50-12 104-6 176 8"/>
+    <path d="M-8 144c64 10 104 2 171-6 86-11 156 16 256-6"/>
+    <path d="M18 248c82-9 130 14 197 2 62-11 120-10 188 5"/>
+    <path d="M0 352c96 17 152-12 240-4 66 6 111 10 184-8"/>
+  </g>
+</svg>
