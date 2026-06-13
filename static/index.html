@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Task System | 学习工作台</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/static/css/style.css?v=5">
+    <link rel="stylesheet" href="/static/css/style.css?v=6">
 </head>
 <body>
     <section id="auth-page" class="page auth-page">
@@ -80,6 +80,7 @@
 
             <nav class="top-nav" aria-label="顶部导航">
                 <button type="button" class="top-nav-link active" data-a3-goto="overview">首页</button>
+                <button type="button" class="top-nav-link" data-a3-goto="assistant">AI 学习助手</button>
                 <button type="button" class="top-nav-link" data-a3-goto="profile">学生画像</button>
                 <button type="button" class="top-nav-link" data-a3-goto="resources">学习资源</button>
                 <button type="button" class="top-nav-link" data-a3-goto="quizzes">练习题</button>
@@ -107,6 +108,18 @@
             </div>
 
             <nav class="side-nav" aria-label="主导航">
+                <div class="side-group">
+                    <h4>AI 学习助手</h4>
+                    <button type="button" class="chapter-link" data-a3-page="assistant">
+                        <span>AI 学习助手</span>
+                        <small>自然语言调度</small>
+                    </button>
+                    <button type="button" class="side-sub-link" data-a3-goto="assistant">
+                        <span>生成资源与题集</span>
+                        <small>对话生成</small>
+                    </button>
+                </div>
+
                 <div class="side-group">
                     <h4>学生画像</h4>
                     <button type="button" class="chapter-link" data-a3-page="profile">
@@ -512,6 +525,55 @@
                             </div>
                         </section>
 
+                        <section class="a3-subpage" data-a3-panel="assistant">
+                            <div class="page-title-row">
+                                <div>
+                                    <span class="section-kicker">Agent Chat</span>
+                                    <h3>AI 学习助手</h3>
+                                </div>
+                                <button type="button" id="clear-agent-chat-btn" class="btn btn-ghost">清空当前对话</button>
+                            </div>
+
+                            <div class="agent-chat-grid">
+                                <section class="ai-card glass-panel agent-chat-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>学习需求对话</h3>
+                                            <span>输入学习目标，由 AI 学习助手调度资源、题集和计划</span>
+                                        </div>
+                                    </div>
+                                    <div id="agent-thread" class="agent-thread" aria-live="polite"></div>
+                                    <form id="agent-chat-form" class="agent-input-bar">
+                                        <label class="field agent-message-field">
+                                            <span>学习需求</span>
+                                            <textarea id="agent-message" rows="4" placeholder="我想三天复习软件测试的等价类划分，算法基础比较弱，帮我生成资料、练习题和学习计划"></textarea>
+                                        </label>
+                                        <div class="agent-send-row">
+                                            <div class="quick-actions agent-prompts">
+                                                <button type="button" class="chip" data-agent-prompt="帮我生成软件测试等价类划分的学习资源、练习题和3天学习计划">软件测试复习</button>
+                                                <button type="button" class="chip" data-agent-prompt="我只想要高等数学导数的讲解资料">只要讲解资料</button>
+                                                <button type="button" class="chip" data-agent-prompt="给我数据结构二叉树的练习题">只生成练习题</button>
+                                            </div>
+                                            <button type="submit" id="agent-send-btn" class="btn btn-primary">发送</button>
+                                        </div>
+                                    </form>
+                                    <div id="agent-chat-msg" class="inline-message hidden" role="status"></div>
+                                </section>
+
+                                <aside class="ai-card glass-panel agent-side-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>调度结果</h3>
+                                            <span id="agent-summary-meta">等待对话</span>
+                                        </div>
+                                    </div>
+                                    <div id="agent-summary" class="agent-summary empty-detail">
+                                        <span>发送学习需求后，这里会展示意图、缺失信息和生成结果。</span>
+                                    </div>
+                                </aside>
+                            </div>
+                        </section>
+
                         <section class="a3-subpage" data-a3-panel="profile">
                             <div class="page-title-row">
                                 <div>
@@ -793,6 +855,6 @@
 
     <div id="toast" class="toast hidden" role="status"></div>
 
-    <script src="/static/js/app.js?v=5"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>

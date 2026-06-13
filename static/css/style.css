@@ -1322,7 +1322,7 @@ tbody tr:hover {
     top: 0;
     z-index: 5;
     display: grid;
-    grid-template-columns: minmax(320px, 1fr) auto minmax(260px, 1fr);
+    grid-template-columns: minmax(360px, auto) minmax(0, 1fr) auto;
     align-items: center;
     gap: 24px;
     padding: 14px 24px;
@@ -1405,7 +1405,7 @@ tbody tr:hover {
 .top-nav {
     display: flex;
     justify-content: center;
-    gap: 26px;
+    gap: 20px;
     min-width: 0;
 }
 
@@ -1560,7 +1560,7 @@ tbody tr:hover {
 }
 
 .side-group h4::before {
-    content: "人";
+    content: "问";
     display: inline-grid;
     width: 18px;
     height: 18px;
@@ -1573,23 +1573,27 @@ tbody tr:hover {
 }
 
 .side-group:nth-of-type(2) h4::before {
-    content: "书";
+    content: "人";
 }
 
 .side-group:nth-of-type(3) h4::before {
-    content: "题";
+    content: "书";
 }
 
 .side-group:nth-of-type(4) h4::before {
-    content: "计";
+    content: "题";
 }
 
 .side-group:nth-of-type(5) h4::before {
+    content: "计";
+}
+
+.side-group:nth-of-type(6) h4::before {
     content: "事";
     background: #9b2f2f;
 }
 
-.side-group:nth-of-type(6) h4::before {
+.side-group:nth-of-type(7) h4::before {
     content: "管";
     background: #a66b3d;
 }
@@ -2123,6 +2127,154 @@ tbody tr:hover {
     color: var(--muted);
 }
 
+.agent-chat-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.8fr);
+    gap: 18px;
+    align-items: start;
+}
+
+.agent-chat-panel,
+.agent-side-panel {
+    min-width: 0;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.48), transparent),
+        rgba(255, 250, 240, 0.92);
+}
+
+.agent-thread {
+    display: grid;
+    gap: 14px;
+    max-height: min(560px, 58vh);
+    min-height: 360px;
+    overflow: auto;
+    padding: 16px;
+    border: 1px solid rgba(32, 30, 24, 0.1);
+    border-radius: 8px;
+    background:
+        url("/static/assets/ink-clouds.svg") right -120px top -48px / 420px auto no-repeat,
+        rgba(255, 250, 240, 0.82);
+}
+
+.agent-message {
+    display: flex;
+}
+
+.agent-message.user {
+    justify-content: flex-end;
+}
+
+.agent-bubble {
+    width: min(760px, 86%);
+    border: 1px solid rgba(32, 30, 24, 0.1);
+    border-radius: 8px;
+    padding: 14px 16px;
+    color: var(--ink-soft);
+    background: rgba(255, 255, 255, 0.68);
+    box-shadow: var(--shadow-soft);
+}
+
+.agent-message.user .agent-bubble {
+    color: #fff;
+    border-color: rgba(31, 63, 57, 0.18);
+    background: #1f3f39;
+}
+
+.agent-bubble strong {
+    display: block;
+    margin-bottom: 6px;
+    color: inherit;
+}
+
+.agent-bubble p {
+    margin: 0;
+    line-height: 1.7;
+}
+
+.agent-input-bar {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.agent-message-field textarea {
+    min-height: 118px;
+}
+
+.agent-send-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.agent-prompts {
+    margin: 0;
+}
+
+.agent-result-card,
+.agent-summary {
+    display: grid;
+    gap: 12px;
+}
+
+.agent-result-card {
+    margin-top: 12px;
+    color: var(--ink-soft);
+}
+
+.agent-message.user .agent-result-card {
+    color: #fff;
+}
+
+.agent-result-head,
+.agent-meta-grid,
+.agent-missing {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.agent-pill {
+    display: inline-flex;
+    min-height: 24px;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0 9px;
+    color: #fff;
+    background: var(--pine);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.agent-meta-grid span,
+.agent-missing {
+    border-radius: 8px;
+    padding: 7px 9px;
+    color: var(--ink-soft);
+    background: rgba(255, 250, 240, 0.72);
+    font-size: 12px;
+}
+
+.agent-missing strong {
+    margin: 0;
+    color: var(--accent);
+}
+
+.agent-output-block {
+    display: grid;
+    gap: 10px;
+    border-top: 1px solid rgba(32, 30, 24, 0.09);
+    padding-top: 12px;
+}
+
+.agent-output-block h4 {
+    margin: 0;
+    color: var(--ink);
+}
+
 @keyframes rise-in {
     from {
         opacity: 0;
@@ -2164,6 +2316,7 @@ tbody tr:hover {
 @media (max-width: 960px) {
     .auth-shell,
     .ai-grid,
+    .agent-chat-grid,
     .a3-layout,
     .a3-overview-grid,
     .a3-two-column,
@@ -2191,6 +2344,7 @@ tbody tr:hover {
     .topbar-actions,
     .panel-actions,
     .form-actions,
+    .agent-send-row,
     .page-title-row {
         justify-content: flex-start;
     }
@@ -2210,6 +2364,10 @@ tbody tr:hover {
 
     .search-field,
     .compact-field {
+        width: 100%;
+    }
+
+    .agent-bubble {
         width: 100%;
     }
 }

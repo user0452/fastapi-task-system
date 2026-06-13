@@ -16,6 +16,8 @@ const state = {
     quizzesTotal: 0,
     selectedQuizId: null,
     studyPlanPreview: null,
+    agentMessages: [],
+    agentPlanPreview: null,
     a3Page: "overview",
     deleteTargetId: null,
 };
@@ -30,6 +32,28 @@ const priorityMap = {
     low: "低",
     medium: "中",
     high: "高",
+};
+
+const agentStatusMap = {
+    need_more_info: "需要补充",
+    ready_to_execute: "已执行",
+    chat_only: "仅对话",
+};
+
+const agentIntentMap = {
+    generate_study_package: "学习包",
+    generate_resource: "学习资源",
+    generate_quiz: "练习题",
+    generate_plan: "学习计划",
+    update_profile: "更新画像",
+    qa: "问答",
+    unknown: "未知",
+};
+
+const agentToolMap = {
+    generate_resource: "资源",
+    generate_quiz: "题集",
+    generate_plan: "计划",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -255,10 +279,14 @@ function logout() {
     state.quizzesTotal = 0;
     state.selectedQuizId = null;
     state.studyPlanPreview = null;
+    state.agentMessages = [];
+    state.agentPlanPreview = null;
     state.a3Page = "overview";
     $("#login-form").reset();
     $("#register-form").reset();
     renderStudyPlanPreview();
+    renderAgentMessages();
+    renderAgentSummary();
     switchA3Page("overview");
     showPage("auth");
 }
@@ -1249,6 +1277,253 @@ async function generateQuiz() {
     }
 }
 
+function renderLearningPlanSnapshot(plan) {
+    const tasks = Array.isArray(plan?.tasks_preview) ? plan.tasks_preview : [];
+    return `
+        <div class="plan-summary">
+            <strong>${escapeHtml(plan?.plan_title || "学习计划")}</strong>
+            <span class="plan-summary-meta">
+                ${escapeHtml(plan?.course_name || "-")} · ${escapeHtml(plan?.topic || "-")} · ${escapeHtml(plan?.days || "-")} 天 · 共 ${tasks.length} 项
+            </span>
+        </div>
+        <div class="plan-task-list">
+            ${tasks.length ? tasks.map((task, index) => `
+                <article>
+                    <div class="plan-task-head">
+                        <strong>第 ${index + 1} 项 · ${escapeHtml(task.title || "未命名任务")}</strong>
+                        <div class="plan-task-meta">
+                            <span class="badge status-${escapeHtml(task.status || "todo")}">${statusMap[task.status || "todo"] || "待办"}</span>
+                            <span class="badge priority-${escapeHtml(task.priority || "medium")}">${priorityMap[task.priority || "medium"] || "中"}</span>
+                        </div>
+                    </div>
+                    <p>${renderMultiline(task.description || "无描述")}</p>
+                </article>
+            `).join("") : `<span class="muted-text">暂无任务预览</span>`}
+        </div>
+    `;
+}
+
+function renderAgentToolCards(toolResults = {}) {
+    const learningPlan = toolResults.learning_plan;
+    const tasksPreview = Array.isArray(learningPlan?.tasks_preview) ? learningPlan.tasks_preview : [];
+
+    return `
+        ${toolResults.resource ? `
+            <section class="agent-output-block">
+                <h4>生成资源</h4>
+                ${renderResourceSnapshot(toolResults.resource)}
+            </section>
+        ` : ""}
+        ${toolResults.quiz_set ? `
+            <section class="agent-output-block">
+                <h4>生成题集</h4>
+                ${renderQuizSnapshot(toolResults.quiz_set)}
+            </section>
+        ` : ""}
+        ${learningPlan ? `
+            <section class="agent-output-block">
+                <h4>学习计划预览</h4>
+                ${renderLearningPlanSnapshot(learningPlan)}
+                ${tasksPreview.length ? `
+                    <button type="button" class="btn btn-ink agent-import-plan-btn" data-agent-action="confirm-plan">
+                        导入任务中心
+                    </button>
+                ` : ""}
+            </section>
+        ` : ""}
+    `;
+}
+
+function renderAgentResult(result = null) {
+    if (!result) return "";
+
+    const plan = result.plan || {};
+    const toolResults = result.tool_results || {};
+    const tools = Array.isArray(plan.tools) ? plan.tools : [];
+    const missingFields = Array.isArray(plan.missing_fields) ? plan.missing_fields : [];
+    const shouldRenderTools = plan.status === "ready_to_execute";
+
+    return `
+        <div class="agent-result-card">
+            <div class="agent-result-head">
+                <span class="agent-pill">${escapeHtml(agentStatusMap[plan.status] || plan.status || "未识别")}</span>
+                <span>${escapeHtml(agentIntentMap[plan.intent] || plan.intent || "未知意图")}</span>
+            </div>
+            <div class="agent-meta-grid">
+                <span>课程：${escapeHtml(plan.course_name || "待补充")}</span>
+                <span>知识点：${escapeHtml(plan.topic || "待补充")}</span>
+                <span>天数：${escapeHtml(plan.days || "-")}</span>
+                <span>工具：${tools.length ? tools.map((tool) => escapeHtml(agentToolMap[tool] || tool)).join(" / ") : "无"}</span>
+            </div>
+            ${missingFields.length ? `
+                <div class="agent-missing">
+                    <strong>还缺少</strong>
+                    <span>${missingFields.map((item) => escapeHtml(item)).join("、")}</span>
+                </div>
+            ` : ""}
+            ${shouldRenderTools ? renderAgentToolCards(toolResults) : ""}
+        </div>
+    `;
+}
+
+function renderAgentMessages() {
+    const container = $("#agent-thread");
+    if (!container) return;
+
+    if (!state.agentMessages.length) {
+        container.innerHTML = `
+            <article class="agent-message assistant">
+                <div class="agent-bubble">
+                    <strong>学习助手</strong>
+                    <p>可以直接说出课程、知识点和目标，我会根据后端总控智能体返回的计划生成资源、题集或学习计划。</p>
+                </div>
+            </article>
+        `;
+        return;
+    }
+
+    container.innerHTML = state.agentMessages.map((message) => `
+        <article class="agent-message ${escapeHtml(message.role)}">
+            <div class="agent-bubble">
+                <strong>${message.role === "user" ? "我" : "学习助手"}</strong>
+                <p>${renderMultiline(message.content)}</p>
+                ${message.result?.plan?.status === "ready_to_execute" ? renderAgentResult(message.result) : ""}
+            </div>
+        </article>
+    `).join("");
+    container.scrollTop = container.scrollHeight;
+}
+
+function renderAgentSummary(result = state.agentPlanPreview) {
+    const meta = $("#agent-summary-meta");
+    const container = $("#agent-summary");
+    if (!meta || !container) return;
+
+    if (!result) {
+        meta.textContent = "等待对话";
+        container.className = "agent-summary empty-detail";
+        container.innerHTML = `<span>发送学习需求后，这里会展示意图、缺失信息和生成结果。</span>`;
+        return;
+    }
+
+    const plan = result.plan || {};
+    meta.textContent = `${agentStatusMap[plan.status] || plan.status || "已返回"} · ${agentIntentMap[plan.intent] || plan.intent || "未知意图"}`;
+    if (plan.status === "need_more_info") {
+        container.className = "agent-summary empty-detail";
+        container.innerHTML = `<span>${renderMultiline(plan.reply || "请继续补充学习需求。")}</span>`;
+        return;
+    }
+    container.className = "agent-summary";
+    container.innerHTML = renderAgentResult(result);
+}
+
+async function syncAgentToolResults(result) {
+    if (result?.plan?.status !== "ready_to_execute") {
+        updateA3Overview();
+        return;
+    }
+
+    const toolResults = result?.tool_results || {};
+    const refreshes = [];
+
+    if (toolResults.learning_plan) {
+        state.studyPlanPreview = toolResults.learning_plan;
+        renderStudyPlanPreview();
+    }
+    if (toolResults.resource) {
+        refreshes.push(loadResources());
+    }
+    if (toolResults.quiz_set) {
+        refreshes.push(loadQuizzes());
+    }
+    if (refreshes.length) {
+        await Promise.all(refreshes);
+    }
+    updateA3Overview();
+}
+
+async function sendAgentMessage(event) {
+    event?.preventDefault();
+    const input = $("#agent-message");
+    const messageBox = $("#agent-chat-msg");
+    const message = input.value.trim();
+
+    if (!message) {
+        showInlineMessage(messageBox, "请输入学习需求", "error");
+        return;
+    }
+
+    state.agentMessages.push({ role: "user", content: message });
+    renderAgentMessages();
+    input.value = "";
+    hideInlineMessage(messageBox);
+
+    const button = $("#agent-send-btn");
+    setBusy(button, true, "处理中");
+
+    const result = await api("/agent/chat", {
+        method: "POST",
+        body: JSON.stringify({ message }),
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        const errorText = normalizeMessage(result.message, "对话处理失败");
+        state.agentMessages.push({ role: "assistant", content: errorText });
+        renderAgentMessages();
+        showInlineMessage(messageBox, errorText, "error");
+        return;
+    }
+
+    const payload = result.data || {};
+    const reply = payload.plan?.reply || normalizeMessage(result.message, "已处理学习需求");
+    state.agentPlanPreview = payload;
+    state.agentMessages.push({ role: "assistant", content: reply, result: payload });
+    renderAgentMessages();
+    renderAgentSummary();
+    await syncAgentToolResults(payload);
+    showInlineMessage(messageBox, normalizeMessage(result.message, "对话处理完成"), "success");
+}
+
+async function confirmAgentPlanFromChat(event) {
+    const button = event?.target?.closest?.("[data-agent-action='confirm-plan']");
+    if (!button) return;
+
+    const learningPlan = state.agentPlanPreview?.tool_results?.learning_plan;
+    const tasksPreview = Array.isArray(learningPlan?.tasks_preview) ? learningPlan.tasks_preview : [];
+    if (!tasksPreview.length) {
+        showToast("当前对话没有可导入的学习计划", "error");
+        return;
+    }
+
+    setBusy(button, true, "导入中");
+    const result = await api("/plans/confirm", {
+        method: "POST",
+        body: JSON.stringify({ tasks_preview: tasksPreview }),
+    });
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showToast(normalizeMessage(result.message, "导入任务中心失败"), "error");
+        return;
+    }
+
+    await loadDashboard();
+    const createdCount = Number(result.data?.created_count ?? tasksPreview.length);
+    showToast(normalizeMessage(result.message, `已导入 ${createdCount} 条任务`));
+}
+
+function clearAgentChat() {
+    state.agentMessages = [];
+    state.agentPlanPreview = null;
+    renderAgentMessages();
+    renderAgentSummary();
+    hideInlineMessage($("#agent-chat-msg"));
+}
+
 function bindEvents() {
     $$(".auth-tab").forEach((tab) => {
         tab.addEventListener("click", () => switchAuthTab(tab.dataset.authTab));
@@ -1486,6 +1761,21 @@ function bindEvents() {
     $("#confirm-study-plan-btn").addEventListener("click", confirmStudyPlan);
     $("#generate-resource-btn").addEventListener("click", generateResource);
     $("#generate-quiz-btn").addEventListener("click", generateQuiz);
+    $("#agent-chat-form").addEventListener("submit", sendAgentMessage);
+    $("#clear-agent-chat-btn").addEventListener("click", clearAgentChat);
+    $("#agent-thread").addEventListener("click", confirmAgentPlanFromChat);
+    $("#agent-summary").addEventListener("click", confirmAgentPlanFromChat);
+    $("#agent-message").addEventListener("keydown", (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+            sendAgentMessage(event);
+        }
+    });
+    $$("[data-agent-prompt]").forEach((button) => {
+        button.addEventListener("click", () => {
+            $("#agent-message").value = button.dataset.agentPrompt;
+            $("#agent-message").focus();
+        });
+    });
 
     $("#resource-tbody").addEventListener("click", (event) => {
         const row = event.target.closest("tr[data-resource-id]");
@@ -1525,5 +1815,7 @@ renderQuizList();
 renderQuizDetail();
 renderQuiz();
 renderStudyPlanPreview();
+renderAgentMessages();
+renderAgentSummary();
 switchA3Page("overview");
 checkAuth();
