@@ -164,7 +164,7 @@ def get_resource_detail(resource_id:int,user = Depends(get_current_user)):
         if row is None:
             return error(
                 message="该学习资源不存在",
-                code=400
+                code=404
             )
         resource = json.loads(row["resource_json"])
         if isinstance(resource,str):

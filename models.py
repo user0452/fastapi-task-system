@@ -115,3 +115,31 @@ class LearningPlan(BaseModel):
 
 class PlanConfirmRequest(BaseModel):
     tasks_preview: list[PlanTaskPreview] = Field(default_factory=list)
+
+class AgentChatRequest(BaseModel):
+    message: str = Field(...,min_length=1,max_length=3000)
+
+class AgentToolPlan(BaseModel):
+    reply: str = Field(..., min_length=1)
+    status:Literal["need_more_info","ready_to_execute","chat_only"] = "need_more_info"
+    intent: Literal[
+        "generate_study_package",
+        "generate_resource",
+        "generate_quiz",
+        "generate_plan",
+        "update_profile",
+        "qa",
+        "unknown"
+    ] = "unknown"
+    course_name: Optional[str] = None
+    topic: Optional[str] = None
+    days: int = Field(default=3, ge=1, le=7)
+
+    available_time: Optional[str] = None
+    current_level: Optional[str] = None
+    resource_preference: Optional[str] = None
+
+    missing_fields: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    need_confirm_import: bool = True
+

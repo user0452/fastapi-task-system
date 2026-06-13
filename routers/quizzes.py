@@ -86,7 +86,10 @@ def generate_quiz_api(request: QuizGenerateRequest, user=Depends(get_current_use
         conn.commit()
 
         return success(
-            data=quiz_set,
+            data={
+                "id":quiz_set_id,
+                "quiz_set":quiz_set
+            },
             message="练习题生成并保存成功"
         )
     except ValueError as e:
@@ -129,6 +132,7 @@ def get_my_quizzes(
             select id, title, course_name, topic, created_at
             from quiz_sets
                 where user_id = %s
+                order by id desc
                 limit %s offset %s
             """,
             (user["id"],size,offset)
