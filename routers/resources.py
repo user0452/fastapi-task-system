@@ -1,6 +1,6 @@
 import json
 from plistlib import loads
-
+from services.rag_service import search_similar_chunks
 from fastapi import APIRouter, Depends
 
 from agents.resource_agent import generate_learning_resource
@@ -32,11 +32,41 @@ def generate_resource_api(request: LearningResourceGenerateRequest, user=Depends
             profile = json.loads(row["profile_json"])
             if isinstance(profile,str):
                 profile = json.loads(profile)
+
+            cursor.execute(
+                """
+                SELECT id, user_id, material_id, course_name, chunk_index, chunk_text, created_at
+                FROM course_material_chunks
+                WHERE user_id = %s AND course_name = %s
+                ORDER BY id ASC
+                """,
+                (
+                user["id"],
+                request.course_name
+                )
+            )
+            chunks = cursor.fetchall()
+            rag_context = search_similar_chunks(
+                query=request.topic,
+                chunks=chunks,
+                top_k=5
+            ) if chunks else []
             resource = generate_learning_resource(
                 course_name=request.course_name,
                 topic=request.topic,
-                profile=profile
+                profile=profile,
+                rag_context=rag_context
             )
+            resource["rag_references"] = [
+                {
+                    "chunk_id": item["id"],
+                    "material_id": item["material_id"],
+                    "chunk_index": item["chunk_index"],
+                    "score": item["score"],
+                    "snippet": item["chunk_text"][:200]
+                }
+                for item in rag_context
+            ]
             resouce_json = json.dumps(resource,ensure_ascii=False)
             cursor.execute(
                  """
@@ -65,7 +95,10 @@ def generate_resource_api(request: LearningResourceGenerateRequest, user=Depends
                           "topic": request.topic,
                           "resource_id": resource["id"],
                           "title": resource["title"],
-                          "resource_type": resource["resource_type"]
+                          "resource_type": resource["resource_type"],
+                          "rag_hit_count": len(rag_context),
+                          "rag_chunk_ids": [item["id"] for item in rag_context]
+
                       },
                       ensure_ascii=False
                  )

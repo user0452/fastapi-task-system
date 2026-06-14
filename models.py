@@ -143,3 +143,12 @@ class AgentToolPlan(BaseModel):
     tools: list[str] = Field(default_factory=list)
     need_confirm_import: bool = True
 
+class MaterialCreateRequest(BaseModel):
+    course_name: str = Field(...,min_length=1,max_length=100)
+    title: str = Field(...,min_length=1,max_length=100)
+    content: str = Field(...,min_length=1)
+
+class MaterialSearchRequest(BaseModel):
+    course_name: str = Field(..., min_length=1, max_length=100)
+    topic: str = Field(..., min_length=1, max_length=100)
+

@@ -3,9 +3,19 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 from llm_client import get_llm
 from models import QuizSet
+from services.rag_service import search_similar_chunks
 
-def generate_quiz_set(course_name: str,topic: str,profile:dict|None = None) -> dict:
+def generate_quiz_set(course_name: str,topic: str,profile:dict|None = None,rag_context:list[dict]|None = None) -> dict:
     llm = get_llm()
+    rag_context_text = "暂无课程资料检索结果"
+    if rag_context:
+        rag_context_text = "\n\n".join(
+            [
+                f"资料片段{index + 1}：{item.get('chunk_text', '')}"
+                for index, item in enumerate(rag_context)
+            ]
+        )
+
     messages = [
         SystemMessage(
             content=(
@@ -37,6 +47,16 @@ def generate_quiz_set(course_name: str,topic: str,profile:dict|None = None) -> d
         HumanMessage (
             content=(
                 f"请为课程{course_name}的{topic},考生画像为{profile},生成考题，请使用以下格式：\n"
+                f"""
+                课程资料检索结果：
+                {rag_context_text}
+                
+                出题要求：
+                - 如果提供了课程资料检索结果，题目必须优先基于这些资料设计。
+                - 不要编造课程资料中没有出现的专有概念。
+                - 题目要围绕 course_name 和 topic。
+                - 如果课程资料里有自定义术语，题目必须体现这些术语。
+                """
             )
         )
     ]

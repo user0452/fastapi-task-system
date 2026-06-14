@@ -24,8 +24,13 @@ def analyze_user_learning_request(
 
 如果缺少课程名或知识点，不允许调用 generate_resource/generate_quiz/generate_plan，status 必须是 need_more_info，并在 reply 中主动追问。
 
-如果用户要求制定学习计划，但没有说明天数或每天可用时间，可以追问；如果用户表达“随便安排/你决定”，可以默认 days=3。
-
+如果用户要求制定学习计划：
+- 课程名和知识点是必填。
+- 天数如果用户没说，默认 days=3。
+- 每天可用时间不是必填；如果用户没说，可以默认“每天1小时”。
+- 资源偏好不是必填；如果用户没说，可以默认“图文讲解和练习题”。
+- 不要仅因为缺少 available_time 或 resource_preference 就返回 need_more_info。
+如果用户输入的课程名包含特殊后缀或完整名称，例如“软件测试-A3内部课”，必须原样保留，不要简化成“软件测试”。
 如果信息足够，status 为 ready_to_execute，并给出 tools。
 
 你必须结合历史对话理解用户补充的信息。

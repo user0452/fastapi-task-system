@@ -2,7 +2,7 @@ import json
 
 from fastapi import APIRouter, Depends
 from pyexpat.errors import messages
-
+from services.rag_service import search_similar_chunks
 from agents.quiz_agent import generate_quiz_set
 from db import get_conn
 from models import QuizGenerateRequest
@@ -30,10 +30,34 @@ def generate_quiz_api(request: QuizGenerateRequest, user=Depends(get_current_use
             profile = json.loads(row["profile_json"])
             if isinstance(profile,str):
                 profile = json.loads(profile)
-
-        quiz_set = generate_quiz_set(
-            request.course_name,request.topic,profile
+        cursor.execute(
+            """
+            select id, user_id, material_id, course_name, chunk_index, chunk_text, created_at
+            from course_material_chunks
+                where user_id = %s and course_name = %s
+                order by id asc
+            """,
+            (user["id"],request.course_name)
         )
+        chunks = cursor.fetchall()
+        rag_context = search_similar_chunks(
+            query=request.topic,
+            chunks=chunks,
+            top_k=5
+        ) if chunks else []
+        quiz_set = generate_quiz_set(
+            request.course_name,request.topic,profile,rag_context
+        )
+        quiz_set["rag_references"] = [
+            {
+                "chunk_id": item["id"],
+                "material_id": item["material_id"],
+                "chunk_index": item["chunk_index"],
+                "score": item["score"],
+                "snippet": item["chunk_text"][:200]
+            }
+            for item in rag_context
+        ]
         quiz_json = json.dumps(quiz_set,ensure_ascii=False)
         cursor.execute(
             """
@@ -75,7 +99,9 @@ def generate_quiz_api(request: QuizGenerateRequest, user=Depends(get_current_use
                         "topic":request.topic,
                         "quiz_set_id":quiz_set_id,
                         "title":quiz_set["title"],
-                        "question_count":len(quiz_set["questions"])
+                        "question_count":len(quiz_set["questions"]),
+                        "rag_hit_count": len(rag_context),
+                        "rag_chunk_ids": [item["id"] for item in rag_context]
                     },
                     ensure_ascii=False
                 )

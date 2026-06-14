@@ -6,6 +6,7 @@ from agents.quiz_agent import generate_quiz_set
 from agents.planner_agent import generate_learning_plan
 from agents.orchestrator_agent import analyze_user_learning_request
 from db import get_conn
+from services.rag_service import search_similar_chunks
 from models import AgentChatRequest
 from utils import success, error, get_current_user
 
@@ -76,6 +77,36 @@ def agent_chat(
         topic = plan.get("topic")
         days = plan.get("days",3)
         tools = plan.get("tools", [])
+        if plan.get("status") == "need_more_info":
+            cursor.execute(
+                """
+                INSERT INTO agent_chat_messages
+                    (user_id, role, content, tool_calls)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    user["id"],
+                    "assistant",
+                    plan.get("reply", "请补充学习需求"),
+                    json.dumps(
+                        {
+                            "plan": plan,
+                            "tool_results": {}
+                        },
+                        ensure_ascii=False
+                    )
+                )
+            )
+
+            conn.commit()
+
+            return success(
+                data={
+                    "plan": plan,
+                    "tool_results": tool_results
+                },
+                message="AI助手需要补充信息"
+            )
         if not course_name or not topic:
             return success(
                 data={
@@ -84,12 +115,45 @@ def agent_chat(
                 },
                 message="AI助手已理解学生需求，但缺少课程名或知识点"
             )
+        rag_context = []
+
+        cursor.execute(
+            """
+            SELECT id, user_id, material_id, course_name, chunk_index, chunk_text, created_at
+            FROM course_material_chunks
+            WHERE user_id = %s AND course_name = %s
+            ORDER BY id ASC
+            """,
+            (
+                user["id"],
+                course_name
+            )
+        )
+
+        chunks = cursor.fetchall()
+
+        rag_context = search_similar_chunks(
+            query=topic,
+            chunks=chunks,
+            top_k=5
+        ) if chunks else []
         if "generate_resource" in tools:
             resource = generate_learning_resource(
                 course_name=course_name,
                 topic=topic,
-                profile=profile
+                profile=profile,
+                rag_context=rag_context
             )
+            resource["rag_references"] = [
+                {
+                    "chunk_id": item["id"],
+                    "material_id": item["material_id"],
+                    "chunk_index": item["chunk_index"],
+                    "score": item["score"],
+                    "snippet": item["chunk_text"][:200]
+                }
+                for item in rag_context
+            ]
             resource_json = json.dumps(resource,ensure_ascii=False)
             cursor.execute(
                 """
@@ -108,9 +172,19 @@ def agent_chat(
             quiz_set = generate_quiz_set(
                 course_name=course_name,
                 topic=topic,
-                profile=profile
+                profile=profile,
+                rag_context=rag_context
             )
-
+            quiz_set["rag_references"] = [
+                {
+                    "chunk_id": item["id"],
+                    "material_id": item["material_id"],
+                    "chunk_index": item["chunk_index"],
+                    "score": item["score"],
+                    "snippet": item["chunk_text"][:200]
+                }
+                for item in rag_context
+            ]
             quiz_json = json.dumps(quiz_set, ensure_ascii=False)
 
             cursor.execute(
@@ -178,7 +252,9 @@ def agent_chat(
                         "tools": tools,
                         "resource_id": tool_results.get("resource", {}).get("id"),
                         "quiz_set_id": tool_results.get("quiz_set", {}).get("id"),
-                        "has_learning_plan": "learning_plan" in tool_results
+                        "has_learning_plan": "learning_plan" in tool_results,
+                        "rag_hit_count": len(rag_context),
+                        "rag_chunk_ids": [item["id"] for item in rag_context]
                     },
                     ensure_ascii=False
                 )
@@ -201,7 +277,9 @@ def agent_chat(
                         "tool_results": {
                             "resource_id": tool_results.get("resource", {}).get("id"),
                             "quiz_set_id": tool_results.get("quiz_set", {}).get("id"),
-                            "has_learning_plan": "learning_plan" in tool_results
+                            "has_learning_plan": "learning_plan" in tool_results,
+                            "rag_hit_count": len(rag_context),
+                            "rag_chunk_ids": [item["id"] for item in rag_context]
                         }
                     },
                     ensure_ascii=False

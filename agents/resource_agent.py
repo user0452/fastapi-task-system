@@ -8,9 +8,19 @@ from models import LearningResource
 def generate_learning_resource(
         course_name:str,
         topic:str,
-        profile:dict |None = None
+        profile:dict |None = None,
+        rag_context: list[dict] | None = None
 )->dict:
     llm = get_llm()
+    rag_context_text = "暂无课程资料检索结果"
+
+    if rag_context:
+        rag_context_text = "\n\n".join(
+            [
+                f"资料片段{index + 1}：{item.get('chunk_text', '')}"
+                for index, item in enumerate(rag_context)
+            ]
+        )
     messages = [
         SystemMessage(
             content=(
@@ -37,6 +47,13 @@ def generate_learning_resource(
             content=f"课程名：{course_name}\n"
                     f"知识点：{topic}\n"
                     f"学生画像：{json.dumps(profile,ensure_ascii=False)}"
+                    f"""课程资料检索结果：
+                    {rag_context_text}
+                    
+                    要求：
+                    - 如果提供了课程资料检索结果，必须优先基于这些资料生成。
+                    - 不要编造课程资料中没有明确支持的细节。
+                    - 如果需要补充通用知识，可以补充，但要保持和课程资料一致。"""
         )
     ]
     result = llm.invoke(messages)
