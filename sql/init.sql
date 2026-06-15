@@ -4,6 +4,10 @@ DEFAULT COLLATE utf8mb4_unicode_ci;
 
 USE task_db2;
 
+DROP TABLE IF EXISTS agent_chat_messages;
+DROP TABLE IF EXISTS learning_evaluations;
+DROP TABLE IF EXISTS course_material_chunks;
+DROP TABLE IF EXISTS course_materials;
 DROP TABLE IF EXISTS operation_logs;
 DROP TABLE IF EXISTS student_profiles;
 DROP TABLE IF EXISTS learning_resources;
@@ -88,6 +92,63 @@ CREATE TABLE learning_resources (
         ON DELETE CASCADE
 );
 
+CREATE TABLE course_materials (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    course_name VARCHAR(100) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    content LONGTEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_materials_user_id (user_id),
+    INDEX idx_materials_course_name (user_id, course_name),
+
+    CONSTRAINT fk_materials_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE course_material_chunks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    material_id INT NOT NULL,
+    course_name VARCHAR(100) NOT NULL,
+    chunk_index INT NOT NULL,
+    chunk_text TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_chunks_user_course (user_id, course_name),
+    INDEX idx_chunks_material_id (material_id),
+
+    CONSTRAINT fk_chunks_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT fk_chunks_material
+        FOREIGN KEY (material_id)
+        REFERENCES course_materials(id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE agent_chat_messages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    role VARCHAR(20) NOT NULL,
+    content TEXT NOT NULL,
+    tool_calls TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_agent_chat_user_id (user_id),
+    INDEX idx_agent_chat_user_created (user_id, created_at),
+
+    CONSTRAINT fk_agent_chat_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE
+);
+
 create table quiz_sets (
     id int auto_increment primary key,
     user_id int not null,
@@ -104,6 +165,32 @@ create table quiz_sets (
                        foreign key (user_id)
                        references users(id)
                        on delete cascade
+);
+
+CREATE TABLE learning_evaluations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    quiz_set_id INT NOT NULL,
+    score INT NOT NULL,
+    level VARCHAR(50) NOT NULL,
+    weak_points_json TEXT,
+    suggestions_json TEXT,
+    evaluation_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_evaluations_user_id (user_id),
+    INDEX idx_evaluations_quiz_set_id (quiz_set_id),
+    INDEX idx_evaluations_score (score),
+
+    CONSTRAINT fk_evaluations_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT fk_evaluations_quiz_set
+        FOREIGN KEY (quiz_set_id)
+        REFERENCES quiz_sets(id)
+        ON DELETE CASCADE
 );
 
 create table quiz_questions (

@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from routers import users, tasks,ai,profiles,resources,quizzes,plans,agent,materials
+from routers import users, tasks,ai,profiles,resources,quizzes,plans,agent,materials,evaluations
 app = FastAPI()
+
 app.include_router(materials.router)
 app.include_router(agent.router)
+app.include_router(evaluations.router)
 app.include_router(plans.router)
 app.include_router(quizzes.router)
 app.include_router(resources.router)

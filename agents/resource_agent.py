@@ -2,7 +2,7 @@ from llm_client import get_llm
 import json
 from langchain_core.messages import HumanMessage,SystemMessage
 from pydantic import ValidationError
-from models import LearningResource
+from models import LearningResourcePackage
 
 
 def generate_learning_resource(
@@ -31,14 +31,53 @@ def generate_learning_resource(
                 "学生画像只用于调整讲解难度、例子风格和表达方式，不能改变课程主题。\n"
                 "你必须只返回 JSON，不要返回解释文字，不要使用 Markdown。\n"
                 "返回格式必须严格如下：\n"
-                "{\n"
-                '  "title": "资源标题",\n'
-                '  "resource_type": "explanation",\n'
-                '  "content": "知识点讲解正文",\n'
-                '  "key_points": ["关键点1", "关键点2"],\n'
-                '  "examples": ["例子1", "例子2"]\n'
-                "}\n"
-                "resource_type 固定为 explanation。\n"
+                """{
+                  "title": "资源包标题",
+                  "resource_type": "resource_package",
+                  "content": "资源包摘要",
+                  "key_points": ["核心点1", "核心点2"],
+                  "examples": ["例子1"],
+                  "resources": {
+                    "explanation_doc": {
+                      "title": "课程讲解文档",
+                      "content": "内容",
+                      "key_points": [],
+                      "examples": []
+                    },
+                    "mind_map": {
+                      "title": "知识点思维导图",
+                      "content": "内容",
+                      "key_points": [],
+                      "examples": []
+                    },
+                    "extended_reading": {
+                      "title": "拓展阅读材料",
+                      "content": "内容",
+                      "key_points": [],
+                      "examples": []
+                    },
+                    "practice_case": {
+                      "title": "实操案例",
+                      "content": "内容",
+                      "key_points": [],
+                      "examples": []
+                    },
+                    "common_mistakes": {
+                      "title": "常见误区",
+                      "content": "内容",
+                      "key_points": [],
+                      "examples": []
+                    },
+                    "video_script": {
+                      "title": "视频讲解脚本",
+                      "content": "内容",
+                      "key_points": [],
+                      "examples": []
+                    }
+                  },
+                  "limitations": []
+                }"""
+                "resource_type 固定为 resource_package。\n"
                 "content 要适合学生当前水平，不要太空泛。\n"
                 "key_points 和 examples 不存在时返回空数组 []。"
             )
@@ -61,7 +100,7 @@ def generate_learning_resource(
 
     try:
         data = json.loads(content)
-        resource = LearningResource.model_validate( data)
+        resource = LearningResourcePackage.model_validate( data)
         return resource.model_dump()
     except json.JSONDecodeError:
         raise ValueError(f"模型返回的json格式错误：{content}")

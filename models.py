@@ -152,3 +152,55 @@ class MaterialSearchRequest(BaseModel):
     course_name: str = Field(..., min_length=1, max_length=100)
     topic: str = Field(..., min_length=1, max_length=100)
 
+class LearningResourceItem(BaseModel):
+    title: str = Field(..., min_length=1, max_length=100)
+    content: str = Field(..., min_length=1)
+    key_points: list[str] = Field(default_factory=list)
+    examples: list[str] = Field(default_factory=list)
+
+
+class ResourcePackageItems(BaseModel):
+    explanation_doc: LearningResourceItem
+    mind_map: LearningResourceItem
+    extended_reading: LearningResourceItem
+    practice_case: LearningResourceItem
+    common_mistakes: LearningResourceItem
+    video_script: LearningResourceItem
+
+
+class LearningResourcePackage(BaseModel):
+    title: str = Field(..., min_length=1, max_length=100)
+    resource_type: Literal["resource_package"] = "resource_package"
+    content: str = Field(..., min_length=1)
+    key_points: list[str] = Field(default_factory=list)
+    examples: list[str] = Field(default_factory=list)
+    resources: ResourcePackageItems
+    limitations: list[str] = Field(default_factory=list)
+
+class EvaluationAnswerItem(BaseModel):
+    question_id:int
+    user_answer:str = Field(...,min_length=1,max_length=3000)
+
+class EvaluationSubmitRequest(BaseModel):
+    quiz_set_id:int
+    answers: list[EvaluationAnswerItem] = Field(default_factory=list)
+
+class QuestionEvaluationReview(BaseModel):
+    question_id: int
+    question: str = Field(..., min_length=1)
+    reference_answer: str = Field(..., min_length=1)
+    user_answer: str = Field(..., min_length=1)
+    score: int = Field(..., ge=0, le=100)
+    feedback: str = Field(..., min_length=1)
+    weak_point: Optional[str] = None
+
+
+class LearningEvaluationResult(BaseModel):
+    quiz_set_id: int
+    score: int = Field(..., ge=0, le=100)
+    level: str = Field(..., min_length=1)
+    summary: str = Field(..., min_length=1)
+    weak_points: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+    question_reviews: list[QuestionEvaluationReview] = Field(default_factory=list)
+
