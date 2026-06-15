@@ -1,62 +1,170 @@
-# FastAPI Task System
+# A3 Learning Agent System
 
-一个基于 **FastAPI + MySQL + JWT** 的多用户任务管理系统，支持用户注册登录、任务 CRUD、分页查询、状态筛选、优先级管理、静态前端页面，以及 AI 命令和复习计划相关扩展接口。
+基于大模型的个性化学习资源生成与学习规划多智能体系统。项目基于 FastAPI + MySQL 构建，围绕中国软件杯 A3 赛道需求，实现学生画像、课程知识库 RAG、学习资源生成、练习题生成和学习计划生成等核心能力。
 
-> 前端说明：当前 `static/` 下的前端工作台界面由 **OpenAI Codex** 辅助设计和实现，包括玻璃质感 UI、任务面板、筛选搜索、AI 复习计划页面和交互脚本。
+当前分支：`feature/a3-learning-agent`
 
-## 功能概览
+## 项目简介
 
-- 用户注册、登录、密码哈希存储
-- JWT Bearer Token 身份认证
-- 多用户任务数据隔离
-- 任务创建、查询、更新、删除
-- 任务分页查询、状态筛选、优先级筛选和前端搜索
-- 前端统计卡片：全部、待办、进行中、已完成
-- 规则版 AI 命令：创建任务、批量修改状态、删除指定状态任务
-- 考试安排解析接口
-- 复习计划预览接口
-- 复习计划确认导入接口
-- AI 操作日志查询接口
-- 前端支持将复习计划预览通过后端确认接口导入为任务，并展示最近 AI 操作日志
+本系统面向高校课程学习场景，用户可以通过自然语言描述自己的学习需求，例如：
+
+```text
+我想学习软件测试-A3内部课里的单因子扰动原则，给我讲解和练习题，安排三天学习计划。
+```
+
+系统会由总控智能体理解学习需求，结合学生画像和课程知识库，调用多个智能体生成个性化学习包，包括多类型学习资源、练习题和学习计划。
+
+核心流程：
+
+```text
+自然语言输入
+→ OrchestratorAgent 理解需求
+→ 读取学生画像与历史对话
+→ RAG 检索课程知识库
+→ ResourceAgent 生成多类型学习资源
+→ QuizAgent 生成练习题
+→ PlannerAgent 生成学习计划
+→ 返回完整学习包与 RAG 引用
+```
 
 ## 技术栈
 
 - Python 3.13
 - FastAPI
-- Uvicorn
-- MySQL
-- PyMySQL
+- MySQL / PyMySQL
+- JWT 鉴权
+- LangChain / langchain-openai
+- 大模型 API 调用
+- sentence-transformers
+- FAISS
 - Pydantic
-- python-jose
-- Passlib + bcrypt
-- python-dotenv
-- LangChain + langchain-openai
 - HTML / CSS / JavaScript
 - uv
+
+## 已实现功能
+
+### 基础能力
+
+- 用户注册、登录
+- JWT Bearer Token 鉴权
+- 多用户数据隔离
+- 任务 CRUD
+- 操作日志记录
+
+### 学生画像
+
+- `POST /profiles/generate`：根据自然语言生成学生画像
+- `GET /profiles/me`：查询当前用户画像
+- 学生画像用于调整资源难度、讲解方式和学习计划节奏
+
+### 课程资料与 RAG
+
+- `POST /materials`：上传课程资料
+- `GET /materials`：查询课程资料列表
+- `POST /materials/{material_id}/build-index`：将课程资料切分为 chunks
+- `POST /materials/rag-search`：基于 FAISS 检索相关课程片段
+
+RAG 流程：
+
+```text
+课程资料原文
+→ split_text_to_chunks 切分文本
+→ sentence-transformers 生成向量
+→ FAISS 相似度检索
+→ 返回相关 chunk
+```
+
+生成结果会返回 `rag_references`，用于追踪内容依据，降低大模型幻觉风险。
+
+### 学习资源生成
+
+- `POST /resources/generate`
+- `GET /resources`
+- `GET /resources/{resource_id}`
+
+当前资源生成已升级为结构化 `resource_package`，支持多类型资源：
+
+- 课程讲解文档 `explanation_doc`
+- 知识点思维导图 `mind_map`
+- 拓展阅读材料 `extended_reading`
+- 实操案例 `practice_case`
+- 常见误区 `common_mistakes`
+- 视频讲解脚本 `video_script`
+
+### 练习题生成
+
+- `POST /quizzes/generate`
+- `GET /quizzes`
+- `GET /quizzes/{quiz_set_id}`
+
+QuizAgent 会结合学生画像和 RAG 检索结果生成题目，并保存题集与题目详情。
+
+### 学习计划生成
+
+- `POST /plans/preview`：生成学习计划预览
+- `POST /plans/confirm`：将学习计划导入任务表
+
+PlannerAgent 会根据课程名、知识点和计划天数生成可执行的学习任务。
+
+### AI 学习助手
+
+- `POST /agent/chat`
+
+总控智能体会解析用户自然语言学习需求，判断需要调用的工具，并协调资源生成、题目生成和学习计划生成。
+
+支持工具：
+
+- `generate_resource`
+- `generate_quiz`
+- `generate_plan`
+
+示例请求：
+
+```json
+{
+  "message": "我想学习软件测试-A3内部课里的单因子扰动原则，给我讲解和练习题，安排三天学习计划"
+}
+```
+
+返回结果包含：
+
+- `plan`：总控智能体解析出的执行计划
+- `tool_results.resource`：多类型学习资源包
+- `tool_results.quiz_set`：练习题集
+- `tool_results.learning_plan`：学习计划
+- `rag_references`：课程资料引用片段
 
 ## 项目结构
 
 ```text
-fastapi_study/
-├── main.py
-├── db.py
-├── models.py
-├── utils.py
-├── llm_client.py
+fastapi-task-system/
+├── agents/
+│   ├── orchestrator_agent.py
+│   ├── resource_agent.py
+│   ├── quiz_agent.py
+│   └── planner_agent.py
 ├── routers/
 │   ├── users.py
 │   ├── tasks.py
-│   └── ai.py
+│   ├── profiles.py
+│   ├── materials.py
+│   ├── resources.py
+│   ├── quizzes.py
+│   ├── plans.py
+│   └── agent.py
+├── services/
+│   └── rag_service.py
 ├── static/
-│   ├── index.html      # Codex 辅助重构的前端页面
-│   ├── css/style.css   # 玻璃质感 UI 样式
-│   └── js/app.js       # 前端交互逻辑
+│   ├── index.html
+│   ├── css/style.css
+│   └── js/app.js
 ├── sql/init.sql
-├── ai_playground/
-│   └── test_langchain_llm.py
-├── .env.example
+├── db.py
+├── llm_client.py
+├── main.py
+├── models.py
+├── utils.py
 ├── pyproject.toml
-├── uv.lock
 └── README.md
 ```
 
@@ -68,17 +176,7 @@ fastapi_study/
 uv sync
 ```
 
-### 2. 初始化数据库
-
-确保本机 MySQL 服务已启动，然后执行：
-
-```bash
-mysql -u root -p < sql/init.sql
-```
-
-初始化脚本会创建 `task_db2` 数据库，以及 `users`、`tasks`、`operation_logs` 三张表。
-
-### 3. 配置环境变量
+### 2. 配置环境变量
 
 复制 `.env.example` 为 `.env`，并按本地环境修改：
 
@@ -98,9 +196,15 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
 ```
 
-`DEEPSEEK_*` 配置只在调用考试安排解析和复习计划预览接口时需要。基础用户、任务和规则版 AI 命令不依赖大模型配置。
+### 3. 初始化数据库
 
-## 启动项目
+确保 MySQL 服务已启动，然后执行：
+
+```bash
+mysql -u root -p < sql/init.sql
+```
+
+### 4. 启动项目
 
 ```bash
 uv run uvicorn main:app --reload
@@ -108,257 +212,28 @@ uv run uvicorn main:app --reload
 
 启动后访问：
 
-- 前端页面：<http://127.0.0.1:8000>
-- Swagger 文档：<http://127.0.0.1:8000/docs>
-- ReDoc 文档：<http://127.0.0.1:8000/redoc>
+- 前端页面：`http://127.0.0.1:8000`
+- Swagger 文档：`http://127.0.0.1:8000/docs`
+- ReDoc 文档：`http://127.0.0.1:8000/redoc`
 
-## 前端页面
+## RAG 验证说明
 
-当前前端为 Codex 辅助实现的静态工作台，主要包含：
+项目中可构造一份私有课程资料，例如：
 
-- 登录 / 注册页
-- 侧边导航和玻璃质感工作台布局
-- 任务统计卡片
-- 任务列表、分页、搜索、状态筛选、优先级筛选
-- 新建、编辑、删除任务弹窗
-- 规则命令面板
-- 考试安排解析面板
-- 复习计划预览和导入任务面板
-- AI 操作日志面板
+- 课程名：`软件测试-A3内部课`
+- 资料标题：`青瓷等价类法完整内部讲义`
+- 自定义术语：`青层`、`瓷层`、`裂层`、`单因子扰动原则`
 
-前端文件位于：
+如果系统能基于该资料准确解释“单因子扰动原则”，并返回相关 `rag_references`，说明生成内容确实参考了课程知识库，而不是单纯依赖模型已有知识。
 
-- `static/index.html`
-- `static/css/style.css`
-- `static/js/app.js`
+## 当前规划
 
-## API 说明
+- 引入外部学习资源检索能力，为学习包推荐真实课程、视频、文档和练习链接
+- 优化前端展示，将资源包、题目、计划和 RAG 引用卡片化展示
+- 增加学习效果评估，根据答题结果分析薄弱点并推荐后续学习内容
+- 完善课程知识库，构造更完整的高校专业课程文档集
+- 优化 PlannerAgent，使学习计划能够结合 RAG 资料和外部资源进行编排
 
-接口统一返回类似下面的结构：
+## 项目定位
 
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {}
-}
-```
-
-需要登录的接口请携带请求头：
-
-```http
-Authorization: Bearer <token>
-```
-
-### 用户注册
-
-```http
-POST /users/register
-```
-
-```json
-{
-  "username": "testuser",
-  "password": "123456"
-}
-```
-
-### 用户登录
-
-```http
-POST /users/login
-```
-
-```json
-{
-  "username": "testuser",
-  "password": "123456"
-}
-```
-
-响应中的 `data.token` 用于后续鉴权。
-
-### 查询任务列表
-
-```http
-GET /tasks?page=1&size=10
-GET /tasks?page=1&size=10&status=todo
-```
-
-`status` 可选值：
-
-- `todo`
-- `doing`
-- `done`
-
-### 查询单个任务
-
-```http
-GET /tasks/{task_id}
-```
-
-### 创建任务
-
-```http
-POST /tasks
-```
-
-```json
-{
-  "title": "复习 MySQL",
-  "description": "练习 join 和 group by",
-  "status": "todo",
-  "priority": "high"
-}
-```
-
-### 更新任务
-
-```http
-PUT /tasks/{task_id}
-```
-
-```json
-{
-  "status": "doing",
-  "priority": "medium"
-}
-```
-
-### 删除任务
-
-```http
-DELETE /tasks/{task_id}
-```
-
-### 规则版 AI 命令
-
-```http
-POST /ai/command
-```
-
-```json
-{
-  "text": "创建任务：复习数据库，优先级高"
-}
-```
-
-当前规则版命令主要用于演示任务创建、批量状态修改、按状态删除等动作。
-
-### 考试安排解析
-
-```http
-POST /ai/parse-exam-schedule
-```
-
-> 当前路由名称为 `schedule`。
-
-```json
-{
-  "text": "高数 2026-06-10 09:00\n英语 2026-06-13 15:00"
-}
-```
-
-该接口依赖 `.env` 中的 `DEEPSEEK_*` 配置。
-
-### 复习计划预览
-
-```http
-POST /ai/preview-review-plan
-```
-
-```json
-{
-  "exams": [
-    {
-      "course": "高数",
-      "exam_date": "2026-06-10",
-      "exam_time": "09:00"
-    }
-  ]
-}
-```
-
-该接口会根据考试安排生成待办任务预览，依赖 `.env` 中的 `DEEPSEEK_*` 配置。
-
-### 确认导入复习计划
-
-```http
-POST /ai/confirm-review-plan
-```
-
-```json
-{
-  "tasks_preview": [
-    {
-      "title": "高数第一轮复习",
-      "description": "整理极限与导数重点",
-      "status": "todo",
-      "priority": "medium"
-    }
-  ]
-}
-```
-
-该接口会一次性创建复习任务，并写入 `operation_logs`。
-
-### 查询 AI 操作日志
-
-```http
-GET /ai/operation_logs?page=1&size=10
-```
-
-用于查看最近的 AI 确认导入记录等操作日志。
-
-## 数据库表
-
-`users`
-
-- `id`
-- `username`
-- `password`
-
-`tasks`
-
-- `id`
-- `user_id`
-- `title`
-- `description`
-- `status`
-- `priority`
-- `created_at`
-- `updated_at`
-
-`operation_logs`
-
-- `id`
-- `user_id`
-- `action`
-- `target_type`
-- `target_id`
-- `detail`
-- `created_at`
-
-## 本地检查
-
-后端语法检查：
-
-```bash
-uv run python -m py_compile main.py db.py models.py utils.py llm_client.py routers/users.py routers/tasks.py routers/ai.py
-```
-
-前端脚本语法检查：
-
-```bash
-node --check static/js/app.js
-```
-
-查看已注册路由：
-
-```bash
-uv run python -c "from main import app; [print(r.path, getattr(r, 'methods', None)) for r in app.routes]"
-```
-
-## 当前状态
-
-项目已经具备用户认证、任务管理、静态前端和 AI 扩展接口的基础闭环。当前前端由 Codex 辅助完成了一次工作台式 UI 重构；后端保持原有 FastAPI 接口设计，可继续围绕测试、异常处理、操作日志落库、Docker 部署和真实大模型工具调用方向迭代。
+本项目当前重点不是构建通用在线教育平台，而是实现一个可演示、可追踪、可扩展的 A3 赛道原型系统。系统通过学生画像、课程知识库 RAG 和多智能体协作，生成个性化学习资源、练习题和学习计划，为后续扩展真实学习资源检索和学习效果评估打基础。
