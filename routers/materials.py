@@ -1,6 +1,6 @@
 import json
-
-from fastapi import APIRouter, Depends
+from services.document_parser import extract_text_from_document
+from fastapi import APIRouter, Depends,UploadFile,File,Form
 from services.rag_service import split_text_to_chunks,search_similar_chunks
 from db import get_conn
 from models import MaterialCreateRequest,MaterialSearchRequest
@@ -328,6 +328,103 @@ def rag_search_materials(
             message=f"RAG 向量检索失败：{str(e)}",
             code=500
         )
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@router.post("/upload")
+async def upload_course_material_file(
+        course_name: str = Form(...),
+        title: str = Form(...),
+        file: UploadFile = File(...),
+        user=Depends(get_current_user)
+):
+    """
+    上传课程资料文件，并解析为文本后保存到 course_materials。
+    支持 txt、md、pdf、docx。
+    """
+    max_file_size = 10 * 1024 * 1024
+
+    try:
+        content = await file.read()
+
+        if len(content) > max_file_size:
+            return error(message="文件过大，当前最大支持 10MB", code=400)
+
+        text = extract_text_from_document(
+            filename=file.filename,
+            content=content
+        )
+
+    except ValueError as e:
+        return error(message=str(e), code=400)
+
+    except Exception as e:
+        return error(message=f"文件解析失败：{str(e)}", code=500)
+
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            INSERT INTO course_materials
+                (user_id, course_name, title, content)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (
+                user["id"],
+                course_name,
+                title,
+                text
+            )
+        )
+
+        material_id = cursor.lastrowid
+
+        cursor.execute(
+            """
+            INSERT INTO operation_logs
+                (user_id, action, target_type, target_id, detail)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (
+                user["id"],
+                "A3_UPLOAD_COURSE_MATERIAL_FILE",
+                "course_material",
+                material_id,
+                json.dumps(
+                    {
+                        "course_name": course_name,
+                        "title": title,
+                        "filename": file.filename,
+                        "content_type": file.content_type,
+                        "text_length": len(text)
+                    },
+                    ensure_ascii=False
+                )
+            )
+        )
+
+        conn.commit()
+
+        return success(
+            data={
+                "id": material_id,
+                "course_name": course_name,
+                "title": title,
+                "filename": file.filename,
+                "text_length": len(text),
+                "content_preview": text[:300]
+            },
+            message="课程资料文件上传并解析成功"
+        )
+
+    except Exception as e:
+        conn.rollback()
+        return error(message=f"保存课程资料失败：{str(e)}", code=500)
 
     finally:
         cursor.close()
