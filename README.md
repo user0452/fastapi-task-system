@@ -1,184 +1,74 @@
 # A3 Learning Agent System
 
-基于大模型的个性化学习资源生成与学习规划多智能体系统。项目基于 FastAPI + MySQL 构建，围绕中国软件杯 A3 赛道需求，实现学生画像、课程知识库 RAG、学习资源生成、练习题生成和学习计划生成等核心能力。
+面向高校课程学习场景的个性化学习工作台。后端基于 FastAPI + MySQL，前端基于 Vue 3 + Vite，围绕学生画像、课程知识库 RAG、学习资源生成、练习题生成、学习计划、联网资源搜索和 AI 学习助手提供一套可演示、可扩展的学习支持系统。
 
 当前分支：`feature/a3-learning-agent`
 
-## 项目简介
+## 功能概览
 
-本系统面向高校课程学习场景，用户可以通过自然语言描述自己的学习需求，例如：
-
-```text
-我想学习软件测试-A3内部课里的单因子扰动原则，给我讲解和练习题，安排三天学习计划。
-```
-
-系统会由总控智能体理解学习需求，结合学生画像和课程知识库，调用多个智能体生成个性化学习包，包括多类型学习资源、练习题和学习计划。
-
-核心流程：
-
-```text
-自然语言输入
-→ OrchestratorAgent 理解需求
-→ 读取学生画像与历史对话
-→ RAG 检索课程知识库
-→ ResourceAgent 生成多类型学习资源
-→ QuizAgent 生成练习题
-→ PlannerAgent 生成学习计划
-→ 返回完整学习包与 RAG 引用
-```
+- 用户注册、登录、JWT Bearer Token 鉴权和多用户数据隔离
+- 学生画像生成与查询
+- 课程资料上传、知识库分块和 RAG 检索
+- 个性化学习资源生成
+- 练习题生成、答题和评估
+- 学习计划预览与导入任务中心
+- AI 学习助手，支持非流式和流式对话
+- 联网搜索外部学习资源，工具名为 `search_external_learning_resources`
+- Vue 工作台前端，构建产物输出到 `static/vue`
 
 ## 技术栈
 
 - Python 3.13
 - FastAPI
 - MySQL / PyMySQL
-- JWT 鉴权
+- Pydantic
+- JWT
 - LangChain / langchain-openai
-- 大模型 API 调用
 - sentence-transformers
 - FAISS
-- Pydantic
-- HTML / CSS / JavaScript
-- uv
-
-## 已实现功能
-
-### 基础能力
-
-- 用户注册、登录
-- JWT Bearer Token 鉴权
-- 多用户数据隔离
-- 任务 CRUD
-- 操作日志记录
-
-### 学生画像
-
-- `POST /profiles/generate`：根据自然语言生成学生画像
-- `GET /profiles/me`：查询当前用户画像
-- 学生画像用于调整资源难度、讲解方式和学习计划节奏
-
-### 课程资料与 RAG
-
-- `POST /materials`：上传课程资料
-- `GET /materials`：查询课程资料列表
-- `POST /materials/{material_id}/build-index`：将课程资料切分为 chunks
-- `POST /materials/rag-search`：基于 FAISS 检索相关课程片段
-
-RAG 流程：
-
-```text
-课程资料原文
-→ split_text_to_chunks 切分文本
-→ sentence-transformers 生成向量
-→ FAISS 相似度检索
-→ 返回相关 chunk
-```
-
-生成结果会返回 `rag_references`，用于追踪内容依据，降低大模型幻觉风险。
-
-### 学习资源生成
-
-- `POST /resources/generate`
-- `GET /resources`
-- `GET /resources/{resource_id}`
-
-当前资源生成已升级为结构化 `resource_package`，支持多类型资源：
-
-- 课程讲解文档 `explanation_doc`
-- 知识点思维导图 `mind_map`
-- 拓展阅读材料 `extended_reading`
-- 实操案例 `practice_case`
-- 常见误区 `common_mistakes`
-- 视频讲解脚本 `video_script`
-
-### 练习题生成
-
-- `POST /quizzes/generate`
-- `GET /quizzes`
-- `GET /quizzes/{quiz_set_id}`
-
-QuizAgent 会结合学生画像和 RAG 检索结果生成题目，并保存题集与题目详情。
-
-### 学习计划生成
-
-- `POST /plans/preview`：生成学习计划预览
-- `POST /plans/confirm`：将学习计划导入任务表
-
-PlannerAgent 会根据课程名、知识点和计划天数生成可执行的学习任务。
-
-### AI 学习助手
-
-- `POST /agent/chat`
-
-总控智能体会解析用户自然语言学习需求，判断需要调用的工具，并协调资源生成、题目生成和学习计划生成。
-
-支持工具：
-
-- `generate_resource`
-- `generate_quiz`
-- `generate_plan`
-
-示例请求：
-
-```json
-{
-  "message": "我想学习软件测试-A3内部课里的单因子扰动原则，给我讲解和练习题，安排三天学习计划"
-}
-```
-
-返回结果包含：
-
-- `plan`：总控智能体解析出的执行计划
-- `tool_results.resource`：多类型学习资源包
-- `tool_results.quiz_set`：练习题集
-- `tool_results.learning_plan`：学习计划
-- `rag_references`：课程资料引用片段
+- Vue 3
+- Vite
+- Pinia
+- Vue Router
+- lucide-vue-next
 
 ## 项目结构
 
 ```text
-fastapi-task-system/
-├── agents/
+fastapi_study/
+├── agents/                      # 多智能体逻辑
 │   ├── orchestrator_agent.py
 │   ├── resource_agent.py
 │   ├── quiz_agent.py
 │   └── planner_agent.py
-├── routers/
-│   ├── users.py
-│   ├── tasks.py
-│   ├── profiles.py
+├── routers/                     # FastAPI 路由
+│   ├── agent.py
+│   ├── external_resources.py
 │   ├── materials.py
-│   ├── resources.py
+│   ├── profiles.py
 │   ├── quizzes.py
-│   ├── plans.py
-│   └── agent.py
-├── services/
-│   └── rag_service.py
-├── static/
-│   ├── index.html
-│   ├── css/style.css
-│   └── js/app.js
-├── sql/init.sql
-├── db.py
-├── llm_client.py
+│   ├── resources.py
+│   └── plans.py
+├── services/                    # RAG、外部搜索等服务
+├── frontend/                    # Vue 3 + Vite 前端源码
+├── static/                      # 后端静态文件目录
+│   ├── index.html               # 原静态入口
+│   ├── css/
+│   ├── js/
+│   └── vue/                     # Vue 构建产物
+├── sql/
 ├── main.py
 ├── models.py
-├── utils.py
+├── requirements.txt
 ├── pyproject.toml
 └── README.md
 ```
 
-## 环境准备
+`ai_playground/` 是本地实验目录，已加入 `.gitignore`，不进入版本控制。
 
-### 1. 安装依赖
+## 环境变量
 
-```bash
-uv sync
-```
-
-### 2. 配置环境变量
-
-复制 `.env.example` 为 `.env`，并按本地环境修改：
+复制 `.env.example` 为 `.env`，按本地环境填写：
 
 ```env
 DB_HOST=127.0.0.1
@@ -194,46 +84,114 @@ ACCESS_TOKEN_EXPIRE_HOURS=2
 DEEPSEEK_API_KEY=your_api_key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
+
+TAVILY_API_KEY=your_tavily_api_key
 ```
 
-### 3. 初始化数据库
+`TAVILY_API_KEY` 用于联网搜索外部学习资源。如果不配置，外部搜索能力会受限。
 
-确保 MySQL 服务已启动，然后执行：
+## 后端运行
+
+推荐使用 `uv`：
+
+```bash
+uv sync
+uv run uvicorn main:app --reload
+```
+
+也可以使用 `requirements.txt`：
+
+```bash
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+初始化数据库：
 
 ```bash
 mysql -u root -p < sql/init.sql
 ```
 
-### 4. 启动项目
-
-```bash
-uv run uvicorn main:app --reload
-```
-
 启动后访问：
 
-- 前端页面：`http://127.0.0.1:8000`
-- Swagger 文档：`http://127.0.0.1:8000/docs`
-- ReDoc 文档：`http://127.0.0.1:8000/redoc`
+- 后端首页：`http://127.0.0.1:8000`
+- Vue 前端：`http://127.0.0.1:8000/static/vue/index.html`
+- Swagger：`http://127.0.0.1:8000/docs`
+- ReDoc：`http://127.0.0.1:8000/redoc`
 
-## RAG 验证说明
+## 前端运行
 
-项目中可构造一份私有课程资料，例如：
+前端源码位于 `frontend/`：
 
-- 课程名：`软件测试-A3内部课`
-- 资料标题：`青瓷等价类法完整内部讲义`
-- 自定义术语：`青层`、`瓷层`、`裂层`、`单因子扰动原则`
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-如果系统能基于该资料准确解释“单因子扰动原则”，并返回相关 `rag_references`，说明生成内容确实参考了课程知识库，而不是单纯依赖模型已有知识。
+开发服务默认运行在：
 
-## 当前规划
+```text
+http://127.0.0.1:5173
+```
 
-- 引入外部学习资源检索能力，为学习包推荐真实课程、视频、文档和练习链接
-- 优化前端展示，将资源包、题目、计划和 RAG 引用卡片化展示
-- 增加学习效果评估，根据答题结果分析薄弱点并推荐后续学习内容
-- 完善课程知识库，构造更完整的高校专业课程文档集
-- 优化 PlannerAgent，使学习计划能够结合 RAG 资料和外部资源进行编排
+Vite 已配置代理到 `http://127.0.0.1:8000`。
 
-## 项目定位
+构建生产产物：
 
-本项目当前重点不是构建通用在线教育平台，而是实现一个可演示、可追踪、可扩展的 A3 赛道原型系统。系统通过学生画像、课程知识库 RAG 和多智能体协作，生成个性化学习资源、练习题和学习计划，为后续扩展真实学习资源检索和学习效果评估打基础。
+```bash
+cd frontend
+npm run build
+```
+
+构建结果输出到：
+
+```text
+static/vue/
+```
+
+## AI 助手能力
+
+主要接口：
+
+- `POST /agent/chat`
+- `POST /agent/chat/stream`
+
+AI 助手会先由总控智能体解析用户需求，再按需调用工具：
+
+- `generate_resource`
+- `generate_quiz`
+- `generate_plan`
+- `search_external_learning_resources`
+
+流式接口返回 NDJSON 事件：
+
+- `status`
+- `reply_delta`
+- `result`
+- `error`
+- `done`
+
+前端会把 AI 回复逐段显示，并在右侧展示本次工具结果。
+
+## 联网搜索
+
+独立接口：
+
+```text
+POST /external-resources/search
+```
+
+聊天工具和独立搜索页统一使用后端服务 `search_external_learning_resources`。搜索结果会包含标题、链接、来源、资源类型、摘要、推荐理由和预估学习时间。
+
+## 验证
+
+常用检查命令：
+
+```bash
+uv run python -m py_compile agents\quiz_agent.py agents\orchestrator_agent.py routers\agent.py
+cd frontend
+npm run build
+```
+
+本次前端构建产物已经生成到 `static/vue/`，可直接由 FastAPI 静态目录访问。

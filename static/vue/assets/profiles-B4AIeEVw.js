@@ -1,0 +1,1 @@
+import{r as e}from"./index-BEpqqEPo.js";function t(){return e(`/profiles/me`)}function n(t){return e(`/profiles/generate`,{method:`POST`,body:JSON.stringify(t)})}export{t as n,n as t};

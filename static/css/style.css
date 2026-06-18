@@ -1040,8 +1040,11 @@ tbody tr:hover {
 
 .result-list,
 .preview-grid,
+.rag-result-list,
 .resource-detail,
 .quiz-box,
+.evaluation-detail,
+.evaluation-result,
 .plan-preview {
     display: grid;
     gap: 10px;
@@ -1099,8 +1102,10 @@ tbody tr:hover {
     margin-top: 14px;
 }
 
+.material-table-wrap table,
 .resource-table-wrap table,
-.quiz-table-wrap table {
+.quiz-table-wrap table,
+.evaluation-table-wrap table {
     min-width: 720px;
 }
 
@@ -1189,6 +1194,222 @@ tbody tr:hover {
 .quiz-answer {
     display: grid;
     gap: 6px;
+}
+
+.evaluation-answer-field {
+    margin-top: 4px;
+}
+
+.evaluation-answer-field textarea {
+    min-height: 92px;
+    resize: vertical;
+}
+
+.evaluation-submit-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    border: 1px solid rgba(31, 63, 57, 0.16);
+    border-radius: 8px;
+    padding: 14px;
+    background:
+        url("/static/assets/brush-stroke.svg") left -24px top -8px / 170px auto no-repeat,
+        rgba(255, 255, 255, 0.5);
+}
+
+.evaluation-submit-box strong,
+.evaluation-submit-box span {
+    display: block;
+}
+
+.evaluation-submit-box span {
+    margin-top: 4px;
+    color: var(--muted);
+    line-height: 1.55;
+}
+
+.evaluation-history-panel {
+    background:
+        url("/static/assets/ink-birds.svg") right 22px bottom 18px / 116px auto no-repeat,
+        linear-gradient(180deg, rgba(255, 255, 255, 0.38), transparent),
+        rgba(255, 250, 240, 0.82);
+}
+
+.evaluation-table-wrap {
+    margin-bottom: 14px;
+}
+
+.btn-compact {
+    min-height: 34px;
+    padding: 0 10px;
+}
+
+.score-pill,
+.level-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    border-radius: 999px;
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.score-pill {
+    color: #8d2d2d;
+    background: rgba(155, 47, 47, 0.1);
+}
+
+.level-pill {
+    color: #1f3f39;
+    background: rgba(36, 92, 79, 0.12);
+}
+
+.evaluation-result-card {
+    display: grid;
+    gap: 14px;
+    border: 1px solid rgba(37, 33, 27, 0.1);
+    border-radius: 10px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.58);
+}
+
+.evaluation-score-grid,
+.evaluation-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.evaluation-score-card,
+.evaluation-summary-block,
+.evaluation-columns section,
+.evaluation-review-card {
+    border: 1px solid rgba(37, 33, 27, 0.08);
+    border-radius: 8px;
+    padding: 12px;
+    background: rgba(255, 252, 246, 0.64);
+}
+
+.evaluation-score-card span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.evaluation-score-card strong {
+    display: block;
+    margin-top: 6px;
+    color: var(--accent);
+    font-size: 28px;
+    line-height: 1;
+}
+
+.evaluation-summary-block,
+.evaluation-review-list,
+.evaluation-review-card {
+    display: grid;
+    gap: 10px;
+}
+
+.evaluation-summary-block h4,
+.evaluation-columns h4,
+.evaluation-review-list h4,
+.evaluation-review-card h5 {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.evaluation-summary-block p,
+.evaluation-review-card p {
+    margin: 0;
+    color: var(--ink-soft);
+    line-height: 1.68;
+}
+
+.evaluation-review-card section {
+    display: grid;
+    gap: 6px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(37, 33, 27, 0.08);
+}
+
+.material-content-input {
+    min-height: 220px;
+    resize: vertical;
+}
+
+.material-file-input {
+    cursor: pointer;
+}
+
+.material-file-meta {
+    display: block;
+    margin-top: 8px;
+}
+
+.material-upload-actions {
+    margin-top: 4px;
+}
+
+.material-filter-row {
+    align-items: end;
+    margin-bottom: 12px;
+}
+
+.material-rag-panel {
+    background:
+        url("/static/assets/ink-clouds.svg") right 18px bottom 12px / 180px auto no-repeat,
+        linear-gradient(180deg, rgba(255, 255, 255, 0.38), transparent),
+        rgba(255, 250, 240, 0.82);
+}
+
+.rag-result-list {
+    margin-top: 14px;
+}
+
+.rag-hit-card {
+    display: grid;
+    gap: 10px;
+    border: 1px solid rgba(37, 33, 27, 0.1);
+    border-radius: 10px;
+    padding: 14px;
+    background: rgba(255, 255, 255, 0.58);
+}
+
+.rag-hit-head,
+.rag-hit-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.rag-hit-head strong {
+    color: var(--ink);
+}
+
+.rag-hit-head span,
+.rag-hit-meta span {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.rag-hit-meta {
+    justify-content: flex-start;
+}
+
+.rag-hit-card p {
+    margin: 0;
+    color: var(--ink-soft);
+    line-height: 1.68;
 }
 
 .plan-summary {
@@ -2325,6 +2546,8 @@ tbody tr:hover {
     .a3-grid-actions,
     .a3-grid-history,
     .ink-stat-grid,
+    .evaluation-score-grid,
+    .evaluation-columns,
     .metric-grid,
     .form-row,
     .form-row-compact {

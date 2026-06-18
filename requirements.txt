@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+pymysql
+pydantic
+langchain-openai
+langchain-core
+sentence-transformers
+faiss-cpu
+numpy
+python-docx
+pypdf
+python-multipart

@@ -10,6 +10,6 @@ wheels/
 .claude/
 seed.py
 data_manager.py
+ai_playground/
 # Virtual environments
 .venv
-

@@ -127,13 +127,14 @@ class AgentToolPlan(BaseModel):
         "generate_resource",
         "generate_quiz",
         "generate_plan",
+        "search_external_learning_resources",
         "update_profile",
         "qa",
         "unknown"
     ] = "unknown"
     course_name: Optional[str] = None
     topic: Optional[str] = None
-    days: int = Field(default=3, ge=1, le=7)
+    days: Optional[int] = Field(default=3, ge=1, le=7)
 
     available_time: Optional[str] = None
     current_level: Optional[str] = None
@@ -167,6 +168,11 @@ class ResourcePackageItems(BaseModel):
     common_mistakes: LearningResourceItem
     video_script: LearningResourceItem
 
+class ExternalResourceSearchRequest(BaseModel):
+    course_name: str = Field(..., min_length=1, max_length=100)
+    topic: str = Field(..., min_length=1, max_length=100)
+    learner_level: Optional[str] = Field(default="beginner", max_length=50)
+    max_results: int = Field(default=8, ge=1, le=20)
 
 class LearningResourcePackage(BaseModel):
     title: str = Field(..., min_length=1, max_length=100)
@@ -203,4 +209,6 @@ class LearningEvaluationResult(BaseModel):
     weak_points: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
     question_reviews: list[QuestionEvaluationReview] = Field(default_factory=list)
+
+
 

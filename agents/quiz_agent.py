@@ -5,6 +5,41 @@ from llm_client import get_llm
 from models import QuizSet
 from services.rag_service import search_similar_chunks
 
+
+def _strip_json_fence(content: str) -> str:
+    text = content.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text
+
+
+def _load_quiz_json(content: str, llm) -> dict:
+    text = _strip_json_fence(content)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as original_error:
+        repair_result = llm.invoke([
+            SystemMessage(
+                content=(
+                    "你是 JSON 修复器。请把用户给出的内容修复成合法 JSON。\n"
+                    "只返回修复后的 JSON，不要返回解释文字，不要使用 Markdown。\n"
+                    "不要改变字段结构和题目含义。\n"
+                    "如果字符串内部有未转义的英文双引号，请转义或改成中文引号/单引号。"
+                )
+            ),
+            HumanMessage(content=f"需要修复的内容如下：\n{text}")
+        ])
+        repaired = _strip_json_fence(repair_result.content)
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            raise ValueError(f"模型返回的json格式错误：{content}") from original_error
+
 def generate_quiz_set(course_name: str,topic: str,profile:dict|None = None,rag_context:list[dict]|None = None) -> dict:
     llm = get_llm()
     rag_context_text = "暂无课程资料检索结果"
@@ -41,6 +76,7 @@ def generate_quiz_set(course_name: str,topic: str,profile:dict|None = None,rag_c
                 "question_type 只能是 choice、short_answer、coding。\n"
                 "difficulty 只能是 easy、medium、hard。\n"
                 "第一版请优先生成 short_answer 类型题目。\n"
+                "所有字符串字段内部不要使用未转义的英文双引号；举例字符串时请写成 'abc' 或 中文引号“abc”。\n"
                 "请生成 3 到 5 道题。"
             )
         ),
@@ -63,11 +99,9 @@ def generate_quiz_set(course_name: str,topic: str,profile:dict|None = None,rag_c
     result = llm.invoke(messages)
     content = result.content.strip()
     try:
-        data = json.loads(content)
+        data = _load_quiz_json(content, llm)
         quiz_set = QuizSet.model_validate(data)
         return quiz_set.model_dump()
-    except json.JSONDecodeError:
-        raise ValueError(f"模型返回的json格式错误：{content}")
     except ValidationError as e:
         raise ValueError(f"练习题字段校验失败:{e}")
 

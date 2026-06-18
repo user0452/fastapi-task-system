@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Task System | 学习工作台</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/static/css/style.css?v=6">
+    <link rel="stylesheet" href="/static/css/style.css?v=7">
 </head>
 <body>
     <section id="auth-page" class="page auth-page">
@@ -82,6 +82,7 @@
                 <button type="button" class="top-nav-link active" data-a3-goto="overview">首页</button>
                 <button type="button" class="top-nav-link" data-a3-goto="assistant">AI 学习助手</button>
                 <button type="button" class="top-nav-link" data-a3-goto="profile">学生画像</button>
+                <button type="button" class="top-nav-link" data-a3-goto="materials">课程知识库</button>
                 <button type="button" class="top-nav-link" data-a3-goto="resources">学习资源</button>
                 <button type="button" class="top-nav-link" data-a3-goto="quizzes">练习题</button>
                 <button type="button" class="top-nav-link" data-a3-goto="plan">学习计划</button>
@@ -129,6 +130,18 @@
                     <button type="button" class="side-sub-link" data-a3-goto="profile">
                         <span>生成学生画像</span>
                         <small>描述生成</small>
+                    </button>
+                </div>
+
+                <div class="side-group">
+                    <h4>课程知识库</h4>
+                    <button type="button" class="chapter-link" data-a3-page="materials">
+                        <span>RAG 知识库</span>
+                        <small>资料与索引</small>
+                    </button>
+                    <button type="button" class="side-sub-link" data-a3-goto="materials">
+                        <span>检索课程片段</span>
+                        <small>RAG 测试</small>
                     </button>
                 </div>
 
@@ -381,21 +394,18 @@
                                     <div class="profile-overview">
                                         <div class="portrait-frame portrait-student" aria-label="学生画像插画"></div>
                                         <div class="profile-copy">
-                                            <h4>张若曦 <span>高一 · 文科</span></h4>
-                                            <p>知之者不如好之者，好之者不如乐之者。</p>
-                                            <div class="profile-lines">
-                                                <span>年级班级：高一（1）班</span>
-                                                <span>学科优势：语文、历史、政治</span>
-                                                <span>学习风格：视觉型，偏好图文与结构化内容</span>
-                                                <span>最近测评：<strong id="overview-profile-note">加载中</strong></span>
+                                            <h4><strong id="overview-profile-name">当前用户</strong> <span id="overview-profile-badge">未生成画像</span></h4>
+                                            <p id="overview-profile-summary">读取当前账号的学生画像后展示学习特征。</p>
+                                            <div class="profile-lines" id="overview-profile-lines">
+                                                <span>画像状态：<strong id="overview-profile-note">加载中</strong></span>
                                             </div>
                                         </div>
-                                        <div class="radar-paper">
-                                            <span style="--x: 50%; --y: 12%">语文 85</span>
-                                            <span style="--x: 80%; --y: 42%">数学 55</span>
-                                            <span style="--x: 66%; --y: 78%">英语 68</span>
-                                            <span style="--x: 28%; --y: 78%">物理 52</span>
-                                            <span style="--x: 14%; --y: 44%">历史 82</span>
+                                        <div class="radar-paper" id="overview-radar">
+                                            <span style="--x: 50%; --y: 12%">资源 0</span>
+                                            <span style="--x: 80%; --y: 42%">题集 0</span>
+                                            <span style="--x: 66%; --y: 78%">评估 0</span>
+                                            <span style="--x: 28%; --y: 78%">任务 0</span>
+                                            <span style="--x: 14%; --y: 44%">计划 0</span>
                                         </div>
                                     </div>
                                 </section>
@@ -405,25 +415,10 @@
                                         <h3>学习计划预览</h3>
                                         <button type="button" class="text-link" data-a3-goto="plan">查看完整计划</button>
                                     </div>
-                                    <div class="plan-line">
-                                        <article class="active">
-                                            <strong>第 1 周</strong>
-                                            <span>诗歌鉴赏入门</span>
-                                            <small>3 个任务 · 进行中</small>
-                                        </article>
+                                    <div class="plan-line" id="overview-plan-list">
                                         <article>
-                                            <strong>第 2 周</strong>
-                                            <span>文言实词与虚词</span>
-                                            <small>4 个任务 · 未开始</small>
-                                        </article>
-                                        <article>
-                                            <strong>第 3 周</strong>
-                                            <span>历史必修一：文明的起源</span>
-                                            <small>3 个任务 · 未开始</small>
-                                        </article>
-                                        <article>
-                                            <strong>第 4 周</strong>
-                                            <span>政治生活：公民权利与义务</span>
+                                            <strong>暂无计划</strong>
+                                            <span>生成学习计划后会显示当前预览任务</span>
                                             <small><span id="overview-plan-status">待生成</span></small>
                                         </article>
                                     </div>
@@ -435,26 +430,12 @@
                                         <h3>任务中心</h3>
                                         <button type="button" class="text-link" data-view="tasks">全部任务</button>
                                     </div>
-                                    <div class="task-card-list">
+                                    <div class="task-card-list" id="overview-task-list">
                                         <article>
-                                            <span class="task-icon red">文</span>
+                                            <span class="task-icon red">任</span>
                                             <div>
-                                                <strong>诗歌鉴赏：《登高》阅读分析</strong>
-                                                <small>语文 · 学习 · 进行中</small>
-                                            </div>
-                                        </article>
-                                        <article>
-                                            <span class="task-icon green">练</span>
-                                            <div>
-                                                <strong>文言实词专项练习（50题）</strong>
-                                                <small>语文 · 练习 · 进行中</small>
-                                            </div>
-                                        </article>
-                                        <article>
-                                            <span class="task-icon ochre">史</span>
-                                            <div>
-                                                <strong>历史思维导图：古代文明</strong>
-                                                <small>历史 · 学习 · 未开始</small>
+                                                <strong>暂无任务</strong>
+                                                <small>当前用户创建或导入任务后会显示在这里</small>
                                             </div>
                                         </article>
                                     </div>
@@ -465,18 +446,10 @@
                                         <h3>学习资源</h3>
                                         <button type="button" class="text-link" data-a3-goto="resources">更多资源</button>
                                     </div>
-                                    <div class="ink-table-list">
+                                    <div class="ink-table-list" id="overview-resource-list">
                                         <article>
-                                            <strong>《登高》重点句式解析课件</strong>
-                                            <span>语文 · PPT · 12.4MB</span>
-                                        </article>
-                                        <article>
-                                            <strong>古代文明发展的时间轴</strong>
-                                            <span>历史 · 思维导图 · 1.8MB</span>
-                                        </article>
-                                        <article>
-                                            <strong>公民权利与义务知识梳理</strong>
-                                            <span>政治 · PDF · 2.3MB</span>
+                                            <strong>暂无学习资源</strong>
+                                            <span>当前用户生成资源后会显示在这里</span>
                                         </article>
                                     </div>
                                     <button type="button" class="btn btn-outline-wide" data-a3-goto="resources">
@@ -489,18 +462,10 @@
                                         <h3>练习题</h3>
                                         <button type="button" class="text-link" data-a3-goto="quizzes">更多题集</button>
                                     </div>
-                                    <div class="ink-table-list">
+                                    <div class="ink-table-list" id="overview-quiz-list">
                                         <article>
-                                            <strong>诗歌鉴赏综合训练（30题）</strong>
-                                            <span>语文 · 难度：中等</span>
-                                        </article>
-                                        <article>
-                                            <strong>文言文阅读理解专项（40题）</strong>
-                                            <span>语文 · 难度：偏难</span>
-                                        </article>
-                                        <article>
-                                            <strong>选择题强化训练（高一政治）</strong>
-                                            <span>政治 · 难度：中等</span>
+                                            <strong>暂无练习题集</strong>
+                                            <span>当前用户生成题集后会显示在这里</span>
                                         </article>
                                     </div>
                                     <button type="button" class="btn btn-outline-wide" data-a3-goto="quizzes">
@@ -512,11 +477,8 @@
                                     <div class="brush-title">
                                         <h3>操作日志</h3>
                                     </div>
-                                    <div class="log-ink-list">
-                                        <article><span></span>生成学习资源：《公民权利与义务知识梳理》<time>14:32</time></article>
-                                        <article><span></span>生成练习题集：《诗歌鉴赏综合训练》<time>14:28</time></article>
-                                        <article><span></span>导入学习计划到任务中心<time>14:25</time></article>
-                                        <article><span></span>生成学生画像<time>14:20</time></article>
+                                    <div class="log-ink-list" id="overview-log-list">
+                                        <article><span></span>暂无操作日志<time>-</time></article>
                                     </div>
                                     <strong class="hidden" id="overview-profile-status">加载中</strong>
                                     <strong class="hidden" id="overview-resource-note">共 0 条</strong>
@@ -607,6 +569,108 @@
                                     <button type="button" id="generate-profile-btn" class="btn btn-primary">生成画像</button>
                                     <div id="profile-msg" class="inline-message hidden" role="status"></div>
                                     <pre id="profile-generate-result" class="json-box hidden"></pre>
+                                </section>
+                            </div>
+                        </section>
+
+                        <section class="a3-subpage" data-a3-panel="materials">
+                            <div class="page-title-row">
+                                <div>
+                                    <span class="section-kicker">Course Knowledge Base</span>
+                                    <h3>课程知识库</h3>
+                                </div>
+                                <button type="button" id="refresh-materials-btn" class="btn btn-ghost">刷新资料</button>
+                            </div>
+                            <div class="a3-work-grid">
+                                <section class="ai-card glass-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>上传课程资料</h3>
+                                            <span>保存内部讲义、教材片段或课程笔记，供后续 RAG 检索使用</span>
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="field">
+                                            <span>课程名称</span>
+                                            <input type="text" id="material-course" placeholder="软件测试-A3内部课">
+                                        </label>
+                                        <label class="field">
+                                            <span>资料标题</span>
+                                            <input type="text" id="material-title" placeholder="青瓷等价类法完整内部讲义">
+                                        </label>
+                                    </div>
+                                    <label class="field">
+                                        <span>上传资料文件</span>
+                                        <input type="file" id="material-file" class="material-file-input" accept=".txt,.md,.pdf,.docx">
+                                        <small id="material-file-meta" class="muted-text material-file-meta">支持 txt、md、pdf、docx，单文件最大 10MB</small>
+                                    </label>
+                                    <label class="field">
+                                        <span>课程资料正文</span>
+                                        <textarea id="material-content" class="material-content-input" rows="10" placeholder="可直接粘贴课程资料正文；如果已选择文件，请使用“上传文件”按钮提交。"></textarea>
+                                    </label>
+                                    <div class="form-actions material-upload-actions">
+                                        <button type="button" id="save-material-btn" class="btn btn-primary">保存正文</button>
+                                        <button type="button" id="upload-material-btn" class="btn btn-ghost">上传文件</button>
+                                    </div>
+                                    <div id="material-msg" class="inline-message hidden" role="status"></div>
+                                </section>
+
+                                <section class="ai-card glass-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>课程资料列表</h3>
+                                            <span id="material-list-meta">共 0 条</span>
+                                        </div>
+                                    </div>
+                                    <div class="form-row form-row-compact material-filter-row">
+                                        <label class="field">
+                                            <span>按课程筛选</span>
+                                            <input type="text" id="material-filter-course" placeholder="可选，输入课程名称">
+                                        </label>
+                                        <button type="button" id="filter-materials-btn" class="btn btn-ghost">查询资料</button>
+                                    </div>
+                                    <div class="table-wrap material-table-wrap">
+                                        <table>
+                                            <thead>
+                                                <tr>
+                                                    <th>ID</th>
+                                                    <th>课程</th>
+                                                    <th>标题</th>
+                                                    <th>创建时间</th>
+                                                    <th>操作</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="material-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                    <div id="material-empty" class="empty-state hidden">
+                                        <strong>暂无课程资料</strong>
+                                        <span>上传课程资料后会出现在这里。</span>
+                                    </div>
+                                </section>
+
+                                <section class="ai-card glass-panel a3-detail-panel material-rag-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>RAG 检索测试</h3>
+                                            <span>输入课程和知识点，查看命中的课程片段、相似度和来源资料</span>
+                                        </div>
+                                    </div>
+                                    <div class="form-row form-row-compact">
+                                        <label class="field">
+                                            <span>课程名称</span>
+                                            <input type="text" id="rag-course" placeholder="软件测试-A3内部课">
+                                        </label>
+                                        <label class="field">
+                                            <span>检索主题</span>
+                                            <input type="text" id="rag-topic" placeholder="单因子扰动原则">
+                                        </label>
+                                        <button type="button" id="test-rag-btn" class="btn btn-primary">测试 RAG 检索</button>
+                                    </div>
+                                    <div id="rag-search-msg" class="inline-message hidden" role="status"></div>
+                                    <div id="rag-search-result" class="rag-result-list empty-detail">
+                                        <span>尚未执行 RAG 检索</span>
+                                    </div>
                                 </section>
                             </div>
                         </section>
@@ -789,6 +853,41 @@
                                         <span>尚未选择题集</span>
                                     </div>
                                 </section>
+
+                                <section class="ai-card glass-panel a3-detail-panel evaluation-history-panel">
+                                    <div class="panel-head">
+                                        <div>
+                                            <h3>学习评估记录</h3>
+                                            <span id="evaluation-list-meta">共 0 条</span>
+                                        </div>
+                                        <div class="panel-actions">
+                                            <button type="button" id="refresh-evaluations-btn" class="btn btn-ghost">刷新评估</button>
+                                        </div>
+                                    </div>
+                                    <div class="table-wrap evaluation-table-wrap">
+                                        <table>
+                                            <thead>
+                                                <tr>
+                                                    <th>题集</th>
+                                                    <th>课程</th>
+                                                    <th>知识点</th>
+                                                    <th>分数</th>
+                                                    <th>掌握等级</th>
+                                                    <th>创建时间</th>
+                                                    <th>操作</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="evaluation-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                    <div id="evaluation-empty" class="empty-state hidden">
+                                        <strong>暂无评估记录</strong>
+                                        <span>提交学习效果评估后会出现在这里。</span>
+                                    </div>
+                                    <div id="evaluation-detail" class="evaluation-detail empty-detail">
+                                        <span>点击评估记录查看完整反馈</span>
+                                    </div>
+                                </section>
                             </div>
                         </section>
                     </div>
@@ -855,6 +954,6 @@
 
     <div id="toast" class="toast hidden" role="status"></div>
 
-    <script src="/static/js/app.js?v=6"></script>
+    <script src="/static/js/app.js?v=7"></script>
 </body>
 </html>

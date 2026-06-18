@@ -1,0 +1,1 @@
+import{r as e}from"./index-BEpqqEPo.js";function t(t={}){let n=new URLSearchParams(t).toString();return e(`/tasks${n?`?`+n:``}`)}function n(t){return e(`/tasks`,{method:`POST`,body:JSON.stringify(t)})}function r(t,n){return e(`/tasks/${t}`,{method:`PUT`,body:JSON.stringify(n)})}function i(t){return e(`/tasks/${t}`,{method:`DELETE`})}export{r as i,i as n,t as r,n as t};

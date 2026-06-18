@@ -9,12 +9,20 @@ const state = {
     exams: [],
     previewTasks: [],
     operationLogs: [],
+    materials: [],
+    materialsTotal: 0,
+    ragHits: [],
     resources: [],
     resourcesTotal: 0,
     selectedResourceId: null,
     quizzes: [],
     quizzesTotal: 0,
     selectedQuizId: null,
+    evaluations: [],
+    evaluationsTotal: 0,
+    selectedEvaluationId: null,
+    currentEvaluation: null,
+    currentProfile: null,
     studyPlanPreview: null,
     agentMessages: [],
     agentPlanPreview: null,
@@ -69,8 +77,9 @@ function setText(selector, text) {
 async function api(path, options = {}) {
     const token = localStorage.getItem("token");
     const headers = { ...(options.headers || {}) };
+    const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
 
-    if (options.body && !headers["Content-Type"]) {
+    if (options.body && !isFormData && !headers["Content-Type"]) {
         headers["Content-Type"] = "application/json";
     }
     if (token) {
@@ -185,6 +194,49 @@ function hideInlineMessage(element) {
     element.className = "inline-message hidden";
 }
 
+function formatFileSize(size) {
+    const value = Number(size);
+    if (!Number.isFinite(value) || value <= 0) return "0 B";
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function updateMaterialFileMeta(file = null) {
+    const meta = $("#material-file-meta");
+    if (!meta) return;
+
+    meta.textContent = file
+        ? `已选择 ${file.name} · ${formatFileSize(file.size)}`
+        : "支持 txt、md、pdf、docx，单文件最大 10MB";
+}
+
+function syncMaterialCourseFields(courseName) {
+    if (!courseName) return;
+    $("#material-filter-course").value = courseName;
+    $("#rag-course").value = courseName;
+}
+
+function clearMaterialUploadSelection() {
+    const fileInput = $("#material-file");
+    if (fileInput) {
+        fileInput.value = "";
+    }
+    updateMaterialFileMeta();
+}
+
+function handleMaterialFileChange() {
+    const file = $("#material-file")?.files?.[0] || null;
+    updateMaterialFileMeta(file);
+
+    if (!file) return;
+
+    const titleInput = $("#material-title");
+    if (titleInput && !titleInput.value.trim()) {
+        titleInput.value = file.name.replace(/\.[^.]+$/, "");
+    }
+}
+
 function handleAuthExpired(result) {
     if (result.code !== 401) return false;
     logout();
@@ -272,12 +324,20 @@ function logout() {
     state.tasks = [];
     state.exams = [];
     state.previewTasks = [];
+    state.materials = [];
+    state.materialsTotal = 0;
+    state.ragHits = [];
     state.resources = [];
     state.resourcesTotal = 0;
     state.selectedResourceId = null;
     state.quizzes = [];
     state.quizzesTotal = 0;
     state.selectedQuizId = null;
+    state.evaluations = [];
+    state.evaluationsTotal = 0;
+    state.selectedEvaluationId = null;
+    state.currentEvaluation = null;
+    state.currentProfile = null;
     state.studyPlanPreview = null;
     state.agentMessages = [];
     state.agentPlanPreview = null;
@@ -416,6 +476,7 @@ function renderTasks() {
         tbody.innerHTML = "";
         tableWrap.classList.add("hidden");
         empty.classList.remove("hidden");
+        updateA3Overview();
         return;
     }
 
@@ -445,6 +506,7 @@ function renderTasks() {
             </tr>
         `;
     }).join("");
+    updateA3Overview();
 }
 
 function openTaskModal(task = null) {
@@ -529,6 +591,7 @@ function renderOperationLogs() {
 
     if (!state.operationLogs.length) {
         container.innerHTML = `<div class="result-item"><span>暂无 AI 操作日志</span></div>`;
+        updateA3Overview();
         return;
     }
 
@@ -553,6 +616,7 @@ function renderOperationLogs() {
             </div>
         `;
     }).join("");
+    updateA3Overview();
 }
 
 async function loadOperationLogs() {
@@ -685,7 +749,7 @@ async function importPreviewTasks() {
 
 async function loadA3Dashboard() {
     if (!localStorage.getItem("token")) return;
-    await Promise.all([loadCurrentProfile(), loadResources(), loadQuizzes()]);
+    await Promise.all([loadCurrentProfile(), loadMaterials(), loadResources(), loadQuizzes(), loadEvaluations()]);
     updateA3Overview();
 }
 
@@ -699,6 +763,181 @@ function switchA3Page(target = "overview") {
     });
     updateA3Overview();
     updateTopNavState();
+}
+
+function pickProfileField(profile, keys) {
+    if (!profile || typeof profile !== "object") return "";
+    for (const key of keys) {
+        if (profile[key] !== undefined && profile[key] !== null && profile[key] !== "") {
+            return profile[key];
+        }
+    }
+    for (const value of Object.values(profile)) {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+            const nested = pickProfileField(value, keys);
+            if (nested) return nested;
+        }
+    }
+    return "";
+}
+
+function formatCompactValue(value, fallback = "未填写") {
+    if (value === null || value === undefined || value === "") return fallback;
+    if (Array.isArray(value)) {
+        return value.length ? value.map((item) => formatCompactValue(item, "")).filter(Boolean).join("、") : fallback;
+    }
+    if (typeof value === "object") {
+        const text = Object.entries(value)
+            .map(([key, item]) => `${key}: ${formatCompactValue(item, "")}`)
+            .filter((item) => item && !item.endsWith(": "))
+            .join("、");
+        return text || fallback;
+    }
+    return String(value);
+}
+
+function renderOverviewProfile(profileMeta) {
+    const profile = state.currentProfile?.profile || null;
+    const username = localStorage.getItem("username") || "当前用户";
+    const name = profile
+        ? formatCompactValue(pickProfileField(profile, ["name", "student_name", "username", "姓名", "学生姓名"]), username)
+        : username;
+    const badgeParts = profile ? [
+        pickProfileField(profile, ["major", "专业"]),
+        pickProfileField(profile, ["grade", "year", "年级", "阶段"]),
+        pickProfileField(profile, ["class_name", "class", "班级"]),
+    ].map((item) => formatCompactValue(item, "")).filter(Boolean) : [];
+    const summary = profile
+        ? formatCompactValue(
+            pickProfileField(profile, ["summary", "profile_summary", "overall_assessment", "learning_profile", "description", "总结", "画像总结", "整体评价", "学习画像"]),
+            "当前画像已保存，可继续生成资源、题集和学习计划。",
+        )
+        : "当前用户还没有学生画像，生成后会在这里展示学习特征。";
+    const lines = profile ? [
+        ["学习目标", pickProfileField(profile, ["learning_goal", "goal", "target", "目标", "学习目标"])],
+        ["优势", pickProfileField(profile, ["strengths", "strong_subjects", "advantages", "优势", "学科优势"])],
+        ["薄弱点", pickProfileField(profile, ["weak_points", "weaknesses", "weak_subjects", "shortcomings", "薄弱点", "短板", "待提升"])],
+        ["学习偏好", pickProfileField(profile, ["learning_style", "style", "preferences", "resource_preference", "学习风格", "学习偏好"])],
+    ].filter(([, value]) => value !== "" && value !== null && value !== undefined) : [];
+
+    setText("#overview-profile-name", name);
+    setText("#overview-profile-badge", badgeParts.join(" · ") || (profile ? "已保存画像" : "未生成画像"));
+    setText("#overview-profile-summary", summary);
+    const lineBox = $("#overview-profile-lines");
+    if (lineBox) {
+        const renderedLines = lines.slice(0, 4).map(([label, value]) => `
+            <span>${escapeHtml(label)}：${escapeHtml(formatCompactValue(value))}</span>
+        `);
+        renderedLines.push(`<span>画像状态：<strong id="overview-profile-note">${escapeHtml(profileMeta)}</strong></span>`);
+        lineBox.innerHTML = renderedLines.join("");
+    }
+}
+
+function renderOverviewRadar(planCount) {
+    const radar = $("#overview-radar");
+    if (!radar) return;
+    const stats = [
+        { label: "资料", value: state.materialsTotal || 0, x: "50%", y: "12%" },
+        { label: "资源", value: state.resourcesTotal || 0, x: "80%", y: "42%" },
+        { label: "评估", value: state.evaluationsTotal || 0, x: "66%", y: "78%" },
+        { label: "任务", value: state.total || state.tasks.length || 0, x: "28%", y: "78%" },
+        { label: "题集", value: state.quizzesTotal || 0, x: "14%", y: "44%" },
+    ];
+    radar.innerHTML = stats.map((item) => `
+        <span style="--x: ${item.x}; --y: ${item.y}">${escapeHtml(item.label)} ${escapeHtml(item.value)}</span>
+    `).join("");
+}
+
+function renderOverviewPlan() {
+    const container = $("#overview-plan-list");
+    if (!container) return;
+    const tasks = Array.isArray(state.studyPlanPreview?.tasks_preview) ? state.studyPlanPreview.tasks_preview : [];
+    if (!tasks.length) {
+        container.innerHTML = `
+            <article>
+                <strong>暂无计划</strong>
+                <span>生成学习计划后会显示当前预览任务</span>
+                <small><span id="overview-plan-status">待生成</span></small>
+            </article>
+        `;
+        return;
+    }
+
+    container.innerHTML = tasks.slice(0, 4).map((task, index) => `
+        <article class="${index === 0 ? "active" : ""}">
+            <strong>第 ${index + 1} 项</strong>
+            <span>${escapeHtml(task.title || "未命名任务")}</span>
+            <small>${escapeHtml(priorityMap[task.priority] || task.priority || "中")}优先级 · ${escapeHtml(statusMap[task.status] || task.status || "待办")}</small>
+        </article>
+    `).join("");
+}
+
+function renderOverviewTasks() {
+    const container = $("#overview-task-list");
+    if (!container) return;
+    const colors = ["red", "green", "ochre"];
+    if (!state.tasks.length) {
+        container.innerHTML = `
+            <article>
+                <span class="task-icon red">任</span>
+                <div>
+                    <strong>暂无任务</strong>
+                    <small>当前用户创建或导入任务后会显示在这里</small>
+                </div>
+            </article>
+        `;
+        return;
+    }
+    container.innerHTML = state.tasks.slice(0, 3).map((task, index) => `
+        <article>
+            <span class="task-icon ${colors[index % colors.length]}">${escapeHtml((task.title || "任").slice(0, 1))}</span>
+            <div>
+                <strong>${escapeHtml(task.title || "未命名任务")}</strong>
+                <small>${escapeHtml(statusMap[task.status] || task.status || "-")} · ${escapeHtml(priorityMap[task.priority] || task.priority || "-")}优先级</small>
+            </div>
+        </article>
+    `).join("");
+}
+
+function renderOverviewResources() {
+    const container = $("#overview-resource-list");
+    if (!container) return;
+    if (!state.resources.length) {
+        container.innerHTML = `<article><strong>暂无学习资源</strong><span>当前用户生成资源后会显示在这里</span></article>`;
+        return;
+    }
+    container.innerHTML = state.resources.slice(0, 3).map((resource) => {
+        const item = getResourceViewModel(resource);
+        return `<article><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.course_name || "-")} · ${escapeHtml(item.topic || "-")}</span></article>`;
+    }).join("");
+}
+
+function renderOverviewQuizzes() {
+    const container = $("#overview-quiz-list");
+    if (!container) return;
+    if (!state.quizzes.length) {
+        container.innerHTML = `<article><strong>暂无练习题集</strong><span>当前用户生成题集后会显示在这里</span></article>`;
+        return;
+    }
+    container.innerHTML = state.quizzes.slice(0, 3).map((quiz) => {
+        const item = getQuizViewModel(quiz);
+        return `<article><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.course_name || "-")} · ${escapeHtml(item.topic || "-")}</span></article>`;
+    }).join("");
+}
+
+function renderOverviewLogs() {
+    const container = $("#overview-log-list");
+    if (!container) return;
+    if (!state.operationLogs.length) {
+        container.innerHTML = `<article><span></span>暂无操作日志<time>-</time></article>`;
+        return;
+    }
+    container.innerHTML = state.operationLogs.slice(0, 4).map((log) => `
+        <article>
+            <span></span>${escapeHtml(log.action || "未知操作")}
+            <time>${escapeHtml(formatDate(log.created_at))}</time>
+        </article>
+    `).join("");
 }
 
 function updateA3Overview() {
@@ -719,6 +958,13 @@ function updateA3Overview() {
     setText("#overview-resource-note", `共 ${state.resourcesTotal || 0} 条`);
     setText("#overview-quiz-total", `${state.quizzesTotal || 0} 套`);
     setText("#overview-quiz-note", `共 ${state.quizzesTotal || 0} 套`);
+    renderOverviewProfile(profileMeta);
+    renderOverviewRadar(planCount);
+    renderOverviewPlan();
+    renderOverviewTasks();
+    renderOverviewResources();
+    renderOverviewQuizzes();
+    renderOverviewLogs();
 }
 
 function renderStudyPlanPreview(plan = state.studyPlanPreview) {
@@ -863,6 +1109,7 @@ function renderCurrentProfile(payload) {
     const box = $("#profile-current-json");
 
     if (!payload) {
+        state.currentProfile = null;
         meta.textContent = "暂无画像";
         box.textContent = "暂无画像";
         updateA3Overview();
@@ -871,6 +1118,7 @@ function renderCurrentProfile(payload) {
 
     const profile = payload.profile || payload;
     const updatedAt = payload.updated_at || payload.created_at;
+    state.currentProfile = { raw: payload, profile, updated_at: updatedAt };
     meta.textContent = updatedAt ? `更新于 ${formatDate(updatedAt)}` : "已保存";
     box.textContent = prettyJson(profile);
     updateA3Overview();
@@ -881,6 +1129,7 @@ async function loadCurrentProfile() {
     if (handleAuthExpired(result)) return;
 
     if (result.code !== 200) {
+        state.currentProfile = null;
         $("#profile-current-meta").textContent = "获取失败";
         $("#profile-current-json").textContent = normalizeMessage(result.message, "获取学生画像失败");
         updateA3Overview();
@@ -922,6 +1171,272 @@ async function generateProfile() {
     resultBox.classList.remove("hidden");
     showInlineMessage(messageBox, normalizeMessage(result.message, "生成学生画像成功"), "success");
     await loadCurrentProfile();
+}
+
+function getMaterialViewModel(material) {
+    return {
+        id: material?.id || material?.material_id,
+        course_name: material?.course_name || "",
+        title: material?.title || "未命名资料",
+        created_at: material?.created_at,
+        raw: material,
+    };
+}
+
+async function fetchMaterials(page = 1, size = 10, courseName = "") {
+    const params = new URLSearchParams({ page: String(page), size: String(size) });
+    if (courseName) params.set("course_name", courseName);
+    return api(`/materials?${params.toString()}`);
+}
+
+async function loadMaterials(courseName = $("#material-filter-course")?.value.trim() || "") {
+    const result = await fetchMaterials(1, 10, courseName);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        state.materials = [];
+        state.materialsTotal = 0;
+        renderMaterialList();
+        $("#material-list-meta").textContent = normalizeMessage(result.message, "获取课程资料失败");
+        updateA3Overview();
+        return;
+    }
+
+    const data = result.data || {};
+    const list = data.list || data.items || (Array.isArray(data) ? data : []);
+    state.materials = list;
+    state.materialsTotal = data.total ?? list.length;
+    renderMaterialList();
+    updateA3Overview();
+}
+
+function renderMaterialList(total = state.materialsTotal) {
+    const tbody = $("#material-tbody");
+    const tableWrap = $(".material-table-wrap");
+    const empty = $("#material-empty");
+
+    if (!tbody || !tableWrap || !empty) return;
+
+    $("#material-list-meta").textContent = `共 ${total} 条`;
+
+    if (!state.materials.length) {
+        tbody.innerHTML = "";
+        tableWrap.classList.add("hidden");
+        empty.classList.remove("hidden");
+        return;
+    }
+
+    tableWrap.classList.remove("hidden");
+    empty.classList.add("hidden");
+    tbody.innerHTML = state.materials.map((material) => {
+        const item = getMaterialViewModel(material);
+        return `
+            <tr>
+                <td>${escapeHtml(item.id || "-")}</td>
+                <td>${escapeHtml(item.course_name || "-")}</td>
+                <td><strong>${escapeHtml(item.title)}</strong></td>
+                <td>${formatDate(item.created_at)}</td>
+                <td>
+                    <button type="button" class="btn btn-ghost btn-compact" data-action="build-material-index" data-material-id="${escapeHtml(item.id || "")}">构建 RAG 索引</button>
+                </td>
+            </tr>
+        `;
+    }).join("");
+}
+
+async function saveMaterial() {
+    const courseName = $("#material-course").value.trim();
+    const title = $("#material-title").value.trim();
+    const content = $("#material-content").value.trim();
+    const selectedFile = $("#material-file")?.files?.[0] || null;
+    const messageBox = $("#material-msg");
+
+    if (!courseName || !title || !content) {
+        if (!content && selectedFile) {
+            showInlineMessage(messageBox, "已选择资料文件，请点击“上传文件”提交该资料", "error");
+            return;
+        }
+        showInlineMessage(messageBox, "请填写课程名称、资料标题和课程资料正文", "error");
+        return;
+    }
+
+    const button = $("#save-material-btn");
+    setBusy(button, true, "保存中");
+    hideInlineMessage(messageBox);
+
+    const result = await api("/materials", {
+        method: "POST",
+        body: JSON.stringify({ course_name: courseName, title, content }),
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showInlineMessage(messageBox, normalizeMessage(result.message, "课程资料保存失败"), "error");
+        return;
+    }
+
+    syncMaterialCourseFields(courseName);
+    $("#material-title").value = "";
+    $("#material-content").value = "";
+    clearMaterialUploadSelection();
+    showInlineMessage(messageBox, normalizeMessage(result.message, "课程资料保存成功"), "success");
+    showToast("课程资料已保存");
+    await loadMaterials(courseName);
+}
+
+async function uploadMaterialFile() {
+    const courseName = $("#material-course").value.trim();
+    const title = $("#material-title").value.trim();
+    const file = $("#material-file")?.files?.[0] || null;
+    const messageBox = $("#material-msg");
+
+    if (!courseName || !title || !file) {
+        showInlineMessage(messageBox, "请填写课程名称、资料标题，并选择要上传的资料文件", "error");
+        return;
+    }
+
+    const button = $("#upload-material-btn");
+    setBusy(button, true, "上传中");
+    hideInlineMessage(messageBox);
+
+    const formData = new FormData();
+    formData.append("course_name", courseName);
+    formData.append("title", title);
+    formData.append("file", file);
+
+    const result = await api("/materials/upload", {
+        method: "POST",
+        body: formData,
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showInlineMessage(messageBox, normalizeMessage(result.message, "课程资料文件上传失败"), "error");
+        return;
+    }
+
+    syncMaterialCourseFields(courseName);
+    $("#material-title").value = "";
+    $("#material-content").value = "";
+    clearMaterialUploadSelection();
+
+    const textLength = result.data?.text_length;
+    const successMessage = Number.isFinite(Number(textLength))
+        ? `${normalizeMessage(result.message, "课程资料文件上传成功")}，已解析 ${textLength} 字`
+        : normalizeMessage(result.message, "课程资料文件上传成功");
+
+    showInlineMessage(messageBox, successMessage, "success");
+    showToast("课程资料文件已上传");
+    await loadMaterials(courseName);
+}
+
+async function buildMaterialIndex(event) {
+    const button = event?.target?.closest?.("button[data-action='build-material-index']");
+    const materialId = button?.dataset.materialId;
+    if (!button || !materialId) return;
+
+    setBusy(button, true, "构建中");
+    const result = await api(`/materials/${materialId}/build-index`, { method: "POST" });
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showToast(normalizeMessage(result.message, "索引构建失败"), "error");
+        return;
+    }
+
+    const chunkCount = result.data?.chunk_count;
+    showToast(chunkCount ? `索引构建成功，共 ${chunkCount} 个片段` : "索引构建成功");
+    await loadOperationLogs();
+}
+
+function getRagHitViewModel(hit) {
+    const chunkId = hit?.chunk_id ?? hit?.id ?? hit?.chunkId;
+    const materialId = hit?.material_id ?? hit?.materialId;
+    const chunkIndex = hit?.chunk_index ?? hit?.chunkIndex ?? hit?.index;
+    const score = hit?.score ?? hit?.similarity ?? hit?.distance ?? "";
+    const snippet = hit?.snippet || hit?.chunk_text || hit?.text || hit?.content || hit?.summary || "";
+    return { chunkId, materialId, chunkIndex, score, snippet, raw: hit };
+}
+
+function normalizeRagHits(payload) {
+    const data = payload || {};
+    return data.list || data.items || data.chunks || data.results || (Array.isArray(data) ? data : []);
+}
+
+function renderRagSearchResults(payload = null) {
+    const container = $("#rag-search-result");
+    if (!container) return;
+
+    const hits = payload ? normalizeRagHits(payload) : state.ragHits;
+    state.ragHits = hits;
+
+    if (!hits.length) {
+        container.className = "rag-result-list empty-detail";
+        container.innerHTML = `<span>${payload?.message || "暂无命中片段，请先构建索引或调整检索主题"}</span>`;
+        return;
+    }
+
+    container.className = "rag-result-list";
+    container.innerHTML = hits.map((hit, index) => {
+        const item = getRagHitViewModel(hit);
+        const scoreText = item.score === "" || item.score === null || item.score === undefined
+            ? "-"
+            : Number.isFinite(Number(item.score))
+                ? Number(item.score).toFixed(4)
+                : String(item.score);
+        return `
+            <article class="rag-hit-card">
+                <div class="rag-hit-head">
+                    <strong>命中片段 ${index + 1}</strong>
+                    <span>score ${escapeHtml(scoreText)}</span>
+                </div>
+                <div class="rag-hit-meta">
+                    <span>chunk_id：${escapeHtml(item.chunkId ?? "-")}</span>
+                    <span>material_id：${escapeHtml(item.materialId ?? "-")}</span>
+                    <span>chunk_index：${escapeHtml(item.chunkIndex ?? "-")}</span>
+                </div>
+                <p>${renderMultiline(item.snippet || prettyJson(item.raw))}</p>
+            </article>
+        `;
+    }).join("");
+}
+
+async function testRagSearch() {
+    const courseName = $("#rag-course").value.trim();
+    const topic = $("#rag-topic").value.trim();
+    const messageBox = $("#rag-search-msg");
+
+    if (!courseName || !topic) {
+        showInlineMessage(messageBox, "请输入课程名称和检索主题", "error");
+        return;
+    }
+
+    const button = $("#test-rag-btn");
+    setBusy(button, true, "检索中");
+    hideInlineMessage(messageBox);
+
+    const result = await api("/materials/rag-search", {
+        method: "POST",
+        body: JSON.stringify({ course_name: courseName, topic }),
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        renderRagSearchResults({ list: [] });
+        showInlineMessage(messageBox, normalizeMessage(result.message, "RAG 检索失败"), "error");
+        return;
+    }
+
+    renderRagSearchResults(result.data);
+    const total = result.data?.total ?? state.ragHits.length;
+    showInlineMessage(messageBox, normalizeMessage(result.message, `命中 ${total} 个课程片段`), "success");
 }
 
 function getResourceViewModel(resource) {
@@ -1115,14 +1630,35 @@ function getQuizViewModel(quiz) {
         course_name: quiz?.course_name || nested.course_name || "",
         topic: quiz?.topic || nested.topic || "",
         created_at: quiz?.created_at || nested.created_at,
-        questions: nestedQuestions.length ? nestedQuestions : directQuestions,
+        questions: directQuestions.length ? directQuestions : nestedQuestions,
         raw: quiz,
     };
 }
 
-function renderQuizSnapshot(quiz) {
+function getQuestionId(question, index) {
+    if (!question || typeof question !== "object") return index + 1;
+    return question.id ?? question.question_id ?? question.quiz_question_id ?? index + 1;
+}
+
+function getQuestionDatabaseId(question) {
+    if (!question || typeof question !== "object") return "";
+    return question.id ?? question.question_id ?? question.quiz_question_id ?? "";
+}
+
+function getQuestionText(question) {
+    if (!question || typeof question !== "object") return question;
+    return question.question || question.title || question.content || question.stem || question.prompt || question;
+}
+
+function getReferenceAnswer(question) {
+    if (!question || typeof question !== "object") return "";
+    return question.reference_answer || question.answer || question.correct_answer || question.solution || "";
+}
+
+function renderQuizSnapshot(quiz, options = {}) {
     const item = getQuizViewModel(quiz);
     const questions = normalizeListValue(item.questions);
+    const includeEvaluationInputs = Boolean(options.includeEvaluationInputs && questions.length);
 
     return `
         <div class="quiz-title">
@@ -1131,20 +1667,43 @@ function renderQuizSnapshot(quiz) {
         </div>
         <div class="quiz-question-list">
             ${questions.length ? questions.map((question, index) => {
-                const meta = [question.question_type, question.difficulty].filter(Boolean).join(" · ");
+                const questionId = getQuestionId(question, index);
+                const databaseQuestionId = getQuestionDatabaseId(question);
+                const questionText = getQuestionText(question);
+                const referenceAnswer = getReferenceAnswer(question);
+                const meta = question && typeof question === "object"
+                    ? [question.question_type, question.difficulty].filter(Boolean).join(" · ")
+                    : "";
                 return `
-                    <article class="quiz-question">
+                    <article class="quiz-question" data-question-id="${escapeHtml(questionId)}">
                         <div class="quiz-question-head">
                             <strong>第 ${index + 1} 题</strong>
                             ${meta ? `<span>${escapeHtml(meta)}</span>` : ""}
                         </div>
-                        <p>${renderMultiline(question.question || question)}</p>
-                        ${question.options ? `<div class="quiz-options">${renderPlainList(question.options)}</div>` : ""}
-                        ${question.answer ? `<div class="quiz-answer"><span>答案</span><p>${renderMultiline(question.answer)}</p></div>` : ""}
+                        <p>${renderMultiline(questionText)}</p>
+                        ${question?.options ? `<div class="quiz-options">${renderPlainList(question.options)}</div>` : ""}
+                        ${referenceAnswer ? `<div class="quiz-answer"><span>参考答案</span><p>${renderMultiline(referenceAnswer)}</p></div>` : ""}
+                        ${includeEvaluationInputs ? `
+                            <label class="field evaluation-answer-field">
+                                <span>我的答案</span>
+                                <textarea class="evaluation-answer" rows="3" data-question-id="${escapeHtml(databaseQuestionId)}" placeholder="填写你的作答，提交后由 AI 批改"></textarea>
+                            </label>
+                        ` : ""}
                     </article>
                 `;
             }).join("") : `<pre class="json-box">${escapeHtml(prettyJson(item.raw || quiz))}</pre>`}
         </div>
+        ${includeEvaluationInputs ? `
+            <div class="evaluation-submit-box">
+                <div>
+                    <strong>学习效果评估</strong>
+                    <span>填写至少一道题的答案，提交后生成得分、薄弱点和学习建议。</span>
+                </div>
+                <button type="button" id="submit-evaluation-btn" class="btn btn-primary" data-quiz-set-id="${escapeHtml(item.id || state.selectedQuizId || "")}">提交学习效果评估</button>
+            </div>
+            <div id="evaluation-submit-msg" class="inline-message hidden" role="status"></div>
+            <div id="quiz-evaluation-result" class="evaluation-result"></div>
+        ` : ""}
     `;
 }
 
@@ -1219,11 +1778,16 @@ function renderQuizDetail(quiz = null) {
     const metaParts = [item.course_name, item.topic, item.created_at ? formatDate(item.created_at) : ""].filter(Boolean);
     meta.textContent = metaParts.length ? metaParts.join(" · ") : "题集详情";
     container.className = "quiz-box";
-    container.innerHTML = renderQuizSnapshot(item.raw);
+    container.innerHTML = renderQuizSnapshot(item.raw, { includeEvaluationInputs: true });
+    if (state.currentEvaluation) {
+        const resultBox = $("#quiz-evaluation-result");
+        if (resultBox) resultBox.innerHTML = renderEvaluationResult(state.currentEvaluation);
+    }
 }
 
 async function openQuizDetail(id) {
     state.selectedQuizId = id;
+    state.currentEvaluation = null;
     renderQuizList();
     $("#quiz-detail-meta").textContent = "加载中";
     $("#quiz-detail").className = "quiz-box empty-detail";
@@ -1275,6 +1839,231 @@ async function generateQuiz() {
     if (result.data?.id) {
         await openQuizDetail(result.data.id);
     }
+}
+
+function renderEvaluationResult(evaluation = null) {
+    if (!evaluation) {
+        return "";
+    }
+
+    const weakPoints = normalizeListValue(evaluation.weak_points);
+    const suggestions = normalizeListValue(evaluation.suggestions);
+    const reviews = normalizeListValue(evaluation.question_reviews);
+
+    return `
+        <section class="evaluation-result-card">
+            <div class="evaluation-score-grid">
+                <div class="evaluation-score-card">
+                    <span>总分</span>
+                    <strong>${escapeHtml(evaluation.score ?? "-")}</strong>
+                </div>
+                <div class="evaluation-score-card">
+                    <span>掌握等级</span>
+                    <strong>${escapeHtml(evaluation.level || "-")}</strong>
+                </div>
+            </div>
+            <div class="evaluation-summary-block">
+                <h4>整体评价</h4>
+                <p>${renderMultiline(evaluation.summary || "暂无总结")}</p>
+            </div>
+            <div class="evaluation-columns">
+                <section>
+                    <h4>薄弱点</h4>
+                    ${renderPlainList(weakPoints)}
+                </section>
+                <section>
+                    <h4>学习建议</h4>
+                    ${renderPlainList(suggestions)}
+                </section>
+            </div>
+            <div class="evaluation-review-list">
+                <h4>每题反馈</h4>
+                ${reviews.length ? reviews.map((review, index) => `
+                    <article class="evaluation-review-card">
+                        <div class="quiz-question-head">
+                            <strong>第 ${index + 1} 题反馈</strong>
+                            <span>${escapeHtml(review.score ?? "-")} 分</span>
+                        </div>
+                        <section>
+                            <h5>题目</h5>
+                            <p>${renderMultiline(review.question || "-")}</p>
+                        </section>
+                        <section>
+                            <h5>用户答案</h5>
+                            <p>${renderMultiline(review.user_answer || "-")}</p>
+                        </section>
+                        <section>
+                            <h5>参考答案</h5>
+                            <p>${renderMultiline(review.reference_answer || "-")}</p>
+                        </section>
+                        <section>
+                            <h5>AI 反馈</h5>
+                            <p>${renderMultiline(review.feedback || "-")}</p>
+                        </section>
+                        <section>
+                            <h5>薄弱点</h5>
+                            <p>${renderMultiline(review.weak_point || "无明显薄弱点")}</p>
+                        </section>
+                    </article>
+                `).join("") : `<div class="result-item"><span>暂无每题反馈</span></div>`}
+            </div>
+        </section>
+    `;
+}
+
+async function fetchEvaluations(page = 1, size = 10) {
+    const params = new URLSearchParams({ page: String(page), size: String(size) });
+    return api(`/evaluations?${params.toString()}`);
+}
+
+async function loadEvaluations() {
+    const result = await fetchEvaluations(1, 10);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        state.evaluations = [];
+        state.evaluationsTotal = 0;
+        renderEvaluationList();
+        $("#evaluation-list-meta").textContent = normalizeMessage(result.message, "获取评估记录失败");
+        return;
+    }
+
+    const data = result.data || {};
+    const list = data.items || data.list || (Array.isArray(data) ? data : []);
+    state.evaluations = list;
+    state.evaluationsTotal = data.total ?? list.length;
+    renderEvaluationList();
+}
+
+function renderEvaluationList(total = state.evaluationsTotal) {
+    const tbody = $("#evaluation-tbody");
+    const tableWrap = $(".evaluation-table-wrap");
+    const empty = $("#evaluation-empty");
+
+    if (!tbody || !tableWrap || !empty) return;
+
+    $("#evaluation-list-meta").textContent = `共 ${total} 条`;
+
+    if (!state.evaluations.length) {
+        tbody.innerHTML = "";
+        tableWrap.classList.add("hidden");
+        empty.classList.remove("hidden");
+        updateA3Overview();
+        return;
+    }
+
+    tableWrap.classList.remove("hidden");
+    empty.classList.add("hidden");
+    tbody.innerHTML = state.evaluations.map((evaluation) => {
+        const active = String(evaluation.id) === String(state.selectedEvaluationId) ? "active" : "";
+        return `
+            <tr class="${active}" data-evaluation-id="${escapeHtml(evaluation.id)}">
+                <td><strong>${escapeHtml(evaluation.quiz_title || `题集 #${evaluation.quiz_set_id || "-"}`)}</strong></td>
+                <td>${escapeHtml(evaluation.course_name || "-")}</td>
+                <td>${escapeHtml(evaluation.topic || "-")}</td>
+                <td><span class="score-pill">${escapeHtml(evaluation.score ?? "-")} 分</span></td>
+                <td><span class="level-pill">${escapeHtml(evaluation.level || "-")}</span></td>
+                <td>${formatDate(evaluation.created_at)}</td>
+                <td>
+                    <button type="button" class="btn btn-ghost btn-compact" data-action="view-evaluation" data-evaluation-id="${escapeHtml(evaluation.id)}">查看详情</button>
+                </td>
+            </tr>
+        `;
+    }).join("");
+    updateA3Overview();
+}
+
+function renderEvaluationDetail(evaluation = null) {
+    const container = $("#evaluation-detail");
+    if (!container) return;
+
+    if (!evaluation) {
+        container.className = "evaluation-detail empty-detail";
+        container.innerHTML = `<span>点击评估记录查看完整反馈</span>`;
+        return;
+    }
+
+    container.className = "evaluation-detail";
+    container.innerHTML = renderEvaluationResult(evaluation);
+}
+
+async function openEvaluationDetail(id) {
+    state.selectedEvaluationId = id;
+    renderEvaluationList();
+
+    const container = $("#evaluation-detail");
+    container.className = "evaluation-detail empty-detail";
+    container.innerHTML = `<span>正在加载评估详情...</span>`;
+
+    const result = await api(`/evaluations/${id}`);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        renderEvaluationDetail();
+        showToast(normalizeMessage(result.message, "获取评估详情失败"), "error");
+        return;
+    }
+
+    renderEvaluationDetail(result.data);
+    renderEvaluationList();
+}
+
+async function submitLearningEvaluation(event) {
+    const button = event?.target?.closest?.("#submit-evaluation-btn") || $("#submit-evaluation-btn");
+    if (!button) return;
+
+    const quizSetId = button.dataset.quizSetId || state.selectedQuizId;
+    const messageBox = $("#evaluation-submit-msg");
+    const filledAnswers = $$("#quiz-detail .evaluation-answer")
+        .map((textarea) => {
+            const questionId = textarea.dataset.questionId;
+            const parsedId = Number(questionId);
+            return {
+                question_id: Number.isInteger(parsedId) && parsedId > 0 ? parsedId : null,
+                user_answer: textarea.value.trim(),
+            };
+        })
+        .filter((answer) => answer.user_answer);
+    const answers = filledAnswers.filter((answer) => answer.question_id);
+
+    if (!filledAnswers.length) {
+        showInlineMessage(messageBox, "请至少填写一道题的答案", "error");
+        return;
+    }
+
+    if (!answers.length) {
+        showInlineMessage(messageBox, "没有找到可评估的题目答案，请刷新题集详情后再提交", "error");
+        return;
+    }
+
+    setBusy(button, true, "评估中");
+    hideInlineMessage(messageBox);
+
+    const parsedQuizSetId = Number(quizSetId);
+    const result = await api("/evaluations/submit", {
+        method: "POST",
+        body: JSON.stringify({
+            quiz_set_id: Number.isNaN(parsedQuizSetId) ? quizSetId : parsedQuizSetId,
+            answers,
+        }),
+    });
+
+    setBusy(button, false);
+    if (handleAuthExpired(result)) return;
+
+    if (result.code !== 200) {
+        showInlineMessage(messageBox, normalizeMessage(result.message, "提交学习效果评估失败"), "error");
+        return;
+    }
+
+    state.currentEvaluation = result.data;
+    state.selectedEvaluationId = result.data?.id || null;
+    const resultBox = $("#quiz-evaluation-result");
+    if (resultBox) {
+        resultBox.innerHTML = renderEvaluationResult(result.data);
+    }
+    showInlineMessage(messageBox, normalizeMessage(result.message, "学习效果评估完成"), "success");
+    await loadEvaluations();
 }
 
 function renderLearningPlanSnapshot(plan) {
@@ -1755,8 +2544,15 @@ function bindEvents() {
 
     $("#refresh-profile-btn").addEventListener("click", loadCurrentProfile);
     $("#generate-profile-btn").addEventListener("click", generateProfile);
+    $("#refresh-materials-btn").addEventListener("click", () => loadMaterials());
+    $("#filter-materials-btn").addEventListener("click", () => loadMaterials());
+    $("#save-material-btn").addEventListener("click", saveMaterial);
+    $("#upload-material-btn").addEventListener("click", uploadMaterialFile);
+    $("#material-file").addEventListener("change", handleMaterialFileChange);
+    $("#test-rag-btn").addEventListener("click", testRagSearch);
     $("#refresh-resources-btn").addEventListener("click", loadResources);
     $("#refresh-quizzes-btn").addEventListener("click", loadQuizzes);
+    $("#refresh-evaluations-btn").addEventListener("click", loadEvaluations);
     $("#preview-study-plan-btn").addEventListener("click", previewStudyPlan);
     $("#confirm-study-plan-btn").addEventListener("click", confirmStudyPlan);
     $("#generate-resource-btn").addEventListener("click", generateResource);
@@ -1776,6 +2572,16 @@ function bindEvents() {
             $("#agent-message").focus();
         });
     });
+
+    $("#material-filter-course").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") loadMaterials();
+    });
+
+    $("#rag-topic").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") testRagSearch();
+    });
+
+    $("#material-tbody").addEventListener("click", buildMaterialIndex);
 
     $("#resource-tbody").addEventListener("click", (event) => {
         const row = event.target.closest("tr[data-resource-id]");
@@ -1804,16 +2610,31 @@ function bindEvents() {
         event.preventDefault();
         openQuizDetail(row.dataset.quizId);
     });
+
+    $("#quiz-detail").addEventListener("click", (event) => {
+        if (!event.target.closest("#submit-evaluation-btn")) return;
+        submitLearningEvaluation(event);
+    });
+
+    $("#evaluation-tbody").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action='view-evaluation']");
+        if (!button) return;
+        openEvaluationDetail(button.dataset.evaluationId);
+    });
 }
 
 bindEvents();
 renderPreviewTasks();
 renderOperationLogs();
+renderMaterialList();
+renderRagSearchResults();
 renderResourceList();
 renderResourceDetail();
 renderQuizList();
 renderQuizDetail();
 renderQuiz();
+renderEvaluationList();
+renderEvaluationDetail();
 renderStudyPlanPreview();
 renderAgentMessages();
 renderAgentSummary();
