@@ -10,7 +10,8 @@ import {
   FileText,
   PencilLine,
   CalendarDays,
-  CheckSquare,
+  Bot,
+  BarChart3,
   ArrowRight
 } from 'lucide-vue-next'
 
@@ -34,46 +35,55 @@ const steps = computed(() => [
     desc: '建立学习画像'
   },
   {
-    label: '课程资料',
+    label: '课程知识库',
     icon: BookOpen,
     route: '/materials',
     done: ws.materialsTotal > 0,
     count: ws.materialsTotal,
-    desc: '上传课程知识'
+    desc: '上传资料并构建 RAG'
   },
   {
-    label: '学习资源',
-    icon: FileText,
-    route: '/resources',
-    done: ws.resourcesTotal > 0,
-    count: ws.resourcesTotal,
-    desc: '生成学习内容'
+    label: 'AI 学习助手',
+    icon: Bot,
+    route: '/agent',
+    done: ws.resourcesTotal > 0 || ws.quizzesTotal > 0,
+    count: ws.resourcesTotal + ws.quizzesTotal,
+    desc: '多工具 Agent 调度'
   },
   {
-    label: '练习题',
+    label: '练习与评估',
     icon: PencilLine,
     route: '/quizzes',
-    done: ws.quizzesTotal > 0,
-    count: ws.quizzesTotal,
-    desc: '检验学习成果'
+    done: ws.evaluationsTotal > 0,
+    count: ws.evaluationsTotal,
+    desc: '作答并生成反馈'
   },
   {
-    label: '学习计划',
+    label: '计划与任务',
     icon: CalendarDays,
-    route: '/plans',
-    done: false,
-    count: 0,
-    desc: '规划学习路径'
-  },
-  {
-    label: '任务执行',
-    icon: CheckSquare,
     route: '/tasks',
     done: ws.tasksTotal > 0,
     count: ws.tasksTotal,
-    desc: '跟踪学习进度'
+    desc: '导入计划并跟踪'
   }
 ])
+
+const metricCards = computed(() => [
+  { label: '课程资料', value: ws.materialsTotal, route: '/materials' },
+  { label: '学习资源', value: ws.resourcesTotal, route: '/resources' },
+  { label: '题集数量', value: ws.quizzesTotal, route: '/quizzes' },
+  { label: '评估次数', value: ws.evaluationsTotal, route: '/quizzes' },
+  { label: '任务数量', value: ws.tasksTotal, route: '/tasks' }
+])
+
+const demoFlow = [
+  '学生画像',
+  '课程资料上传',
+  'RAG 检索',
+  '多工具 Agent',
+  '资源/题集/计划/外部资料',
+  '学习评估'
+]
 
 const nextAction = computed(() => {
   if (!ws.profile) {
@@ -120,6 +130,10 @@ function go(route) {
   router.push(route)
 }
 
+function startDemo() {
+  router.push('/agent')
+}
+
 function formatDate(val) {
   if (!val) return ''
   const d = new Date(val)
@@ -146,17 +160,37 @@ function getRecentItems() {
 
 <template>
   <div class="overview-page">
-    <div class="page-header">
-      <h1>学习流程总览</h1>
+    <div class="overview-hero">
+      <div>
+        <p class="overview-eyebrow">中国软件杯 A3 赛道演示项目</p>
+        <h1>个性化学习资源生成与学习规划智能体系统</h1>
+        <p class="overview-subtitle">基于大模型与 RAG 的个性化学习资源生成与学习规划智能体系统</p>
+      </div>
+      <button class="btn btn-primary btn-lg" @click="startDemo">
+        开始演示
+        <ArrowRight :size="18" />
+      </button>
     </div>
 
     <LoadingState v-if="ws.loading" />
 
     <template v-else>
+      <div class="metrics-grid">
+        <button
+          v-for="metric in metricCards"
+          :key="metric.label"
+          class="metric-card"
+          @click="go(metric.route)"
+        >
+          <span class="metric-value">{{ metric.value }}</span>
+          <span class="metric-label">{{ metric.label }}</span>
+        </button>
+      </div>
+
       <div class="workflow-section">
         <div class="workflow-header">
-          <h2>学习流程</h2>
-          <span class="workflow-hint">完成每个步骤，逐步构建你的学习体系</span>
+          <h2>学习闭环 5 阶段</h2>
+          <span class="workflow-hint">从画像、知识库到 Agent 生成、评估反馈和任务跟踪</span>
         </div>
 
         <div class="workflow-steps">
@@ -179,6 +213,26 @@ function getRecentItems() {
               <div v-if="step.count > 0" class="step-count">{{ step.count }} 项</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="agent-flow-section">
+        <div class="workflow-header">
+          <h2>演示链路</h2>
+          <span class="workflow-hint">学生画像 → 资料检索 → 多工具生成 → 评估改进</span>
+        </div>
+        <div class="agent-flow">
+          <template v-for="(item, index) in demoFlow" :key="item">
+            <div class="flow-node">
+              <BarChart3 v-if="index === demoFlow.length - 1" :size="16" />
+              <FileText v-else-if="index === 4" :size="16" />
+              <Bot v-else-if="index === 3" :size="16" />
+              <BookOpen v-else-if="index === 1 || index === 2" :size="16" />
+              <UserRound v-else :size="16" />
+              <span>{{ item }}</span>
+            </div>
+            <ArrowRight v-if="index < demoFlow.length - 1" :size="16" class="flow-arrow" />
+          </template>
         </div>
       </div>
 
@@ -218,7 +272,43 @@ function getRecentItems() {
 
 <style scoped>
 .overview-page {
-  max-width: 1000px;
+  max-width: 1180px;
+}
+
+.overview-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+  align-items: flex-end;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+}
+
+.overview-eyebrow {
+  margin: 0 0 0.375rem;
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.overview-hero h1 {
+  max-width: 760px;
+  margin: 0;
+  font-size: 1.75rem;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.overview-subtitle {
+  max-width: 760px;
+  margin: 0.625rem 0 0;
+  color: var(--color-text-soft);
+  font-size: var(--text-base);
+  line-height: 1.6;
 }
 
 .page-header {
@@ -230,12 +320,85 @@ function getRecentItems() {
   font-weight: 600;
 }
 
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 1rem;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  text-align: left;
+  box-shadow: var(--shadow-soft);
+}
+
+.metric-card:hover {
+  border-color: var(--color-primary);
+}
+
+.metric-value {
+  color: var(--color-primary);
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.metric-label {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
 .workflow-section {
   background-color: var(--color-surface);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
   padding: 1.5rem;
   margin-bottom: 1.5rem;
+}
+
+.agent-flow-section {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.agent-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.flow-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  background-color: var(--color-surface-strong);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-soft);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.flow-node svg {
+  color: var(--color-primary);
+}
+
+.flow-arrow {
+  color: var(--color-muted);
+  flex-shrink: 0;
 }
 
 .workflow-header {
@@ -444,6 +607,15 @@ function getRecentItems() {
     max-width: none;
   }
 
+  .overview-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .workflow-header {
     align-items: flex-start;
     flex-direction: column;
@@ -479,6 +651,10 @@ function getRecentItems() {
 }
 
 @media (max-width: 480px) {
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
   .workflow-step {
     flex: 0 0 calc(50% - 0.5rem);
   }

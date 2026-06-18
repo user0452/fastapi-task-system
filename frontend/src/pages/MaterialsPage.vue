@@ -25,6 +25,7 @@ const ragTopic = ref('')
 const ragCourse = ref('')
 const ragLoading = ref(false)
 const ragHits = ref([])
+const ragSearched = ref(false)
 
 const buildingId = ref(null)
 
@@ -113,6 +114,7 @@ async function handleRagSearch() {
   }
 
   ragLoading.value = true
+  ragSearched.value = true
   const res = await ragSearch({
     course_name: ragCourse.value,
     topic: ragTopic.value
@@ -146,12 +148,12 @@ async function handleRagSearch() {
               class="btn btn-sm"
               :class="formMode === 'text' ? 'btn-primary' : 'btn-secondary'"
               @click="formMode = 'text'"
-            >正文</button>
+            >手动输入资料</button>
             <button
               class="btn btn-sm"
               :class="formMode === 'file' ? 'btn-primary' : 'btn-secondary'"
               @click="formMode = 'file'"
-            >上传文件</button>
+            >上传文件资料</button>
           </div>
         </div>
         <div class="card-body">
@@ -171,10 +173,14 @@ async function handleRagSearch() {
               rows="8"
               placeholder="粘贴课程内容..."
             ></textarea>
+            <p class="form-hint">适合粘贴课堂讲义、教材片段、课程内部说明或比赛演示资料。</p>
           </div>
           <div v-else class="form-group">
             <label class="form-label">选择文件</label>
             <input type="file" class="form-input" @change="onFileChange" accept=".txt,.md,.pdf,.docx" />
+            <p class="form-hint">
+              支持 txt、md、docx、文本型 PDF；暂不支持扫描版 PDF OCR；单文件最大 10MB。
+            </p>
             <p v-if="file" class="form-hint">
               已选择：{{ file.name }}
             </p>
@@ -222,6 +228,7 @@ async function handleRagSearch() {
                     >
                       {{ buildingId === (m.material_id || m.id) ? '构建中...' : '构建索引' }}
                     </button>
+                    <span class="material-action-hint">构建完成后会用于 RAG 检索</span>
                   </td>
                 </tr>
               </tbody>
@@ -263,15 +270,32 @@ async function handleRagSearch() {
               <div class="rag-hit-header">
                 <span class="rag-hit-score">相似度: {{ hit.score?.toFixed(4) || '—' }}</span>
                 <span class="rag-hit-meta">
+                  chunk_id: {{ hit.chunk_id || hit.id || '—' }} |
+                  material_id: {{ hit.material_id || '—' }} |
                   分块 #{{ hit.chunk_index ?? '—' }} |
-                  资料ID: {{ hit.material_id || '—' }}
+                  score: {{ hit.score?.toFixed(4) || '—' }}
                 </span>
               </div>
-              <div class="rag-hit-content">{{ hit.chunk_text || hit.snippet || hit.content || '' }}</div>
+              <div class="rag-hit-content">{{ hit.snippet || hit.chunk_text || hit.content || '' }}</div>
             </div>
           </div>
+          <EmptyState
+            v-else-if="ragSearched && !ragLoading"
+            :icon="BookOpen"
+            title="没有命中资料片段"
+            desc="请确认课程名称一致，并先为资料构建 RAG 索引"
+          />
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.material-action-hint {
+  display: inline-block;
+  margin-left: 0.5rem;
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+</style>
