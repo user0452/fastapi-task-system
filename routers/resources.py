@@ -1,5 +1,4 @@
 import json
-from plistlib import loads
 from services.rag_service import search_similar_chunks
 from fastapi import APIRouter, Depends
 
@@ -22,7 +21,6 @@ def generate_resource_api(request: LearningResourceGenerateRequest, user=Depends
             (user["id"],)
         )
         row = cursor.fetchone()
-        print( row)
         if row is None:
             return error(
                 message="当前用户没有学生画像",
@@ -151,7 +149,6 @@ def get_resources(
             (user["id"],)
         )
         row = cursor.fetchone()
-        print(row)
         total = row["total"]
 
         cursor.execute(

@@ -1,8 +1,23 @@
-from fastapi import FastAPI
+import pymysql
+
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from routers import users, tasks,ai,profiles,resources,quizzes,plans,agent,materials,evaluations,external_resources
+from utils import error
+
 app = FastAPI()
+
+
+@app.exception_handler(pymysql.MySQLError)
+async def mysql_exception_handler(request: Request, exc: pymysql.MySQLError):
+    return JSONResponse(
+        status_code=500,
+        content=error(
+            code=500,
+            message="数据库连接失败，请检查 .env 中的 DATABASE_* 配置，并确认已导入 sql/init.sql。"
+        )
+    )
 
 app.include_router(materials.router)
 app.include_router(agent.router)
@@ -21,5 +36,5 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 async def root():
-    return FileResponse("static/index.html")
+    return RedirectResponse(url="/static/vue/index.html")
 

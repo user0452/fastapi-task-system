@@ -1,5 +1,5 @@
 from pydantic import BaseModel,Field
-from typing import Optional,Literal
+from typing import Any, Optional,Literal
 
 
 
@@ -125,11 +125,41 @@ class AgentToolPlan(BaseModel):
     intent: Literal[
         "generate_study_package",
         "generate_resource",
+        "generate_resource_only",
+        "list_resources",
+        "get_resource",
         "generate_quiz",
+        "generate_quiz_only",
+        "list_quizzes",
+        "get_quiz",
         "generate_plan",
+        "generate_plan_only",
+        "import_plan_tasks",
         "search_external_learning_resources",
+        "generate_profile",
+        "get_profile",
         "update_profile",
+        "update_profile_request",
+        "create_material",
+        "list_materials",
+        "build_material_index",
+        "rag_search_materials",
+        "create_task",
+        "list_tasks",
+        "get_task",
+        "update_task",
+        "delete_task",
+        "bulk_update_tasks_status",
+        "bulk_delete_tasks_status",
+        "submit_evaluation",
+        "list_evaluations",
+        "get_evaluation",
+        "parse_exam_schedule",
+        "preview_review_plan",
+        "import_review_plan_tasks",
+        "list_operation_logs",
         "qa",
+        "chat",
         "unknown"
     ] = "unknown"
     course_name: Optional[str] = None
@@ -142,7 +172,8 @@ class AgentToolPlan(BaseModel):
 
     missing_fields: list[str] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
-    need_confirm_import: bool = True
+    tool_args: dict[str, Any] = Field(default_factory=dict)
+    need_confirm_import: bool = False
 
 class MaterialCreateRequest(BaseModel):
     course_name: str = Field(...,min_length=1,max_length=100)

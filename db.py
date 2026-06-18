@@ -5,11 +5,11 @@ from dotenv import load_dotenv
 load_dotenv()
 def get_conn():
     return pymysql.connect(
-        host=os.getenv("DB_HOST", "127.0.0.1"),
-        port=int(os.getenv("DB_PORT", "3306")),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "task_db2"),
+        host=os.getenv("DATABASE_HOST") or os.getenv("DB_HOST", "127.0.0.1"),
+        port=int(os.getenv("DATABASE_PORT") or os.getenv("DB_PORT", "3306")),
+        user=os.getenv("DATABASE_USER") or os.getenv("DB_USER", "root"),
+        password=os.getenv("DATABASE_PASSWORD") or os.getenv("DB_PASSWORD", ""),
+        database=os.getenv("DATABASE_NAME") or os.getenv("DB_NAME", "task_db2"),
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
     )

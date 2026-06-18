@@ -1,7 +1,6 @@
 import json
 
 from fastapi import APIRouter, Depends
-from pyexpat.errors import messages
 from services.rag_service import search_similar_chunks
 from agents.quiz_agent import generate_quiz_set
 from db import get_conn
