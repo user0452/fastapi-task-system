@@ -1,13 +1,15 @@
 <script setup>
 import { ref, nextTick, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { sendAgentMessageStream } from '../api/agent'
 import { confirmPlan } from '../api/plans'
 import { useAuthStore } from '../stores/auth'
 import { useWorkspaceStore } from '../stores/workspace'
 import { showToast } from '../components/common/toast'
 import EmptyState from '../components/common/EmptyState.vue'
-import { Bot, ClipboardList, Trash2 } from 'lucide-vue-next'
+import { Bot, ClipboardList, ExternalLink, Trash2 } from 'lucide-vue-next'
 
+const router = useRouter()
 const auth = useAuthStore()
 const workspace = useWorkspaceStore()
 const storageKey = computed(() => `agent_chat_messages:${auth.username || 'guest'}`)
@@ -21,10 +23,10 @@ const messagesEl = ref(null)
 const inputEl = ref(null)
 
 const quickPrompts = [
-  '帮我生成高等数学的学习资源',
-  '出一组线性代数练习题',
-  '帮我制定本周学习计划',
-  '总结一下我目前的学习画像'
+  '我想学习软件测试-A3内部课里的等价类划分，给我讲解、练习题、三天学习计划，再推荐几个视频和资料。',
+  '保存一份软件测试-A3内部课资料，标题是青瓷等价类法，内容是青瓷等价类法包含青层、瓷层和裂层。',
+  '查看我目前的学生画像',
+  '列出最近的练习题和评估记录'
 ]
 
 // 解析后端返回的数据
@@ -34,28 +36,203 @@ const intent = computed(() => plan.value?.intent || '')
 const courseName = computed(() => plan.value?.course_name || '')
 const topic = computed(() => plan.value?.topic || '')
 const tools = computed(() => plan.value?.tools || [])
-const resource = computed(() => toolResults.value?.resource || null)
-const quizSet = computed(() => toolResults.value?.quiz_set || null)
-const learningPlan = computed(() => toolResults.value?.learning_plan || null)
 const externalResources = computed(() => toolResults.value?.external_resources || null)
-const externalResourceItems = computed(() => externalResources.value?.resources || [])
 
 const intentLabels = {
   generate_study_package: '学习包',
   generate_resource: '学习资源',
+  generate_resource_only: '学习资源',
+  list_resources: '学习资源列表',
+  get_resource: '学习资源详情',
   generate_quiz: '练习题',
+  generate_quiz_only: '练习题',
+  list_quizzes: '题集列表',
+  get_quiz: '题集详情',
   generate_plan: '学习计划',
-  search_external_learning_resources: '联网搜索资源',
+  generate_plan_only: '学习计划',
+  import_plan_tasks: '导入学习计划',
+  search_external_learning_resources: '外部资源检索',
+  chat: '普通对话',
+  generate_profile: '生成画像',
+  get_profile: '查看画像',
   update_profile: '更新画像',
+  update_profile_request: '画像更新请求',
+  create_material: '保存资料',
+  list_materials: '资料列表',
+  build_material_index: '资料索引',
+  rag_search_materials: '资料检索',
+  create_task: '创建任务',
+  list_tasks: '任务列表',
+  get_task: '任务详情',
+  update_task: '更新任务',
+  delete_task: '删除任务',
+  bulk_update_tasks_status: '批量更新任务',
+  bulk_delete_tasks_status: '批量删除任务',
+  submit_evaluation: '学习评估',
+  list_evaluations: '评估记录',
+  get_evaluation: '评估详情',
+  parse_exam_schedule: '考试解析',
+  preview_review_plan: '复习计划',
+  import_review_plan_tasks: '导入复习任务',
+  list_operation_logs: '操作日志',
   qa: '问答',
   unknown: '未知'
 }
 
 const toolLabels = {
+  generate_profile: '生成画像',
+  get_profile: '查看画像',
+  create_material: '保存资料',
+  list_materials: '查询资料',
+  build_material_index: '构建索引',
+  rag_search_materials: '资料检索',
   generate_resource: '生成资源',
+  list_resources: '查询资源',
+  get_resource: '资源详情',
   generate_quiz: '生成题集',
+  list_quizzes: '查询题集',
+  get_quiz: '题集详情',
   generate_plan: '生成计划',
-  search_external_learning_resources: '联网搜索资源'
+  import_plan_tasks: '导入计划任务',
+  create_task: '创建任务',
+  list_tasks: '查询任务',
+  get_task: '任务详情',
+  update_task: '更新任务',
+  delete_task: '删除任务',
+  bulk_update_tasks_status: '批量更新任务',
+  bulk_delete_tasks_status: '批量删除任务',
+  submit_evaluation: '提交评估',
+  list_evaluations: '查询评估',
+  get_evaluation: '评估详情',
+  parse_exam_schedule: '解析考试',
+  preview_review_plan: '生成复习计划',
+  import_review_plan_tasks: '导入复习任务',
+  list_operation_logs: '查询日志',
+  search_external_learning_resources: '外部资源',
+  chat: '普通对话',
+  update_profile_request: '画像更新请求'
+}
+
+const overviewRefreshResultKeys = new Set([
+  'profile',
+  'material',
+  'material_index',
+  'resource',
+  'quiz_set',
+  'learning_plan',
+  'plan_import',
+  'task',
+  'task_update',
+  'task_delete',
+  'bulk_task_update',
+  'bulk_task_delete',
+  'evaluation',
+  'review_import'
+])
+
+function messageToolResults(msg) {
+  return msg?.result?.tool_results || {}
+}
+
+function messagePlan(msg) {
+  return msg?.result?.plan || {}
+}
+
+function hasMessageCards(msg) {
+  const results = messageToolResults(msg)
+  return Boolean(
+    results.resource ||
+    results.quiz_set ||
+    results.learning_plan ||
+    results.external_resources
+  )
+}
+
+function truncateText(text, length = 180) {
+  const value = text || ''
+  return value.length > length ? value.slice(0, length) + '...' : value
+}
+
+function quizDifficultySummary(quiz) {
+  const questions = quiz?.questions || []
+  if (!questions.length) return '暂无难度标注'
+
+  const labelMap = {
+    easy: '简单',
+    medium: '中等',
+    hard: '困难'
+  }
+  const counts = questions.reduce((acc, question) => {
+    const key = question.difficulty || 'medium'
+    acc[key] = (acc[key] || 0) + 1
+    return acc
+  }, {})
+
+  return Object.entries(counts)
+    .map(([key, count]) => `${labelMap[key] || key} ${count}`)
+    .join(' · ')
+}
+
+function sortedExternalResources(externalResources) {
+  const items = externalResources?.resources || []
+  const priority = {
+    video: 0,
+    practice: 1,
+    document: 2,
+    article: 3
+  }
+
+  return [...items].sort((a, b) => {
+    const left = priority[a.resource_type] ?? 9
+    const right = priority[b.resource_type] ?? 9
+    if (left !== right) return left - right
+    return (b.score || 0) - (a.score || 0)
+  })
+}
+
+function viewResource(resource) {
+  router.push({
+    path: '/resources',
+    query: resource?.id ? { resource_id: resource.id } : {}
+  })
+}
+
+function viewQuiz(quiz) {
+  router.push({
+    path: '/quizzes',
+    query: quiz?.id ? { quiz_set_id: quiz.id, tab: 'submit' } : {}
+  })
+}
+
+async function importLearningPlan(planData) {
+  if (!planData) {
+    showToast({ type: 'warning', message: '没有可导入的计划' })
+    return
+  }
+
+  const res = await confirmPlan({
+    tasks_preview: planData.tasks_preview || []
+  })
+  if (res.code === 200) {
+    const count = res.data?.created_count ?? res.data?.task_count ?? res.data?.tasks?.length ?? '?'
+    showToast({ type: 'success', message: `成功导入 ${count} 个任务` })
+    workspace.loadOverview()
+  } else {
+    showToast({ type: 'error', message: res.message })
+  }
+}
+
+function resultTypeSummary(results) {
+  const labels = []
+  if (results.resource) labels.push('学习资源包')
+  if (results.quiz_set) labels.push('练习题')
+  if (results.learning_plan) labels.push('学习计划')
+  if (results.external_resources) labels.push('外部资源')
+  if (results.profile || results.profile_detail) labels.push('学生画像')
+  if (results.material || results.materials || results.material_index || results.rag_search) labels.push('课程知识库')
+  if (results.evaluation || results.evaluations || results.evaluation_detail) labels.push('学习评估')
+  if (results.task || results.tasks || results.plan_import || results.review_import) labels.push('任务中心')
+  return labels
 }
 
 // 保存聊天记录到 localStorage
@@ -153,8 +330,10 @@ async function sendMessage() {
         },
         onResult(data) {
           result.value = data
+          messages.value[assistantIndex].result = data
           saveResult()
-          if (data?.tool_results?.resource || data?.tool_results?.quiz_set || data?.tool_results?.learning_plan) {
+          const resultKeys = Object.keys(data?.tool_results || {})
+          if (resultKeys.some(key => overviewRefreshResultKeys.has(key))) {
             workspace.loadOverview()
           }
           if (!messages.value[assistantIndex].content) {
@@ -207,23 +386,6 @@ function adjustTextareaHeight() {
   })
 }
 
-async function handleImportTasks() {
-  if (!learningPlan.value) {
-    showToast({ type: 'warning', message: '没有可导入的计划' })
-    return
-  }
-
-  const res = await confirmPlan({
-    tasks_preview: learningPlan.value.tasks_preview || []
-  })
-  if (res.code === 200) {
-    const count = res.data?.created_count ?? res.data?.task_count ?? res.data?.tasks?.length ?? '?'
-    showToast({ type: 'success', message: `成功导入 ${count} 个任务` })
-    workspace.loadOverview()
-  } else {
-    showToast({ type: 'error', message: res.message })
-  }
-}
 </script>
 
 <template>
@@ -259,13 +421,132 @@ async function handleImportTasks() {
             {{ msg.role === 'user' ? '我' : 'AI' }}
           </div>
           <div class="agent-message-content">
-            <template v-if="msg.content">
+            <div v-if="msg.content" class="agent-message-text">
               {{ msg.content }}
               <span v-if="msg.streaming" class="stream-cursor"></span>
-            </template>
+            </div>
             <div v-else-if="msg.streaming" class="stream-status">
               <div class="loading-spinner loading-spinner-sm"></div>
               <span>{{ streamingStatus || '正在思考...' }}</span>
+            </div>
+
+            <div
+              v-if="msg.role === 'assistant' && hasMessageCards(msg)"
+              class="agent-card-stack"
+            >
+              <div v-if="messageToolResults(msg).resource" class="agent-tool-card resource-package-card">
+                <div class="agent-card-kicker">学习资源包</div>
+                <div class="agent-card-title">{{ messageToolResults(msg).resource.title }}</div>
+                <div class="agent-card-meta">
+                  {{ messageToolResults(msg).resource.course_name || messagePlan(msg).course_name || '未标注课程' }}
+                  <span>·</span>
+                  {{ messageToolResults(msg).resource.topic || messagePlan(msg).topic || '未标注知识点' }}
+                </div>
+                <p class="agent-card-summary">
+                  {{ truncateText(messageToolResults(msg).resource.content, 220) }}
+                </p>
+                <div v-if="messageToolResults(msg).resource.key_points?.length" class="agent-card-points">
+                  <span
+                    v-for="(point, index) in messageToolResults(msg).resource.key_points.slice(0, 3)"
+                    :key="index"
+                    class="agent-card-point"
+                  >
+                    {{ point }}
+                  </span>
+                </div>
+                <div class="agent-card-actions">
+                  <button class="btn btn-sm btn-primary" @click="viewResource(messageToolResults(msg).resource)">
+                    查看资源详情
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="messageToolResults(msg).quiz_set" class="agent-tool-card quiz-card">
+                <div class="agent-card-kicker">练习题</div>
+                <div class="agent-card-title">{{ messageToolResults(msg).quiz_set.title }}</div>
+                <div class="agent-card-meta">
+                  {{ messageToolResults(msg).quiz_set.course_name }}
+                  <span>·</span>
+                  {{ messageToolResults(msg).quiz_set.topic }}
+                </div>
+                <div class="agent-card-stats">
+                  <span>{{ messageToolResults(msg).quiz_set.questions?.length || 0 }} 题</span>
+                  <span>{{ quizDifficultySummary(messageToolResults(msg).quiz_set) }}</span>
+                </div>
+                <div class="agent-card-actions">
+                  <button class="btn btn-sm btn-primary" @click="viewQuiz(messageToolResults(msg).quiz_set)">
+                    开始作答
+                  </button>
+                  <button class="btn btn-sm btn-secondary" @click="viewQuiz(messageToolResults(msg).quiz_set)">
+                    查看题集
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="messageToolResults(msg).learning_plan" class="agent-tool-card plan-card">
+                <div class="agent-card-kicker">学习计划</div>
+                <div class="agent-card-title">{{ messageToolResults(msg).learning_plan.plan_title }}</div>
+                <div class="agent-card-meta">
+                  {{ messageToolResults(msg).learning_plan.course_name }}
+                  <span>·</span>
+                  {{ messageToolResults(msg).learning_plan.days }} 天
+                </div>
+                <div v-if="messageToolResults(msg).learning_plan.tasks_preview?.length" class="agent-plan-preview">
+                  <div
+                    v-for="(task, index) in messageToolResults(msg).learning_plan.tasks_preview.slice(0, 3)"
+                    :key="index"
+                    class="agent-plan-task"
+                  >
+                    <span>{{ index + 1 }}</span>
+                    <p>{{ task.title }}</p>
+                  </div>
+                </div>
+                <div class="agent-card-actions">
+                  <button class="btn btn-sm btn-primary" @click="importLearningPlan(messageToolResults(msg).learning_plan)">
+                    导入任务中心
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="messageToolResults(msg).external_resources" class="agent-tool-card external-card">
+                <div class="agent-card-kicker">外部学习资源</div>
+                <div v-if="messageToolResults(msg).external_resources.error" class="external-error">
+                  外部搜索暂时不可用：{{ messageToolResults(msg).external_resources.error }}
+                </div>
+                <template v-else-if="sortedExternalResources(messageToolResults(msg).external_resources).length">
+                  <a
+                    v-for="(item, index) in sortedExternalResources(messageToolResults(msg).external_resources).slice(0, 5)"
+                    :key="item.url || index"
+                    class="external-agent-item"
+                    :href="item.url || undefined"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <img
+                      v-if="item.favicon"
+                      class="external-favicon"
+                      :src="item.favicon"
+                      alt=""
+                    />
+                    <div class="external-agent-main">
+                      <div class="external-agent-title">{{ item.title || '未命名资源' }}</div>
+                      <div class="agent-card-meta">
+                        {{ item.resource_type || 'resource' }}
+                        <span>·</span>
+                        {{ item.source || '未知来源' }}
+                        <span v-if="item.estimated_time">· {{ item.estimated_time }}</span>
+                      </div>
+                      <p v-if="item.reason" class="external-reason">{{ item.reason }}</p>
+                      <p v-if="item.snippet" class="external-snippet">{{ truncateText(item.snippet, 150) }}</p>
+                    </div>
+                    <span class="external-open-button">
+                      打开资源
+                      <ExternalLink :size="14" />
+                    </span>
+                  </a>
+                </template>
+                <div v-else class="external-empty">没有搜索到可展示的外部资源。</div>
+              </div>
             </div>
           </div>
         </div>
@@ -302,25 +583,23 @@ async function handleImportTasks() {
 
     <div class="agent-result">
       <div class="card-header">
-        <h3>本次结果</h3>
+        <h3>本轮调度摘要</h3>
       </div>
 
       <EmptyState
         v-if="!result"
         :icon="ClipboardList"
-        title="暂无结果"
-        desc="发送消息后，AI 的处理结果将展示在这里"
+        title="等待对话"
+        desc="发送消息后，这里会显示本轮意图、工具和结果类型"
       />
 
       <template v-else>
         <div class="result-scroll">
-          <!-- 意图 -->
           <div v-if="intent" class="result-section">
             <h4>识别意图</h4>
             <span class="badge badge-primary">{{ intentLabels[intent] || intent }}</span>
           </div>
 
-          <!-- 课程信息 -->
           <div v-if="courseName" class="result-section">
             <h4>课程名</h4>
             <p>{{ courseName }}</p>
@@ -331,7 +610,6 @@ async function handleImportTasks() {
             <p>{{ topic }}</p>
           </div>
 
-          <!-- 调用工具 -->
           <div v-if="tools.length" class="result-section">
             <h4>调用工具</h4>
             <div class="tool-tags">
@@ -343,102 +621,26 @@ async function handleImportTasks() {
             </div>
           </div>
 
-          <!-- 生成的资源 -->
-          <div v-if="resource" class="result-section">
-            <h4>生成资源</h4>
-            <div class="result-card">
-              <div class="result-card-title">{{ resource.title }}</div>
-              <div class="result-card-meta">类型：{{ resource.resource_type }}</div>
-              <div class="result-card-content">{{ (resource.content || '').substring(0, 300) }}...</div>
-              <div v-if="resource.key_points?.length" class="result-card-points">
-                <strong>关键知识点：</strong>
-                <ul>
-                  <li v-for="(p, i) in resource.key_points.slice(0, 3)" :key="i">{{ p }}</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <!-- 生成的题集 -->
-          <div v-if="quizSet" class="result-section">
-            <h4>生成题集</h4>
-            <div class="result-card">
-              <div class="result-card-title">{{ quizSet.title }}</div>
-              <div class="result-card-meta">
-                {{ quizSet.course_name }} · {{ quizSet.questions?.length || 0 }} 题
-              </div>
-              <div v-if="quizSet.questions?.length" class="result-card-questions">
-                <div v-for="(q, i) in quizSet.questions.slice(0, 3)" :key="i" class="question-preview">
-                  <span class="question-num">{{ i + 1 }}.</span>
-                  <span>{{ q.question }}</span>
-                </div>
-                <div v-if="quizSet.questions.length > 3" class="question-more">
-                  还有 {{ quizSet.questions.length - 3 }} 题...
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 生成的计划 -->
-          <div v-if="learningPlan" class="result-section">
-            <h4>生成计划</h4>
-            <div class="result-card">
-              <div class="result-card-title">{{ learningPlan.plan_title }}</div>
-              <div class="result-card-meta">
-                {{ learningPlan.course_name }} · {{ learningPlan.days }} 天
-              </div>
-              <div v-if="learningPlan.tasks_preview?.length" class="result-card-tasks">
-                <div v-for="(t, i) in learningPlan.tasks_preview.slice(0, 5)" :key="i" class="task-preview">
-                  <span class="task-marker">□</span>
-                  <span>{{ t.title }}</span>
-                </div>
-                <div v-if="learningPlan.tasks_preview.length > 5" class="task-more">
-                  还有 {{ learningPlan.tasks_preview.length - 5 }} 个任务...
-                </div>
-              </div>
-              <button class="btn btn-primary btn-sm import-tasks-button" @click="handleImportTasks">
-                导入任务中心
-              </button>
-            </div>
-          </div>
-
-          <!-- 联网搜索结果 -->
-          <div v-if="externalResources" class="result-section">
-            <h4>联网搜索结果</h4>
-            <div v-if="externalResources.error" class="result-card result-card-warning">
-              <div class="result-card-title">搜索失败</div>
-              <div class="result-card-content">{{ externalResources.error }}</div>
-            </div>
-            <div v-else-if="externalResourceItems.length" class="external-resource-list">
-              <component
-                :is="item.url ? 'a' : 'div'"
-                v-for="(item, i) in externalResourceItems"
-                :key="item.url || i"
-                class="external-resource-card"
-                :href="item.url || undefined"
-                :target="item.url ? '_blank' : undefined"
-                :rel="item.url ? 'noopener noreferrer' : undefined"
+          <div class="result-section">
+            <h4>结果类型</h4>
+            <div v-if="resultTypeSummary(toolResults).length" class="tool-tags">
+              <span
+                v-for="label in resultTypeSummary(toolResults)"
+                :key="label"
+                class="badge badge-info"
               >
-                <div class="external-resource-main">
-                  <div class="result-card-title">{{ item.title || '未命名资源' }}</div>
-                  <div class="result-card-meta">
-                    {{ item.source || '未知来源' }} · {{ item.resource_type || 'resource' }}
-                    <span v-if="item.estimated_time"> · {{ item.estimated_time }}</span>
-                  </div>
-                  <div v-if="item.snippet" class="result-card-content">{{ item.snippet }}</div>
-                  <div v-if="item.reason" class="external-resource-reason">{{ item.reason }}</div>
-                </div>
-              </component>
+                {{ label }}
+              </span>
             </div>
-            <div v-else class="result-card">
-              <div class="result-card-content">没有搜索到可展示的外部资源。</div>
+            <div v-else class="result-empty result-empty-compact">
+              <p>{{ plan.reply || 'AI 已回复' }}</p>
             </div>
           </div>
 
-          <!-- 无工具调用 -->
-          <div v-if="!tools.length && !resource && !quizSet && !learningPlan && !externalResources" class="result-section">
-            <div class="result-empty">
-              <p>{{ plan.reply || 'AI 已回复' }}</p>
+          <div v-if="externalResources?.error" class="result-section">
+            <h4>外部资源状态</h4>
+            <div class="result-card result-card-warning">
+              <div class="result-card-content">搜索暂时不可用，聊天气泡中已显示友好提示。</div>
             </div>
           </div>
         </div>
@@ -521,8 +723,11 @@ async function handleImportTasks() {
   border-radius: var(--radius-md);
   font-size: var(--text-base);
   line-height: 1.6;
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+.agent-message-text {
+  white-space: pre-wrap;
 }
 
 .loading-spinner-sm {
@@ -563,6 +768,178 @@ async function handleImportTasks() {
   background-color: var(--color-surface-strong);
   border: 1px solid var(--color-line);
   border-bottom-left-radius: 4px;
+}
+
+.agent-card-stack {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.agent-tool-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  padding: 0.875rem;
+}
+
+.agent-card-kicker {
+  margin-bottom: 0.375rem;
+  color: var(--color-primary);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.agent-card-title {
+  color: var(--color-text);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.agent-card-meta,
+.agent-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.agent-card-summary,
+.external-reason,
+.external-snippet {
+  margin: 0.625rem 0 0;
+  color: var(--color-text-soft);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.agent-card-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.75rem;
+}
+
+.agent-card-point {
+  padding: 0.25rem 0.5rem;
+  background-color: var(--color-primary-light);
+  border-radius: var(--radius-sm);
+  color: var(--color-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.agent-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.agent-plan-preview {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.agent-plan-task {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.5rem;
+  background-color: var(--color-surface-strong);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+}
+
+.agent-plan-task span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  background-color: var(--color-primary);
+  border-radius: 50%;
+  color: white;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.agent-plan-task p {
+  margin: 0;
+  color: var(--color-text-soft);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.external-card {
+  display: grid;
+  gap: 0.625rem;
+}
+
+.external-agent-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.625rem;
+  align-items: flex-start;
+  padding: 0.75rem;
+  color: inherit;
+  text-decoration: none;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface-strong);
+}
+
+.external-agent-item:hover {
+  border-color: var(--color-primary);
+}
+
+.external-favicon {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 4px;
+  margin-top: 0.125rem;
+}
+
+.external-agent-title {
+  color: var(--color-text);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.external-open-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-primary);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.external-open-button svg {
+  color: var(--color-muted);
+}
+
+.external-error,
+.external-empty {
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-soft);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.external-error {
+  background-color: rgba(217, 119, 6, 0.08);
+  border: 1px solid rgba(217, 119, 6, 0.3);
 }
 
 .agent-input-area {
@@ -685,96 +1062,15 @@ async function handleImportTasks() {
   margin-bottom: 0.625rem;
 }
 
-.external-resource-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.external-resource-card {
-  display: block;
-  padding: 0.875rem;
-  background-color: var(--color-surface-strong);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  text-decoration: none;
-  color: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.external-resource-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  text-decoration: none;
-}
-
-.external-resource-main {
-  min-width: 0;
-}
-
-.external-resource-reason {
-  font-size: var(--text-sm);
-  color: var(--color-primary);
-  line-height: 1.5;
-}
-
-.result-card-points {
-  font-size: var(--text-sm);
-  color: var(--color-text-soft);
-}
-
-.result-card-points ul {
-  margin-top: 0.375rem;
-  padding-left: 1.25rem;
-}
-
-.result-card-points li {
-  margin-bottom: 0.25rem;
-}
-
-.question-preview {
-  display: flex;
-  gap: 0.5rem;
-  font-size: var(--text-sm);
-  color: var(--color-text-soft);
-  margin-bottom: 0.375rem;
-}
-
-.question-num {
-  color: var(--color-primary);
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.question-more,
-.task-more {
-  font-size: var(--text-sm);
-  color: var(--color-muted);
-  margin-top: 0.375rem;
-}
-
-.task-preview {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: var(--text-sm);
-  color: var(--color-text-soft);
-  margin-bottom: 0.375rem;
-}
-
-.task-marker {
-  color: var(--color-primary);
-  font-weight: 600;
-}
-
-.import-tasks-button {
-  margin-top: 0.75rem;
-}
-
 .result-empty {
   text-align: center;
   padding: 1.5rem;
   color: var(--color-text-soft);
+}
+
+.result-empty-compact {
+  padding: 0.75rem;
+  text-align: left;
 }
 
 @media (max-width: 1024px) {

@@ -1,5 +1,6 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   getQuizzes,
   generateQuiz,
@@ -12,6 +13,8 @@ import { showToast } from '../components/common/toast'
 import EmptyState from '../components/common/EmptyState.vue'
 import LoadingState from '../components/common/LoadingState.vue'
 import { BarChart3, ClipboardList, PencilLine } from 'lucide-vue-next'
+
+const route = useRoute()
 
 const quizzes = ref([])
 const total = ref(0)
@@ -33,9 +36,24 @@ const evaluations = ref([])
 const evalsLoading = ref(false)
 const currentEval = ref(null)
 
-onMounted(() => {
-  loadQuizzes()
+onMounted(async () => {
+  await loadQuizzes()
+  selectQuizFromRoute()
 })
+
+watch(
+  () => [route.query.quiz_set_id, route.query.tab],
+  () => {
+    selectQuizFromRoute()
+  }
+)
+
+function selectQuizFromRoute() {
+  const id = Number(route.query.quiz_set_id)
+  if (id) {
+    selectQuiz(id, route.query.tab === 'submit' ? 'submit' : 'questions')
+  }
+}
 
 async function loadQuizzes() {
   loading.value = true
@@ -72,9 +90,9 @@ async function handleGenerate() {
   }
 }
 
-async function selectQuiz(id) {
+async function selectQuiz(id, nextTab = 'questions') {
   selectedId.value = id
-  activeTab.value = 'questions'
+  activeTab.value = nextTab
   detailLoading.value = true
   const res = await getQuiz(id)
   detailLoading.value = false
@@ -100,21 +118,19 @@ async function handleSubmitEvaluation() {
 
   const questions = quizDetail.value.questions || []
   const answers = []
-  let hasEmpty = false
 
   questions.forEach((q, i) => {
     const userAnswer = evalAnswers.value[i] || ''
-    if (!userAnswer.trim()) {
-      hasEmpty = true
+    if (userAnswer.trim()) {
+      answers.push({
+        question_id: q.question_id || q.id || i,
+        user_answer: userAnswer.trim()
+      })
     }
-    answers.push({
-      question_id: q.question_id || q.id || i,
-      user_answer: userAnswer
-    })
   })
 
-  if (hasEmpty) {
-    showToast({ type: 'warning', message: '请完成所有题目后再提交' })
+  if (!answers.length) {
+    showToast({ type: 'warning', message: '至少填写一道题答案' })
     return
   }
 
@@ -138,6 +154,7 @@ async function viewEvaluation(id) {
   const res = await getEvaluation(id)
   if (res.code === 200) {
     currentEval.value = res.data
+    activeTab.value = 'submit'
   }
 }
 

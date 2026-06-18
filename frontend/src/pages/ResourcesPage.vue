@@ -1,10 +1,13 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { getResources, generateResource, getResource } from '../api/resources'
 import { showToast } from '../components/common/toast'
 import EmptyState from '../components/common/EmptyState.vue'
 import LoadingState from '../components/common/LoadingState.vue'
 import { BookOpen, FileText } from 'lucide-vue-next'
+
+const route = useRoute()
 
 const resources = ref([])
 const total = ref(0)
@@ -17,9 +20,24 @@ const selectedId = ref(null)
 const detail = ref(null)
 const detailLoading = ref(false)
 
-onMounted(() => {
-  loadResources()
+onMounted(async () => {
+  await loadResources()
+  selectResourceFromRoute()
 })
+
+watch(
+  () => route.query.resource_id,
+  () => {
+    selectResourceFromRoute()
+  }
+)
+
+function selectResourceFromRoute() {
+  const id = Number(route.query.resource_id)
+  if (id) {
+    selectResource(id)
+  }
+}
 
 async function loadResources() {
   loading.value = true
