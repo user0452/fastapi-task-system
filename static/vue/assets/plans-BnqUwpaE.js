@@ -1,0 +1,1 @@
+import{i as e}from"./index-Cy3gxMkm.js";function t(t){return e(`/plans/preview`,{method:`POST`,body:JSON.stringify(t)})}function n(t){return e(`/plans/confirm`,{method:`POST`,body:JSON.stringify(t)})}export{t as n,n as t};

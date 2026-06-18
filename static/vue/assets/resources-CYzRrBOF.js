@@ -1,0 +1,1 @@
+import{i as e}from"./index-Cy3gxMkm.js";function t(t={}){let n=new URLSearchParams(t).toString();return e(`/resources${n?`?`+n:``}`)}function n(t){return e(`/resources/generate`,{method:`POST`,body:JSON.stringify(t)})}function r(t){return e(`/resources/${t}`)}export{r as n,t as r,n as t};

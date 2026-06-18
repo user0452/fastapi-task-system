@@ -1,1 +1,0 @@
-import{N as e,S as t,g as n,p as r}from"./index-BEpqqEPo.js";var i={class:`loading-state`},a={__name:`LoadingState`,props:{text:{type:String,default:`加载中...`}},setup(a){return(o,s)=>(t(),n(`div`,i,[s[0]||=r(`div`,{class:`loading-spinner`},null,-1),r(`span`,null,e(a.text),1)]))}};export{a as t};
