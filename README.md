@@ -1,221 +1,103 @@
-# 基于大模型与 RAG 的个性化学习资源生成与学习规划智能体系统
+# A3 学习 AI
 
-本项目面向“中国软件杯 A3 赛道”学习智能体场景，构建一个可演示、可交互、可闭环的个性化学习工作台。系统通过学生画像、课程知识库 RAG、多工具聊天 Agent、学习资源生成、练习评估和任务跟踪，完成从“学习需求输入”到“学习反馈改进”的完整链路。
+面向多课程学习的 AI 工作台。每门课程拥有独立的会话、长期记忆、资料索引、知识结构、练习与掌握度；聊天 Agent 可以自主选择只读工具，破坏性操作由 LangGraph Human-in-the-loop 中断并在用户确认后从持久化检查点恢复。
 
-当前分支：`feature/a3-competition`
+## 主要能力
 
-## 项目背景
+- V1 Cookie 认证：HttpOnly Cookie、登录限流、统一失败提示、用户状态校验和令牌撤销。
+- 真流式聊天：模型 token 增量传输、有界并发和队列、超时、断连取消及前端 `AbortController`。
+- Agentic RAG：持久化课程级 FAISS 候选索引、关键词倒排召回、融合重排、邻接证据、章节目录和完整章节读取。
+- 分层知识提取：章节 map、全文 reduce、topic/concept/skill/example 层级及带原始片段证据的关系。
+- 上下文管理：明确 token 预算、增量滚动摘要、语义长期记忆和最近消息分层装配。
+- 可靠异步任务：资料处理 job、原子 claim、lease、heartbeat、重试、worker owner 和启动恢复。
+- 学习闭环：诊断、练习、LLM 事务外评估、幂等 attempt、掌握度和后续计划调整。
+- 可观测性：JSON 日志、请求 ID，以及 HTTP、数据库、LLM、工具和资料任务指标。
 
-高校课程学习中，学生常见问题包括资料分散、复习路径不清晰、练习反馈滞后和个性化支持不足。本系统将大模型能力与课程资料 RAG 检索结合，让学生通过自然语言向 AI 学习助手提出需求，自动生成学习资源包、练习题、学习计划和外部学习资源推荐，并通过答题评估形成薄弱点和复习建议。
-
-## A3 赛道对应关系
-
-- 个性化学习：学生画像驱动资源难度、任务节奏和反馈建议。
-- 课程知识库：支持 txt、md、docx、文本型 PDF 和手动文本资料，构建 RAG 检索片段。
-- 学习资源生成：基于课程名、知识点、画像和 RAG 命中内容生成资源包。
-- 智能体调度：聊天 Agent 统一识别意图并调用多个后端工具。
-- 学习闭环：资源生成、练习作答、效果评估、学习计划导入任务中心。
-
-## 核心功能
-
-- 用户注册、登录、JWT Bearer Token 鉴权和多用户数据隔离
-- 学生画像生成与读取
-- 课程资料上传、文本解析、RAG 分块和检索
-- 个性化学习资源包生成
-- 练习题生成、在线作答和学习效果评估
-- 学习计划生成与任务中心导入
-- Tavily 外部视频、文章、文档、练习资源搜索
-- AI 学习助手聊天页，支持流式输出和结构化资源卡片
-- 首页数据看板，展示课程资料、学习资源、题集、评估和任务数量
-
-## 技术架构
+## 目录
 
 ```text
-Vue 3 工作台
-  |
-  |  登录、画像、资料、聊天、题集、评估、任务
-  v
-FastAPI 后端 API
-  |
-  |-- Orchestrator Agent：理解自然语言需求，规划工具调用
-  |-- Resource Agent：生成学习资源包
-  |-- Quiz Agent：生成练习题
-  |-- Planner Agent：生成学习计划
-  |-- Evaluation Agent：评估答题效果
-  |
-  |-- RAG Service：资料分块、embedding、FAISS 检索
-  |-- External Resource Service：Tavily 联网搜索
-  v
-MySQL 数据库
+app/
+  api/v1/                 V1 API 聚合
+  core/                   配置、数据库、迁移、认证响应、日志、指标
+  integrations/           LLM、Embedding、FAISS、文件与文档解析
+  jobs/                   持久化资料任务 worker
+  modules/                account/auth/courses/materials/learning/agent/resources
+frontend/src/
+  features/               当前产品页面与组件
+  api/                    仅调用 /api/v1
+  stores/                 Cookie 认证状态和课程状态
+sql/migrations/           增量迁移 SQL
+tests/                    后端回归测试
+scripts/verify_all.ps1    完整本地验收
 ```
 
-## 后端技术栈
+根目录的 `routers/`、`agents/` 和 `services/` 仅用于旧客户端迁移。生产环境默认不注册这些路由；设置 `ENABLE_LEGACY_ROUTES=true` 才会临时启用。
 
-- Python 3.13
-- FastAPI / Uvicorn
-- MySQL / PyMySQL
-- Pydantic
-- python-jose / passlib
-- LangChain / langchain-openai
-- sentence-transformers
-- FAISS
-- python-docx / pypdf / python-multipart
+## 本地启动
 
-## 前端技术栈
+要求 Python 3.13、Node.js 20+、MySQL 8.x 和 `uv`。
 
-- Vue 3
-- Vite
-- Pinia
-- Vue Router
-- lucide-vue-next
-- 原子化工作台样式与响应式布局
+```powershell
+Copy-Item .env.example .env
+uv sync --dev
+Set-Location frontend
+npm install
+Set-Location ..
+.venv\Scripts\python.exe -m app.core.migrations
+```
 
-## AI / Agent / RAG 流程
+后端：
 
-1. 用户上传课程资料或手动录入资料。
-2. 后端解析文本并构建 `course_material_chunks`。
-3. 聊天 Agent 读取学生画像和最近对话历史。
-4. Orchestrator Agent 输出结构化计划：`intent`、`tools`、`tool_args`。
-5. 后端按计划调用资源、题集、计划、外部资源等工具。
-6. 工具结果以聊天气泡下的结构化卡片展示。
-7. 用户点击题集作答，Evaluation Agent 输出总分、等级、薄弱点、建议和每题反馈。
-8. 用户将学习计划导入任务中心，形成可跟踪学习任务。
+```powershell
+.venv\Scripts\python.exe -m uvicorn main:app --reload --host 127.0.0.1 --port 8010
+```
 
-## 环境变量
+前端：
 
-复制 `.env.example` 为 `.env`，按本地环境填写：
+```powershell
+Set-Location frontend
+$env:VITE_API_TARGET='http://127.0.0.1:8010'
+npm run dev -- --host 127.0.0.1 --port 5175
+```
+
+访问 `http://127.0.0.1:5175/#/today`。健康检查为 `/health/live`、`/health/ready`，Prometheus 指标为 `/metrics`。
+
+## 关键配置
 
 ```env
+APP_ENV=development
+ENABLE_LEGACY_ROUTES=true
 DATABASE_HOST=127.0.0.1
 DATABASE_PORT=3306
 DATABASE_USER=root
 DATABASE_PASSWORD=your_password
 DATABASE_NAME=task_db2
-
-SECRET_KEY=your_secret_key
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_HOURS=2
+SECRET_KEY=replace-with-a-long-random-secret
 
 DEEPSEEK_API_KEY=your_api_key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
-
-TAVILY_API_KEY=your_tavily_api_key
+DEEPSEEK_MODEL=your-model
+LLM_TIMEOUT_SECONDS=30
+LLM_MAX_RETRIES=2
 ```
 
-## 启动方式
+自动化或离线演示可使用 `A3_MOCK_LLM=true` 和 `A3_MOCK_EMBEDDING=true`。生产环境必须使用足够长的随机 `SECRET_KEY`，保持 `ENABLE_LEGACY_ROUTES=false`，并通过 HTTPS 提供服务。
 
-初始化数据库：
+## 资料限制
 
-```bash
-mysql -u root -p < sql/init.sql
-```
-
-启动后端：
-
-```bash
-uv sync
-uv run uvicorn main:app --reload
-```
-
-或使用 `requirements.txt`：
-
-```bash
-pip install -r requirements.txt
-uvicorn main:app --reload
-```
-
-访问地址：
-
-- 系统入口：`http://127.0.0.1:8000/`
-- Vue 静态构建页：`http://127.0.0.1:8000/static/vue/index.html`
-- Swagger：`http://127.0.0.1:8000/docs`
-
-前端开发模式：
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-默认地址：`http://127.0.0.1:5173`
-
-## 演示流程
-
-1. 注册或登录。
-2. 生成学生画像。
-3. 上传或手动录入课程资料。
-4. 为课程资料构建 RAG 索引。
-5. 进入 AI 学习助手，输入自然语言学习需求。
-6. 检查助手气泡下是否出现学习资源包、练习题、学习计划、外部资源卡片。
-7. 点击练习题卡片进入作答。
-8. 填写至少一道题答案并提交评估。
-9. 查看总分、掌握等级、薄弱点、学习建议和每题反馈。
-10. 将学习计划导入任务中心。
-11. 回到首页检查数据看板是否更新。
-
-## 推荐演示数据
-
-推荐演示课程：
-
-```text
-软件测试-A3内部课
-```
-
-推荐知识点：
-
-```text
-等价类划分
-```
-
-推荐学生画像文本：
-
-```text
-我是软件工程专业学生，正在学习软件测试课程。我的基础一般，希望通过图文讲解、案例、练习题和阶段性学习计划掌握黑盒测试、等价类划分和边界值分析。
-```
-
-推荐课程资料文本：
-
-```text
-青瓷等价类法是本课程内部设计的一种黑盒测试用例设计方法，用来帮助初学者从输入约束中快速识别测试类别。它包含三个核心层次：青层、瓷层和裂层。青层表示完全符合需求说明的有效输入集合；瓷层表示形式上接近合法输入，但容易触发边界或格式问题的输入集合；裂层表示明显非法、异常或高风险输入。对于范围型、长度型、枚举型、格式型输入，都可以按照青层、瓷层、裂层进行划分，并设计对应测试用例。
-```
-
-推荐 AI 助手输入：
-
-```text
-我想学习软件测试-A3内部课里的等价类划分，给我讲解、练习题、三天学习计划，再推荐几个视频和资料。
-```
-
-## 支持的文件类型
-
-- `.txt`
-- `.md`
-- `.docx`
-- 文本型 `.pdf`
-- 手动粘贴文本资料
-
-## 当前限制
-
+- 单文件最大 100MB，支持 TXT、Markdown、文本型 PDF 和 DOCX。
+- 上传按块落盘；解析直接读取路径，不把 100MB 文件整体复制到内存。
+- PDF 限制 2000 页；DOCX 校验文件签名、成员数量和解压后体积，防止压缩炸弹。
 - 扫描版 PDF 暂不支持 OCR。
-- 外部资源搜索依赖 `TAVILY_API_KEY`。
-- RAG embedding 依赖本地 `sentence-transformers` 模型缓存或首次联网下载。
-- 生成质量依赖配置的大模型服务稳定性。
-- 当前演示版重点覆盖学习闭环，不包含班级管理、教师端审核和多模态 OCR。
 
-## 后续可扩展方向
+## 验证
 
-- 增加扫描版 PDF OCR 和图片资料解析。
-- 增加教师端课程资料审核与班级知识库共享。
-- 增加学习进度时间线和任务完成统计。
-- 增加 Agent 工具调用可视化轨迹。
-- 引入更细粒度的知识点掌握度建模。
-- 支持更多搜索源和外部资源质量排序策略。
-
-## 验证命令
-
-```bash
-python -m py_compile main.py models.py routers/agent.py agents/orchestrator_agent.py
-cd frontend
-npm run build
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1
 ```
+
+该脚本执行迁移、编译、Ruff、Mypy、关键路径覆盖率、前端 ESLint/Vitest、生产构建和 Playwright。快速验证可加 `-SkipE2E -SkipCoverage`。
+
+CI 定义在 `.github/workflows/ci.yml`，使用 MySQL 8.4 和锁定依赖运行同一组静态检查、测试和构建。
+
+更多运行细节见 [docs/operations.md](docs/operations.md)，API 状态见 [docs/api-and-states.md](docs/api-and-states.md)，RAG 评测见 [docs/rag-evaluation.md](docs/rag-evaluation.md)。

@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: task_db2
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      APP_ENV: test
+      ENABLE_LEGACY_ROUTES: "true"
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: 3306
+      DATABASE_USER: root
+      DATABASE_PASSWORD: root
+      DATABASE_NAME: task_db2
+      SECRET_KEY: ci-only-secret-key-with-at-least-32-characters
+      A3_MOCK_LLM: "true"
+      A3_MOCK_EMBEDDING: "true"
+      DEEPSEEK_API_KEY: ci-placeholder
+      DEEPSEEK_BASE_URL: https://example.invalid
+      DEEPSEEK_MODEL: ci-placeholder
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.28"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        run: uv sync --locked --dev
+      - name: Apply database migrations
+        run: uv run python -m app.core.migrations
+      - name: Backend lint and type check
+        run: |
+          uv run ruff check app tests
+          uv run mypy app
+      - name: Backend tests and critical coverage
+        run: >-
+          uv run pytest
+          --cov=app.modules.courses.service
+          --cov=app.modules.materials.service
+          --cov=app.modules.learning.service
+          --cov=app.modules.agent.service
+          --cov=app.modules.agent.native_tool_agent
+          --cov=app.modules.agent.router
+          --cov=app.jobs.material_index_job
+          --cov-fail-under=70
+          --cov-report=term-missing
+          -q
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend lint, tests and build
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm run test:run
+          npm run build

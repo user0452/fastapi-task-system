@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from models import UserRegister, UserLogin
-from db import get_conn
+from db import get_cursor
 from utils import success, error, hash_password, verify_password, create_token
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -9,9 +9,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 @router.post("/register")
 def register(user: UserRegister):
-    conn = get_conn()
-    cursor = conn.cursor()
-    try:
+    with get_cursor() as cursor:
         sql = "select * from users where username = %s"
         cursor.execute(sql, (user.username,))
         result = cursor.fetchone()
@@ -23,7 +21,6 @@ def register(user: UserRegister):
             "insert into users (username, password) values (%s, %s)",
             (user.username, hash_password(user.password))
         )
-        conn.commit()
         new_id = cursor.lastrowid
 
         return success(
@@ -33,16 +30,11 @@ def register(user: UserRegister):
                 "username": user.username
             }
         )
-    finally:
-        cursor.close()
-        conn.close()
 
 
 @router.post("/login")
 def login(user: UserLogin):
-    conn = get_conn()
-    cursor = conn.cursor()
-    try:
+    with get_cursor() as cursor:
         sql = "select * from users where username = %s"
         cursor.execute(sql, (user.username,))
         result = cursor.fetchone()
@@ -62,6 +54,3 @@ def login(user: UserLogin):
             data={"token": token},
             message="登录成功"
         )
-    finally:
-        cursor.close()
-        conn.close()

@@ -1,6 +1,6 @@
 from pydantic import ValidationError
 
-from llm_client import get_llm
+from llm_client import invoke_agent_messages
 from langchain_core.messages import HumanMessage,SystemMessage
 import json
 
@@ -9,7 +9,6 @@ from models import StudentProfile
 
 def generate_student_profile(text: str)-> dict:
     "根据用户自然语言描述生成学生画像"
-    llm = get_llm()
     messages = [
         SystemMessage(
             content=(
@@ -30,7 +29,7 @@ def generate_student_profile(text: str)-> dict:
         ),
         HumanMessage(content=text)
     ]
-    result = llm.invoke(messages)
+    result = invoke_agent_messages(messages).message
     content = result.content.strip()
     try:
         data = json.loads(content)

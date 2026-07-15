@@ -1,7 +1,7 @@
 import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
-from llm_client import get_llm
+from llm_client import invoke_agent_messages
 from models import QuizSet
 from services.rag_service import search_similar_chunks
 
@@ -18,12 +18,12 @@ def _strip_json_fence(content: str) -> str:
     return text
 
 
-def _load_quiz_json(content: str, llm) -> dict:
+def _load_quiz_json(content: str) -> dict:
     text = _strip_json_fence(content)
     try:
         return json.loads(text)
     except json.JSONDecodeError as original_error:
-        repair_result = llm.invoke([
+        repair_result = invoke_agent_messages([
             SystemMessage(
                 content=(
                     "你是 JSON 修复器。请把用户给出的内容修复成合法 JSON。\n"
@@ -33,7 +33,7 @@ def _load_quiz_json(content: str, llm) -> dict:
                 )
             ),
             HumanMessage(content=f"需要修复的内容如下：\n{text}")
-        ])
+        ]).message
         repaired = _strip_json_fence(repair_result.content)
         try:
             return json.loads(repaired)
@@ -41,7 +41,6 @@ def _load_quiz_json(content: str, llm) -> dict:
             raise ValueError(f"模型返回的json格式错误：{content}") from original_error
 
 def generate_quiz_set(course_name: str,topic: str,profile:dict|None = None,rag_context:list[dict]|None = None) -> dict:
-    llm = get_llm()
     rag_context_text = "暂无课程资料检索结果"
     if rag_context:
         rag_context_text = "\n\n".join(
@@ -96,10 +95,10 @@ def generate_quiz_set(course_name: str,topic: str,profile:dict|None = None,rag_c
             )
         )
     ]
-    result = llm.invoke(messages)
+    result = invoke_agent_messages(messages).message
     content = result.content.strip()
     try:
-        data = _load_quiz_json(content, llm)
+        data = _load_quiz_json(content)
         quiz_set = QuizSet.model_validate(data)
         return quiz_set.model_dump()
     except ValidationError as e:

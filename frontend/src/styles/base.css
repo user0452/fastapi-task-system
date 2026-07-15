@@ -1,3 +1,6 @@
+/* ===== Material Design 3 基础样式 ===== */
+
+/* Reset */
 * {
   margin: 0;
   padding: 0;
@@ -7,7 +10,7 @@
 html {
   font-size: 16px;
   line-height: 1.5;
-  color: var(--color-text);
+  color: var(--color-on-surface);
   background-color: var(--color-bg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -16,81 +19,144 @@ html {
 
 body {
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
+/* ===== 链接 ===== */
 a {
   color: var(--color-primary);
   text-decoration: none;
+  transition: color var(--duration-short4) var(--ease-standard);
 }
 
 a:hover {
-  text-decoration: underline;
+  color: var(--color-primary-hover);
+  text-decoration: none;
 }
 
+/* ===== 按钮基础 ===== */
 button {
   cursor: pointer;
   border: none;
   background: none;
   font: inherit;
   color: inherit;
+  position: relative;
+  overflow: hidden;
 }
 
+/* Ripple 效果 */
+button::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s ease, height 0.6s ease, opacity 0.6s ease;
+  opacity: 0;
+}
+
+button:active::after {
+  width: 200%;
+  height: 200%;
+  opacity: 0;
+  transition: 0s;
+}
+
+/* ===== 表单元素 ===== */
 input, textarea, select {
   font: inherit;
   color: inherit;
+  outline: none;
 }
 
+input:focus, textarea:focus, select:focus {
+  outline: none;
+}
+
+/* ===== 图片 ===== */
 img {
   max-width: 100%;
   height: auto;
+  display: block;
 }
 
+/* ===== 标题层级 (M3 Type Scale) ===== */
 h1, h2, h3, h4, h5, h6 {
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--color-text);
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--color-on-surface);
+  letter-spacing: 0;
 }
 
 h1 {
-  font-size: var(--text-2xl);
+  font-size: var(--text-headline-lg);
+  font-weight: 400;
 }
 
 h2 {
-  font-size: var(--text-xl);
+  font-size: var(--text-headline-md);
+  font-weight: 400;
 }
 
 h3 {
-  font-size: var(--text-lg);
+  font-size: var(--text-headline-sm);
+  font-weight: 400;
 }
 
 h4 {
-  font-size: var(--text-base);
+  font-size: var(--text-title-lg);
+  font-weight: 500;
 }
 
+h5 {
+  font-size: var(--text-title-md);
+  font-weight: 500;
+}
+
+h6 {
+  font-size: var(--text-title-sm);
+  font-weight: 500;
+}
+
+/* ===== 段落 ===== */
 p {
   margin-bottom: 1rem;
-  color: var(--color-text-soft);
+  color: var(--color-on-surface-variant);
+  font-size: var(--text-body-md);
+  line-height: 1.5;
 }
 
+p:last-child {
+  margin-bottom: 0;
+}
+
+/* ===== 列表 ===== */
 ul, ol {
   padding-left: 1.5rem;
 }
 
 li {
   margin-bottom: 0.5rem;
-  color: var(--color-text-soft);
+  color: var(--color-on-surface-variant);
+  font-size: var(--text-body-md);
 }
 
+/* ===== 代码 ===== */
 code {
   font-family: var(--font-mono);
   font-size: 0.875em;
-  background-color: var(--color-surface-strong);
+  background-color: var(--color-surface-container);
   padding: 0.2em 0.4em;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
 }
 
 pre {
-  background-color: var(--color-surface-strong);
+  background-color: var(--color-surface-container);
   padding: 1rem;
   border-radius: var(--radius-md);
   overflow-x: auto;
@@ -102,6 +168,7 @@ pre code {
   padding: 0;
 }
 
+/* ===== 表格 ===== */
 table {
   width: 100%;
   border-collapse: collapse;
@@ -111,28 +178,210 @@ table {
 th, td {
   padding: 0.75rem;
   text-align: left;
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 1px solid var(--color-outline-variant);
 }
 
 th {
-  font-weight: 600;
-  background-color: var(--color-surface-strong);
-  font-size: var(--text-sm);
-  color: var(--color-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-weight: 500;
+  background-color: var(--color-surface-container);
+  font-size: var(--text-label-lg);
+  color: var(--color-on-surface-variant);
+  text-transform: none;
+  letter-spacing: 0.01em;
 }
 
+/* ===== 工具类 ===== */
 .hidden {
   display: none !important;
 }
 
-::selection {
-  background-color: var(--color-primary-light);
-  color: var(--color-primary);
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
+/* ===== 选中样式 ===== */
+::selection {
+  background-color: var(--color-primary-container);
+  color: var(--color-on-primary-container);
+}
+
+/* ===== 焦点样式 (M3 Focus Ring) ===== */
 :focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 3px solid var(--color-primary);
   outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* ===== 全局动画基础 ===== */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 流体动画 */
+@keyframes fluidPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+@keyframes fluidBounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes ripple {
+  0% {
+    transform: scale(0);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(4);
+    opacity: 0;
+  }
+}
+
+/* ===== 页面过渡 ===== */
+.page-enter-active {
+  animation: fadeInUp var(--duration-medium2) var(--ease-emphasized-decelerate);
+}
+
+.page-leave-active {
+  animation: fadeIn var(--duration-short4) var(--ease-emphasized-accelerate) reverse;
+}
+
+/* ===== 组件过渡 ===== */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity var(--duration-medium1) var(--ease-standard);
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: all var(--duration-medium2) var(--ease-emphasized);
+}
+
+.slide-up-enter-from {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.scale-enter-active,
+.scale-leave-active {
+  transition: all var(--duration-medium1) var(--ease-spring);
+}
+
+.scale-enter-from,
+.scale-leave-to {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+/* ===== 滚动条样式 (Material) ===== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-outline-variant);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-outline);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-outline-variant) transparent;
 }

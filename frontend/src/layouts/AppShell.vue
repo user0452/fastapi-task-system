@@ -1,299 +1,229 @@
 <script setup>
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Menu, Sparkles, X } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
-import { useWorkspaceStore } from '../stores/workspace'
-import { useRouter } from 'vue-router'
-import { computed, onMounted } from 'vue'
-import {
-  LayoutDashboard,
-  UserRound,
-  BookOpen,
-  FileText,
-  PencilLine,
-  CalendarDays,
-  CheckSquare,
-  Bot,
-  History,
-  LogOut,
-  Globe
-} from 'lucide-vue-next'
+import { useCourseStore } from '../stores/course'
+import CourseRail from '../features/workspace/components/CourseRail.vue'
+import { showToast } from '../components/common/toast'
+import { safePostLoginRoute } from '../router/redirect'
+
 
 const auth = useAuthStore()
-const workspace = useWorkspaceStore()
+const courses = useCourseStore()
+const route = useRoute()
 const router = useRouter()
+const railOpen = ref(false)
+const creatorOpen = ref(false)
+const creating = ref(false)
+const form = reactive({ name: '', goal: '', exam_at: '', daily_minutes: 30 })
 
-const navItems = computed(() => [
-  { path: '/overview', label: '总览', icon: LayoutDashboard },
-  { path: '/profile', label: '学生画像', icon: UserRound, status: workspace.profile ? 'done' : 'empty' },
-  { path: '/materials', label: '课程知识库', icon: BookOpen, status: workspace.materialsTotal > 0 ? 'done' : 'empty' },
-  { path: '/resources', label: '学习资源', icon: FileText, status: workspace.resourcesTotal > 0 ? 'done' : 'empty' },
-  { path: '/external-resources', label: '联网搜索', icon: Globe },
-  { path: '/quizzes', label: '练习与评估', icon: PencilLine, status: workspace.quizzesTotal > 0 ? 'done' : 'empty' },
-  { path: '/plans', label: '学习计划', icon: CalendarDays },
-  { path: '/tasks', label: '任务中心', icon: CheckSquare, status: workspace.tasksTotal > 0 ? 'done' : 'empty' },
-  { path: '/agent', label: 'AI 助手', icon: Bot },
-  { path: '/logs', label: '操作日志', icon: History }
-])
+const currentId = computed(() => Number(route.params.courseId || courses.current?.id || 0) || null)
+const routeViewKey = computed(() => `${String(route.name || route.path)}:${route.params.courseId || ''}`)
 
-const currentPath = computed(() => router.currentRoute.value.path)
-
-function handleLogout() {
-  auth.logout()
-  router.push('/login')
+async function selectCourse(courseId) {
+  if (!courseId) return
+  try {
+    await courses.select(courseId)
+  } catch (error) {
+    showToast({ type: 'error', message: error.message })
+  }
 }
 
-onMounted(() => {
-  if (auth.isLoggedIn) {
-    workspace.loadOverview()
+function openCreator() {
+  creatorOpen.value = true
+  railOpen.value = false
+}
+
+function closeCreator() {
+  if (creating.value) return
+  creatorOpen.value = false
+}
+
+async function createCourse() {
+  if (!form.name.trim() || creating.value) return
+  creating.value = true
+  try {
+    const course = await courses.create({
+      name: form.name.trim(),
+      goal: form.goal.trim(),
+      exam_at: form.exam_at || null,
+      daily_minutes: Number(form.daily_minutes) || 30
+    })
+    await courses.select(course.id)
+    Object.assign(form, { name: '', goal: '', exam_at: '', daily_minutes: 30 })
+    creatorOpen.value = false
+    await router.push(`/learn/${course.id}?panel=materials`)
+    showToast({ type: 'success', message: '课程助手已创建' })
+  } catch (error) {
+    showToast({ type: 'error', message: error.message })
+  } finally {
+    creating.value = false
   }
+}
+
+async function logout() {
+  const redirect = safePostLoginRoute(route.fullPath)
+  courses.reset()
+  await auth.logout()
+  await router.push({ path: '/login', query: redirect ? { redirect } : {} })
+}
+
+watch(() => route.params.courseId, courseId => {
+  if (courseId) selectCourse(Number(courseId))
+  railOpen.value = false
+})
+
+onMounted(async () => {
+  await courses.ensureLoaded()
+  if (route.params.courseId) await selectCourse(Number(route.params.courseId))
 })
 </script>
 
 <template>
-  <div class="app-shell">
-    <header class="app-header">
-      <div class="app-brand">
-        <span class="brand-mark">A3</span>
-        <div class="brand-text">
-          <strong>学习工作台</strong>
-        </div>
-      </div>
+  <div class="ai-shell">
+    <div class="desktop-rail">
+      <CourseRail
+        :courses="courses.courses"
+        :current-id="currentId"
+        :username="auth.username"
+        :loading="courses.loading"
+        :error="courses.error"
+        @create="openCreator"
+        @logout="logout"
+      />
+    </div>
 
-      <div class="header-tools">
-        <span class="username">{{ auth.username }}</span>
-        <button type="button" class="btn btn-ghost btn-sm" @click="handleLogout">
-          <LogOut :size="16" />
-          <span>退出</span>
-        </button>
-      </div>
+    <header class="mobile-bar">
+      <button class="mobile-icon" type="button" title="打开课程栏" aria-label="打开课程栏" @click="railOpen = true">
+        <Menu :size="19" />
+      </button>
+      <span><Sparkles :size="15" /> A3 学习 AI</span>
+      <span class="mobile-course">{{ courses.current?.name || '今日总览' }}</span>
     </header>
 
-    <div class="app-body">
-      <nav class="app-sidebar">
-        <div class="nav-list">
-          <router-link
-            v-for="item in navItems"
-            :key="item.path"
-            :to="item.path"
-            class="nav-item"
-            :class="{ active: currentPath === item.path }"
-          >
-            <component :is="item.icon" :size="18" class="nav-icon" />
-            <span class="nav-label">{{ item.label }}</span>
-            <span
-              v-if="item.status"
-              class="nav-status"
-              :class="`nav-status-${item.status}`"
-            ></span>
-          </router-link>
-        </div>
-      </nav>
+    <transition name="rail-slide">
+      <div v-if="railOpen" class="mobile-rail">
+        <CourseRail
+          :courses="courses.courses"
+          :current-id="currentId"
+          :username="auth.username"
+          :loading="courses.loading"
+          :error="courses.error"
+          mobile
+          @create="openCreator"
+          @logout="logout"
+          @close="railOpen = false"
+        />
+      </div>
+    </transition>
+    <button v-if="railOpen" class="rail-scrim" type="button" aria-label="关闭课程栏" @click="railOpen = false"></button>
 
-      <main class="app-main">
-        <router-view />
-      </main>
-    </div>
+    <main class="ai-main">
+      <router-view v-slot="{ Component }">
+        <transition name="workspace-fade" mode="out-in">
+          <component :is="Component" :key="routeViewKey" />
+        </transition>
+      </router-view>
+    </main>
+
+    <Teleport to="body">
+      <div v-if="creatorOpen" class="creator-overlay" @click.self="closeCreator">
+        <section class="course-creator" role="dialog" aria-modal="true" aria-labelledby="course-creator-title">
+          <header>
+            <div>
+              <span>新课程助手</span>
+              <h2 id="course-creator-title">创建一门长期学习的课程</h2>
+            </div>
+            <button type="button" title="关闭" aria-label="关闭" @click="closeCreator"><X :size="19" /></button>
+          </header>
+          <form @submit.prevent="createCourse">
+            <label>
+              <span>课程名称</span>
+              <input v-model="form.name" autofocus maxlength="100" placeholder="例如：软件测试" />
+            </label>
+            <label>
+              <span>学习目标</span>
+              <textarea v-model="form.goal" rows="3" maxlength="500" placeholder="例如：掌握核心测试设计方法并完成考试冲刺"></textarea>
+            </label>
+            <div class="creator-grid">
+              <label>
+                <span>目标日期</span>
+                <input v-model="form.exam_at" type="datetime-local" />
+              </label>
+              <label>
+                <span>每日分钟</span>
+                <input v-model.number="form.daily_minutes" type="number" min="10" max="480" step="5" />
+              </label>
+            </div>
+            <footer>
+              <button class="creator-cancel" type="button" @click="closeCreator">取消</button>
+              <button class="creator-submit" type="submit" :disabled="!form.name.trim() || creating">
+                {{ creating ? '正在创建' : '创建课程助手' }}
+              </button>
+            </footer>
+          </form>
+        </section>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-  background-color: var(--color-bg);
+.ai-shell { min-height: 100dvh; display: grid; grid-template-columns: 236px minmax(0, 1fr); background: #f8f9f7; }
+.desktop-rail { position: fixed; inset: 0 auto 0 0; z-index: 40; width: 236px; }
+.ai-main { grid-column: 2; min-width: 0; min-height: 100dvh; overflow: hidden; }
+.mobile-bar,
+.mobile-rail,
+.rail-scrim { display: none; }
+.workspace-fade-enter-active,
+.workspace-fade-leave-active { transition: opacity 150ms ease, transform 150ms ease; }
+.workspace-fade-enter-from { opacity: 0; transform: translateY(4px); }
+.workspace-fade-leave-to { opacity: 0; transform: translateY(-2px); }
+.creator-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(28, 35, 31, .38); }
+.course-creator { width: min(520px, 100%); overflow: hidden; border: 1px solid #d8dfdb; border-radius: 8px; background: #fff; box-shadow: 0 20px 60px rgba(27, 39, 33, .18); }
+.course-creator > header { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 18px; border-bottom: 1px solid #e0e5e2; }
+.course-creator header span { color: #19705a; font-size: 9px; font-weight: 760; }
+.course-creator h2 { margin-top: 3px; font-size: 16px; font-weight: 740; }
+.course-creator header button { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 6px; color: #66716b; }
+.course-creator header button:hover { background: #edf1ee; }
+.course-creator form { display: grid; gap: 15px; padding: 18px; }
+.course-creator label { display: grid; gap: 6px; }
+.course-creator label > span { color: #58635e; font-size: 10px; font-weight: 720; }
+.course-creator input,
+.course-creator textarea { width: 100%; padding: 10px 11px; border: 1px solid #cbd4cf; border-radius: 6px; background: #fbfcfb; font-size: 12px; }
+.course-creator textarea { resize: vertical; line-height: 1.55; }
+.course-creator input:focus,
+.course-creator textarea:focus { border-color: #287b66; box-shadow: 0 0 0 2px rgba(40, 123, 102, .11); }
+.creator-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(120px, .7fr); gap: 12px; }
+.course-creator footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 3px; }
+.creator-cancel,
+.creator-submit { min-height: 36px; padding: 0 14px; border-radius: 6px; font-size: 11px; font-weight: 730; }
+.creator-cancel { color: #59655f; border: 1px solid #cbd3ce; }
+.creator-submit { color: #fff; background: #176b58; }
+.creator-submit:disabled { opacity: .45; }
+
+@media (max-width: 820px) {
+  .ai-shell { display: block; padding-top: 52px; }
+  .desktop-rail { display: none; }
+  .ai-main { min-height: calc(100dvh - 52px); }
+  .mobile-bar { position: fixed; inset: 0 0 auto; z-index: 45; height: 52px; display: grid; grid-template-columns: 38px auto minmax(0, 1fr); align-items: center; gap: 9px; padding: 0 10px; background: #fff; border-bottom: 1px solid #dce1dd; }
+  .mobile-bar > span { display: inline-flex; align-items: center; gap: 5px; color: #1d5f4e; font-size: 11px; font-weight: 760; white-space: nowrap; }
+  .mobile-bar .mobile-course { overflow: hidden; justify-self: end; color: #727c77; font-size: 9px; text-overflow: ellipsis; }
+  .mobile-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 6px; color: #5e6963; }
+  .mobile-rail { position: fixed; inset: 0 auto 0 0; z-index: 70; display: block; }
+  .mobile-rail :deep(.course-rail) { width: min(290px, 84vw); }
+  .rail-scrim { position: fixed; inset: 0; z-index: 65; display: block; width: 100%; background: rgba(24, 31, 27, .32); }
+  .rail-slide-enter-active,
+  .rail-slide-leave-active { transition: transform 190ms ease; }
+  .rail-slide-enter-from,
+  .rail-slide-leave-to { transform: translateX(-100%); }
 }
 
-.app-header {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  height: 56px;
-  padding: 0 1.25rem;
-  background-color: var(--color-surface);
-  border-bottom: 1px solid var(--color-line);
-}
-
-.app-brand {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  min-width: 0;
-}
-
-.brand-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background-color: var(--color-primary);
-  color: white;
-  font-weight: 700;
-  font-size: 0.75rem;
-  border-radius: var(--radius-sm);
-}
-
-.brand-text strong {
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.header-tools {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-width: 0;
-  flex-shrink: 1;
-}
-
-.username {
-  font-size: 0.8125rem;
-  color: var(--color-text-soft);
-  max-width: 12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.app-body {
-  display: flex;
-  flex: 1;
-}
-
-.app-sidebar {
-  width: 220px;
-  background-color: var(--color-surface);
-  border-right: 1px solid var(--color-line);
-  padding: 0.75rem 0;
-  overflow-y: auto;
-  flex-shrink: 0;
-}
-
-.app-main {
-  flex: 1;
-  padding: 1.5rem;
-  overflow-y: auto;
-  min-width: 0;
-}
-
-.nav-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  padding: 0 0.5rem;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-soft);
-  text-decoration: none;
-  font-size: 0.875rem;
-  font-weight: 500;
-  transition: all 0.15s ease;
-  position: relative;
-}
-
-.nav-item:hover {
-  background-color: rgba(0, 0, 0, 0.04);
-  color: var(--color-text);
-  text-decoration: none;
-}
-
-.nav-item.active {
-  background-color: rgba(37, 92, 79, 0.08);
-  color: var(--color-primary);
-}
-
-.nav-icon {
-  flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.nav-item.active .nav-icon {
-  opacity: 1;
-}
-
-.nav-label {
-  flex: 1;
-  white-space: nowrap;
-}
-
-.nav-status {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.nav-status-done {
-  background-color: var(--color-primary);
-}
-
-.nav-status-empty {
-  background-color: var(--color-line);
-}
-
-@media (max-width: 1024px) {
-  .app-sidebar {
-    width: 180px;
-  }
-}
-
-@media (max-width: 768px) {
-  .app-header {
-    padding: 0 1rem;
-  }
-
-  .brand-text strong {
-    display: block;
-    max-width: 6.5rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .username {
-    max-width: 7.25rem;
-  }
-
-  .app-body {
-    flex-direction: column;
-  }
-
-  .app-sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--color-line);
-    padding: 0.5rem 0;
-  }
-
-  .nav-list {
-    flex-direction: row;
-    overflow-x: auto;
-    padding: 0 0.5rem;
-    gap: 0.25rem;
-  }
-
-  .nav-item {
-    padding: 0.5rem 0.625rem;
-    font-size: 0.8125rem;
-    white-space: nowrap;
-  }
-
-  .nav-status {
-    display: none;
-  }
-
-  .app-main {
-    padding: 1rem;
-  }
+@media (max-width: 520px) {
+  .creator-grid { grid-template-columns: 1fr; }
+  .course-creator footer { flex-direction: column-reverse; }
+  .creator-cancel,
+  .creator-submit { width: 100%; }
 }
 </style>

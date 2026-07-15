@@ -1,74 +1,67 @@
 import json
+from app.integrations.file_storage import read_limited_upload
 from services.document_parser import extract_text_from_document
-from fastapi import APIRouter, Depends,UploadFile,File,Form
-from services.rag_service import split_text_to_chunks,search_similar_chunks
-from db import get_conn
-from models import MaterialCreateRequest,MaterialSearchRequest
+from fastapi import APIRouter, Depends, UploadFile, File, Form
+from services.rag_service import split_text_to_chunks, search_similar_chunks
+from db import get_cursor
+from models import MaterialCreateRequest, MaterialSearchRequest
 from utils import success, error, get_current_user
 
 router = APIRouter(prefix="/materials", tags=["materials"])
+
 
 @router.post("")
 def create_material(request: MaterialCreateRequest, user=Depends(get_current_user)):
     """
     保存当前用户课程资料，第一版只支持手动粘贴文本创建
-    :param request:
-    :param user:
-    :return:
     """
-    conn = get_conn()
-    cursor = conn.cursor()
     try:
-        cursor.execute(
-            """
-            insert into course_materials
-                (user_id,course_name,title,content)
-            values (%s,%s,%s,%s)
-            """,
-            (user["id"],request.course_name,request.title,request.content)
-        )
-        material_id = cursor.lastrowid
-        cursor.execute(
-            """
-            INSERT INTO operation_logs
-                (user_id, action, target_type, target_id, detail)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (
-                user["id"],
-                "A3_UPLOAD_COURSE_MATERIAL",
-                "course_material",
-                material_id,
-                json.dumps(
-                    {
-                        "course_name": request.course_name,
-                        "title": request.title,
-                        "content_length": len(request.content)
-                    },
-                    ensure_ascii=False
+        with get_cursor() as cursor:
+            cursor.execute(
+                """
+                insert into course_materials
+                    (user_id,course_name,title,content)
+                values (%s,%s,%s,%s)
+                """,
+                (user["id"], request.course_name, request.title, request.content)
+            )
+            material_id = cursor.lastrowid
+            cursor.execute(
+                """
+                INSERT INTO operation_logs
+                    (user_id, action, target_type, target_id, detail)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    user["id"],
+                    "A3_UPLOAD_COURSE_MATERIAL",
+                    "course_material",
+                    material_id,
+                    json.dumps(
+                        {
+                            "course_name": request.course_name,
+                            "title": request.title,
+                            "content_length": len(request.content)
+                        },
+                        ensure_ascii=False
+                    )
                 )
             )
-        )
-        conn.commit()
-        return success(
-            data={
-                "id": material_id,
-                "course_name": request.course_name,
-                "title": request.title
-            },
-            message="课程资料保存成功"
-        )
+            return success(
+                data={
+                    "id": material_id,
+                    "course_name": request.course_name,
+                    "title": request.title
+                },
+                message="课程资料保存成功"
+            )
 
     except Exception as e:
-        conn.rollback()
         return error(
             message=f"课程资料保存失败：{str(e)}",
             code=500
         )
 
-    finally:
-        cursor.close()
-        conn.close()
 
 @router.get("")
 def get_materials(
@@ -86,76 +79,70 @@ def get_materials(
     if size > 100:
         return error(message="size 不能大于 100", code=400)
 
-    conn = get_conn()
-    cursor = conn.cursor()
-
     try:
-        offset = (page - 1) * size
+        with get_cursor() as cursor:
+            offset = (page - 1) * size
 
-        if course_name:
-            cursor.execute(
-                """
-                SELECT COUNT(*) AS total
-                FROM course_materials
-                WHERE user_id = %s AND course_name = %s
-                """,
-                (user["id"], course_name)
+            if course_name:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM course_materials
+                    WHERE user_id = %s AND course_name = %s
+                    """,
+                    (user["id"], course_name)
+                )
+                total = cursor.fetchone()["total"]
+
+                cursor.execute(
+                    """
+                    SELECT id, user_id, course_name, title, created_at
+                    FROM course_materials
+                    WHERE user_id = %s AND course_name = %s
+                    ORDER BY id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (user["id"], course_name, size, offset)
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM course_materials
+                    WHERE user_id = %s
+                    """,
+                    (user["id"],)
+                )
+                total = cursor.fetchone()["total"]
+
+                cursor.execute(
+                    """
+                    SELECT id, user_id, course_name, title, created_at
+                    FROM course_materials
+                    WHERE user_id = %s
+                    ORDER BY id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (user["id"], size, offset)
+                )
+
+            items = cursor.fetchall()
+
+            return success(
+                data={
+                    "total": total,
+                    "list": items,
+                    "page": page,
+                    "size": size
+                },
+                message="获取课程资料成功"
             )
-            total = cursor.fetchone()["total"]
-
-            cursor.execute(
-                """
-                SELECT id, user_id, course_name, title, created_at
-                FROM course_materials
-                WHERE user_id = %s AND course_name = %s
-                ORDER BY id DESC
-                LIMIT %s OFFSET %s
-                """,
-                (user["id"], course_name, size, offset)
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT COUNT(*) AS total
-                FROM course_materials
-                WHERE user_id = %s
-                """,
-                (user["id"],)
-            )
-            total = cursor.fetchone()["total"]
-
-            cursor.execute(
-                """
-                SELECT id, user_id, course_name, title, created_at
-                FROM course_materials
-                WHERE user_id = %s
-                ORDER BY id DESC
-                LIMIT %s OFFSET %s
-                """,
-                (user["id"], size, offset)
-            )
-
-        items = cursor.fetchall()
-
-        return success(
-            data={
-                "total": total,
-                "list": items,
-                "page": page,
-                "size": size
-            },
-            message="获取课程资料成功"
-        )
 
     except Exception as e:
         return error(
             message=f"获取课程资料失败：{str(e)}",
             code=500
         )
-
-    finally:
-        cursor.close()
-        conn.close()
 
 
 @router.post("/{material_id}/build-index")
@@ -167,104 +154,94 @@ def build_material_index(
     为某一份课程资料构建 RAG chunks。
     第一版只做文本切分并保存到 course_material_chunks。
     """
-    conn = get_conn()
-    cursor = conn.cursor()
-
     try:
-        cursor.execute(
-            """
-            SELECT id, user_id, course_name, title, content
-            FROM course_materials
-            WHERE id = %s AND user_id = %s
-            """,
-            (
-                material_id,
-                user["id"]
-            )
-        )
-
-        material = cursor.fetchone()
-
-        if material is None:
-            return error(message="课程资料不存在", code=404)
-
-        chunks = split_text_to_chunks(material["content"])
-
-        if not chunks:
-            return error(message="课程资料内容为空，无法构建索引", code=400)
-
-        cursor.execute(
-            """
-            DELETE FROM course_material_chunks
-            WHERE material_id = %s AND user_id = %s
-            """,
-            (
-                material_id,
-                user["id"]
-            )
-        )
-
-        for index, chunk_text in enumerate(chunks):
+        with get_cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO course_material_chunks
-                    (user_id, material_id, course_name, chunk_index, chunk_text)
+                SELECT id, user_id, course_name, title, content
+                FROM course_materials
+                WHERE id = %s AND user_id = %s
+                """,
+                (
+                    material_id,
+                    user["id"]
+                )
+            )
+
+            material = cursor.fetchone()
+
+            if material is None:
+                return error(message="课程资料不存在", code=404)
+
+            chunks = split_text_to_chunks(material["content"])
+
+            if not chunks:
+                return error(message="课程资料内容为空，无法构建索引", code=400)
+
+            cursor.execute(
+                """
+                DELETE FROM course_material_chunks
+                WHERE material_id = %s AND user_id = %s
+                """,
+                (
+                    material_id,
+                    user["id"]
+                )
+            )
+
+            for index, chunk_text in enumerate(chunks):
+                cursor.execute(
+                    """
+                    INSERT INTO course_material_chunks
+                        (user_id, material_id, course_name, chunk_index, chunk_text)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        user["id"],
+                        material_id,
+                        material["course_name"],
+                        index,
+                        chunk_text
+                    )
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO operation_logs
+                    (user_id, action, target_type, target_id, detail)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
                 (
                     user["id"],
+                    "A3_BUILD_MATERIAL_INDEX",
+                    "course_material",
                     material_id,
-                    material["course_name"],
-                    index,
-                    chunk_text
+                    json.dumps(
+                        {
+                            "course_name": material["course_name"],
+                            "title": material["title"],
+                            "chunk_count": len(chunks)
+                        },
+                        ensure_ascii=False
+                    )
                 )
             )
 
-        cursor.execute(
-            """
-            INSERT INTO operation_logs
-                (user_id, action, target_type, target_id, detail)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (
-                user["id"],
-                "A3_BUILD_MATERIAL_INDEX",
-                "course_material",
-                material_id,
-                json.dumps(
-                    {
-                        "course_name": material["course_name"],
-                        "title": material["title"],
-                        "chunk_count": len(chunks)
-                    },
-                    ensure_ascii=False
-                )
+            return success(
+                data={
+                    "material_id": material_id,
+                    "course_name": material["course_name"],
+                    "title": material["title"],
+                    "chunk_count": len(chunks)
+                },
+                message="课程资料索引构建成功"
             )
-        )
-
-        conn.commit()
-
-        return success(
-            data={
-                "material_id": material_id,
-                "course_name": material["course_name"],
-                "title": material["title"],
-                "chunk_count": len(chunks)
-            },
-            message="课程资料索引构建成功"
-        )
 
     except Exception as e:
-        conn.rollback()
         return error(
             message=f"课程资料索引构建失败：{str(e)}",
             code=500
         )
-
-    finally:
-        cursor.close()
-        conn.close()
-
 
 
 @router.post("/rag-search")
@@ -277,61 +254,55 @@ def rag_search_materials(
     从 course_material_chunks 中取出课程资料片段，
     使用 embedding + FAISS 检索与 topic 最相关的片段。
     """
-    conn = get_conn()
-    cursor = conn.cursor()
-
     try:
-        cursor.execute(
-            """
-            SELECT id, user_id, material_id, course_name, chunk_index, chunk_text, created_at
-            FROM course_material_chunks
-            WHERE user_id = %s AND course_name = %s
-            ORDER BY id ASC
-            """,
-            (
-                user["id"],
-                request.course_name
+        with get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, user_id, material_id, course_name, chunk_index, chunk_text, created_at
+                FROM course_material_chunks
+                WHERE user_id = %s AND course_name = %s
+                ORDER BY id ASC
+                """,
+                (
+                    user["id"],
+                    request.course_name
+                )
             )
-        )
 
-        chunks = cursor.fetchall()
+            chunks = cursor.fetchall()
 
-        if not chunks:
+            if not chunks:
+                return success(
+                    data={
+                        "total": 0,
+                        "list": [],
+                        "course_name": request.course_name,
+                        "topic": request.topic
+                    },
+                    message="没有可检索的课程资料片段，请先构建课程资料索引"
+                )
+
+            results = search_similar_chunks(
+                query=request.topic,
+                chunks=chunks,
+                top_k=5
+            )
+
             return success(
                 data={
-                    "total": 0,
-                    "list": [],
+                    "total": len(results),
+                    "list": results,
                     "course_name": request.course_name,
                     "topic": request.topic
                 },
-                message="没有可检索的课程资料片段，请先构建课程资料索引"
+                message="RAG 向量检索成功"
             )
-
-        results = search_similar_chunks(
-            query=request.topic,
-            chunks=chunks,
-            top_k=5
-        )
-
-        return success(
-            data={
-                "total": len(results),
-                "list": results,
-                "course_name": request.course_name,
-                "topic": request.topic
-            },
-            message="RAG 向量检索成功"
-        )
 
     except Exception as e:
         return error(
             message=f"RAG 向量检索失败：{str(e)}",
             code=500
         )
-
-    finally:
-        cursor.close()
-        conn.close()
 
 
 @router.post("/upload")
@@ -345,13 +316,8 @@ async def upload_course_material_file(
     上传课程资料文件，并解析为文本后保存到 course_materials。
     支持 txt、md、pdf、docx。
     """
-    max_file_size = 10 * 1024 * 1024
-
     try:
-        content = await file.read()
-
-        if len(content) > max_file_size:
-            return error(message="文件过大，当前最大支持 10MB", code=400)
+        content = await read_limited_upload(file)
 
         text = extract_text_from_document(
             filename=file.filename,
@@ -364,68 +330,59 @@ async def upload_course_material_file(
     except Exception as e:
         return error(message=f"文件解析失败：{str(e)}", code=500)
 
-    conn = get_conn()
-    cursor = conn.cursor()
-
     try:
-        cursor.execute(
-            """
-            INSERT INTO course_materials
-                (user_id, course_name, title, content)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (
-                user["id"],
-                course_name,
-                title,
-                text
-            )
-        )
-
-        material_id = cursor.lastrowid
-
-        cursor.execute(
-            """
-            INSERT INTO operation_logs
-                (user_id, action, target_type, target_id, detail)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (
-                user["id"],
-                "A3_UPLOAD_COURSE_MATERIAL_FILE",
-                "course_material",
-                material_id,
-                json.dumps(
-                    {
-                        "course_name": course_name,
-                        "title": title,
-                        "filename": file.filename,
-                        "content_type": file.content_type,
-                        "text_length": len(text)
-                    },
-                    ensure_ascii=False
+        with get_cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO course_materials
+                    (user_id, course_name, title, content)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    user["id"],
+                    course_name,
+                    title,
+                    text
                 )
             )
-        )
 
-        conn.commit()
+            material_id = cursor.lastrowid
 
-        return success(
-            data={
-                "id": material_id,
-                "course_name": course_name,
-                "title": title,
-                "filename": file.filename,
-                "text_length": len(text),
-                "content_preview": text[:300]
-            },
-            message="课程资料文件上传并解析成功"
-        )
+            cursor.execute(
+                """
+                INSERT INTO operation_logs
+                    (user_id, action, target_type, target_id, detail)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    user["id"],
+                    "A3_UPLOAD_COURSE_MATERIAL_FILE",
+                    "course_material",
+                    material_id,
+                    json.dumps(
+                        {
+                            "course_name": course_name,
+                            "title": title,
+                            "filename": file.filename,
+                            "content_type": file.content_type,
+                            "text_length": len(text)
+                        },
+                        ensure_ascii=False
+                    )
+                )
+            )
+
+            return success(
+                data={
+                    "id": material_id,
+                    "course_name": course_name,
+                    "title": title,
+                    "filename": file.filename,
+                    "text_length": len(text),
+                    "content_preview": text[:300]
+                },
+                message="课程资料文件上传并解析成功"
+            )
 
     except Exception as e:
-        conn.rollback()
         return error(message=f"保存课程资料失败：{str(e)}", code=500)
-
-    finally:
-        cursor.close()
-        conn.close()

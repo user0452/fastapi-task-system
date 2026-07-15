@@ -29,10 +29,10 @@ npm run dev
 默认访问：
 
 ```text
-http://127.0.0.1:5173
+http://127.0.0.1:5175
 ```
 
-`vite.config.js` 已将 `/users`、`/agent`、`/materials`、`/resources`、`/external-resources` 等接口代理到 `http://127.0.0.1:8000`。
+`vite.config.js` 已将 `/users`、`/agent`、`/materials`、`/resources`、`/external-resources` 等接口代理到 `http://127.0.0.1:8010`。
 
 ## 构建
 
@@ -50,7 +50,7 @@ npm run build
 后端启动后可访问：
 
 ```text
-http://127.0.0.1:8000/static/vue/index.html
+http://127.0.0.1:8010/static/vue/index.html
 ```
 
 ## 页面模块

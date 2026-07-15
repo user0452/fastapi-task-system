@@ -1,5 +1,14 @@
+import { postLoginRouteFromHash } from '../router/redirect'
+
+
+function expireAuth() {
+  const redirect = postLoginRouteFromHash(window.location.hash)
+  window.dispatchEvent(new CustomEvent('auth:expired'))
+  window.location.hash = redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : '/login'
+}
+
+
 export async function request(path, options = {}) {
-  const token = localStorage.getItem('token')
   const headers = { ...(options.headers || {}) }
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
 
@@ -7,12 +16,8 @@ export async function request(path, options = {}) {
     headers['Content-Type'] = 'application/json'
   }
 
-  if (token) {
-    headers.Authorization = `Bearer ${token}`
-  }
-
   try {
-    const response = await fetch(path, { ...options, headers })
+    const response = await fetch(path, { credentials: 'same-origin', ...options, headers })
     const text = await response.text()
     let payload = null
 
@@ -26,10 +31,7 @@ export async function request(path, options = {}) {
 
     if (!response.ok) {
       if (response.status === 401) {
-        localStorage.removeItem('token')
-        localStorage.removeItem('username')
-        window.dispatchEvent(new CustomEvent('auth:expired'))
-        window.location.hash = '/login'
+        expireAuth()
       }
       return {
         code: response.status,

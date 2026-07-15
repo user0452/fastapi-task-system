@@ -118,6 +118,7 @@ class PlanConfirmRequest(BaseModel):
 
 class AgentChatRequest(BaseModel):
     message: str = Field(...,min_length=1,max_length=3000)
+    current_time: Optional[str] = Field(default=None,max_length=64)
 
 class AgentToolPlan(BaseModel):
     reply: str = Field(..., min_length=1)

@@ -1,0 +1,1390 @@
+import hashlib
+import json
+import re
+from datetime import datetime, timedelta, timezone
+from threading import Event
+from time import perf_counter, sleep
+from typing import Callable
+from uuid import uuid4
+
+from langchain_core.messages import AIMessage, AIMessageChunk
+from langgraph.types import Command
+from pymysql.err import OperationalError
+
+from app.core.database import get_cursor
+from app.core.errors import AppError
+from app.core.metrics import inc_counter, observe
+from app.integrations.embedding.service import (
+    EMBEDDING_MODEL_NAME,
+    embed_texts,
+    serialize_embedding,
+)
+from app.integrations.llm.agent_responder import generate_agent_reply
+from app.integrations.llm.agent_runtime import RiskConfirmationMiddleware
+from app.integrations.llm.mysql_checkpointer import get_mysql_checkpointer
+from app.modules.agent import repository
+from app.modules.agent.context_manager import (
+    RECENT_TURNS,
+    build_agent_context,
+    build_rolling_summary,
+    select_relevant_memories,
+)
+from app.modules.agent.native_tool_agent import build_course_tool_agent
+from app.modules.agent.schemas import AgentChatRequest, ChatSessionCreate, CourseAgentMemoryUpsert
+from app.modules.audit.service import record_audit
+from app.modules.courses import repository as course_repository
+from app.modules.learning import repository as learning_repository
+from app.modules.learning.service import (
+    generate_diagnostic,
+    generate_practice,
+    get_course_progress,
+    get_diagnostic,
+    get_study_plan,
+    get_today_learning,
+    get_wrong_answers,
+)
+from app.modules.materials.service import (
+    get_course_evidence_context,
+    list_course_material_outline,
+    read_course_material_section,
+    search_course_materials,
+)
+from app.modules.resources.schemas import ExternalResourceSearchRequest
+from app.modules.resources.service import search_external_resources
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _normalize_native_agent_reply(reply: str) -> str:
+    """Keep internal evidence identifiers and ornamental symbols out of chat prose."""
+    cleaned = re.sub(r"[ \t]*\[chunk_id\s*=\s*\d+\]", "", str(reply or ""), flags=re.IGNORECASE)
+    for symbol in ("⭐", "🌟", "✨", "✅", "⚠️", "⚠", "📌", "😊", "🙂"):
+        cleaned = cleaned.replace(symbol, "")
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned or "处理完成。"
+
+
+def _retry_transaction(callback: Callable, attempts: int = 3):
+    for attempt in range(attempts):
+        try:
+            return callback()
+        except OperationalError as exc:
+            retryable = exc.args and exc.args[0] in {1205, 1213}
+            if not retryable or attempt == attempts - 1:
+                raise
+            sleep(0.02 * (attempt + 1))
+
+
+def _page(page: int, size: int) -> tuple[int, int]:
+    return max(1, page), max(1, min(size, 100))
+
+
+def list_chat_sessions(user_id: int, page: int = 1, size: int = 20) -> dict:
+    page, size = _page(page, size)
+    with get_cursor() as cursor:
+        result = repository.list_sessions(cursor, user_id, page, size)
+        record_audit(
+            user_id,
+            "COURSE_AGENT_SESSIONS_VIEWED",
+            "chat_session",
+            detail={"count": len(result["items"])},
+            cursor=cursor,
+        )
+        return result
+
+
+def create_chat_session(user_id: int, request: ChatSessionCreate) -> dict:
+    with get_cursor() as cursor:
+        course_id = request.course_id
+        course = None
+        if course_id is not None:
+            course = course_repository.get_course(cursor, course_id, user_id)
+            if course is None or course.get("status") == "archived":
+                raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        if course_id is None:
+            course = course_repository.get_current_course(cursor, user_id)
+            course_id = course["id"] if course else None
+        if course is not None:
+            agent = repository.ensure_course_agent(cursor, user_id, course)
+            session = agent["primary_session"]
+            repository.update_session_title(cursor, session["id"], user_id, request.title)
+            session = repository.get_session(cursor, session["id"], user_id)
+            if session is None:
+                raise RuntimeError("primary chat session disappeared while it was being updated")
+            record_audit(
+                user_id,
+                "COURSE_AGENT_OPENED",
+                "course_agent",
+                agent["id"],
+                {"course_id": course_id, "session_id": session["id"]},
+                cursor=cursor,
+            )
+            return session
+        session = repository.create_session(cursor, user_id, None, request.title)
+        record_audit(
+            user_id,
+            "GENERAL_AGENT_SESSION_CREATED",
+            "chat_session",
+            session["id"],
+            cursor=cursor,
+        )
+        return session
+
+
+def get_course_agent_workspace(user_id: int, course_id: int, message_limit: int = 100) -> dict:
+    _, message_limit = _page(1, message_limit)
+    with get_cursor() as cursor:
+        course = course_repository.get_course(cursor, course_id, user_id)
+        if course is None or course.get("status") == "archived":
+            raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        agent = repository.ensure_course_agent(cursor, user_id, course)
+        session = agent.pop("primary_session")
+        messages = repository.list_messages(cursor, user_id, session["id"], None, message_limit)
+        memories = repository.list_course_memories(cursor, agent["id"], user_id)
+        confirmation_ids = [
+            confirmation["id"]
+            for message in messages
+            if isinstance((confirmation := (message.get("tool_calls") or {}).get("confirmation")), dict)
+            and confirmation.get("id")
+        ]
+        statuses = repository.get_action_statuses(cursor, user_id, confirmation_ids)
+        for message in messages:
+            confirmation = (message.get("tool_calls") or {}).get("confirmation")
+            if isinstance(confirmation, dict) and confirmation.get("id") in statuses:
+                confirmation["status"] = statuses[confirmation["id"]]
+        record_audit(
+            user_id,
+            "COURSE_AGENT_WORKSPACE_VIEWED",
+            "course_agent",
+            agent["id"],
+            {"course_id": course_id, "message_count": len(messages)},
+            cursor=cursor,
+        )
+    return {
+        "course": course,
+        "agent": agent,
+        "session": session,
+        "messages": messages,
+        "memories": memories,
+        "capabilities": [
+            "course_qa",
+            "external_video_search",
+            "today_learning",
+            "progress",
+            "study_plan",
+            "practice",
+            "wrong_answers",
+            "diagnostic",
+        ],
+    }
+
+
+def save_course_agent_memory(
+    user_id: int,
+    course_id: int,
+    request: CourseAgentMemoryUpsert,
+) -> dict:
+    with get_cursor() as cursor:
+        course = course_repository.get_course(cursor, course_id, user_id)
+        if course is None or course.get("status") == "archived":
+            raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        agent = repository.ensure_course_agent(cursor, user_id, course)
+    memory_text = json.dumps(request.content, ensure_ascii=False, default=str, sort_keys=True)
+    embedding = embed_texts([memory_text])[0]
+    embedding_hash = hashlib.sha256(
+        f"{EMBEDDING_MODEL_NAME}\0{memory_text}".encode("utf-8")
+    ).hexdigest()
+    with get_cursor() as cursor:
+        memory = repository.upsert_course_memory(
+            cursor,
+            agent["id"],
+            user_id,
+            course_id,
+            request.memory_key,
+            request.memory_type,
+            request.content,
+            embedding_json=serialize_embedding(embedding),
+            embedding_model=EMBEDDING_MODEL_NAME,
+            embedding_hash=embedding_hash,
+        )
+        record_audit(
+            user_id,
+            "COURSE_AGENT_MEMORY_UPDATED",
+            "course_agent_memory",
+            memory["id"],
+            {"course_id": course_id, "memory_key": request.memory_key},
+            cursor=cursor,
+        )
+    return memory
+
+
+def get_chat_session(
+    user_id: int,
+    session_id: int,
+    before_id: int | None = None,
+    size: int = 100,
+) -> dict:
+    _, size = _page(1, size)
+    with get_cursor() as cursor:
+        session = repository.get_session(cursor, session_id, user_id)
+        if session is None or session.get("archived_at") is not None:
+            raise AppError("会话不存在或无访问权限", 404, "CHAT_SESSION_NOT_FOUND")
+        messages = repository.list_messages(cursor, user_id, session_id, before_id, size)
+        confirmation_ids = []
+        for message in messages:
+            tool_calls = message.get("tool_calls") or {}
+            confirmation = tool_calls.get("confirmation")
+            if isinstance(confirmation, dict) and confirmation.get("id"):
+                confirmation_ids.append(confirmation["id"])
+        action_statuses = repository.get_action_statuses(cursor, user_id, confirmation_ids)
+        for message in messages:
+            confirmation = (message.get("tool_calls") or {}).get("confirmation")
+            if isinstance(confirmation, dict) and confirmation.get("id") in action_statuses:
+                confirmation["status"] = action_statuses[confirmation["id"]]
+        record_audit(
+            user_id,
+            "COURSE_AGENT_SESSION_VIEWED",
+            "chat_session",
+            session_id,
+            {"course_id": session.get("course_id"), "message_count": len(messages)},
+            cursor=cursor,
+        )
+    return {"session": session, "messages": messages}
+
+
+def archive_chat_session(user_id: int, session_id: int) -> None:
+    with get_cursor() as cursor:
+        if not repository.archive_session(cursor, session_id, user_id):
+            raise AppError("会话不存在或无访问权限", 404, "CHAT_SESSION_NOT_FOUND")
+        record_audit(user_id, "COURSE_AGENT_SESSION_ARCHIVED", "chat_session", session_id, cursor=cursor)
+
+
+def _classify_intent(message: str) -> tuple[str, str]:
+    compact = re.sub(r"\s+", "", message.lower())
+    if "删除" in compact and "任务" in compact:
+        return "delete_task", "destructive"
+    if any(
+        keyword in compact
+        for keyword in ["给我出", "请出", "出几道题", "考考我", "测试一下", "做几道题"]
+    ):
+        return "generate_practice", "generate"
+    if any(
+        keyword in compact
+        for keyword in ["网上学", "网上找", "视频", "b站", "bilibili", "youtube", "外部资源", "网课"]
+    ):
+        return "search_external_resources", "read"
+    if any(keyword in compact for keyword in ["错题", "做错", "错误记录"]):
+        return "get_wrong_answers", "read"
+    if any(keyword in compact for keyword in ["出题", "道题", "练习题", "考考我", "测试一下", "做几道题"]):
+        return "generate_practice", "generate"
+    if any(keyword in compact for keyword in ["今日学习", "今天学什么", "今日任务"]):
+        return "get_today", "read"
+    if any(keyword in compact for keyword in ["学习进度", "掌握度", "薄弱点"]):
+        return "get_progress", "read"
+    if any(keyword in compact for keyword in ["学习计划", "后续计划", "接下来学", "课程计划"]):
+        return "get_plan", "read"
+    if any(keyword in compact for keyword in ["生成诊断", "诊断题", "入门测试"]):
+        return "generate_diagnostic", "generate"
+    return "course_qa", "read"
+
+
+def _prepare_context(
+    user_id: int,
+    request: AgentChatRequest,
+    intent: str,
+    risk_level: str,
+) -> dict:
+    with get_cursor() as cursor:
+        session = None
+        if request.session_id is not None:
+            session = repository.get_session(cursor, request.session_id, user_id)
+            if session is None or session.get("archived_at") is not None:
+                raise AppError("会话不存在或无访问权限", 404, "CHAT_SESSION_NOT_FOUND")
+
+        course = None
+        requested_course_id = request.course_id or (session.get("course_id") if session else None)
+        if requested_course_id is not None:
+            course = course_repository.get_course(cursor, requested_course_id, user_id)
+            if course is None or course.get("status") == "archived":
+                raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        else:
+            course = course_repository.get_current_course(cursor, user_id)
+
+        if session and course and session.get("course_id") != course["id"]:
+            raise AppError(
+                "该会话属于另一门课程，不能跨课程复用上下文",
+                409,
+                "SESSION_COURSE_MISMATCH",
+            )
+
+        agent = None
+        memories = []
+        if course is not None:
+            agent = repository.ensure_course_agent(cursor, user_id, course)
+            if session is None:
+                session = agent["primary_session"]
+            memories = repository.list_course_memories(cursor, agent["id"], user_id)
+        elif session is None:
+            session = repository.create_session(cursor, user_id, None, request.message[:28])
+
+        user_message = repository.add_message(
+            cursor,
+            user_id,
+            session["id"],
+            course["id"] if course else None,
+            "user",
+            request.message,
+            client_time_hint=request.current_time,
+        )
+        repository.update_session_title_if_default(
+            cursor,
+            session["id"],
+            user_id,
+            request.message[:28],
+        )
+        profile = repository.load_profile(cursor, user_id)
+        if memories:
+            profile = {
+                "profile": profile or {},
+                "course_memories": [
+                    {
+                        "key": memory["memory_key"],
+                        "type": memory["memory_type"],
+                        "content": memory["content"],
+                    }
+                    for memory in memories
+                ],
+            }
+        mastery = (
+            learning_repository.list_points_with_mastery(cursor, user_id, course["id"])
+            if course
+            else []
+        )
+        recent_messages = repository.list_messages(cursor, user_id, session["id"], None, 12)
+        run = None
+        if agent is not None:
+            if course is None:
+                raise RuntimeError("course agent exists without an owning course")
+            run = repository.create_agent_run(
+                cursor,
+                request_id=str(uuid4()),
+                agent_id=agent["id"],
+                user_id=user_id,
+                course_id=course["id"],
+                session_id=session["id"],
+                user_message_id=user_message["id"],
+                intent=intent,
+                risk_level=risk_level,
+                input_summary=request.message,
+                started_at=_utc_now(),
+            )
+            repository.touch_course_agent(cursor, agent["id"], user_id)
+
+    if memories:
+        selected_memories = select_relevant_memories(request.message, memories)
+        base_profile = profile.get("profile", {}) if isinstance(profile, dict) and "profile" in profile else (profile or {})
+        profile = {
+            "profile": base_profile,
+            "course_memories": [
+                {
+                    "key": memory["memory_key"],
+                    "type": memory["memory_type"],
+                    "content": memory["content"],
+                }
+                for memory in selected_memories
+            ],
+        }
+        memories = selected_memories
+    prompt_context, context_report = build_agent_context(
+        course=course,
+        profile=profile,
+        mastery=mastery,
+        memories=memories,
+        messages=recent_messages,
+        conversation_summary=agent.get("conversation_summary") if agent else None,
+    )
+    return {
+        "session": session,
+        "course": course,
+        "profile": profile,
+        "mastery": mastery,
+        "recent_messages": recent_messages,
+        "user_message": user_message,
+        "agent": agent,
+        "memories": memories,
+        "prompt_context": prompt_context,
+        "context_report": context_report,
+        "run": run,
+    }
+
+
+def _execute_tool(
+    user_id: int,
+    context: dict,
+    tool_name: str,
+    risk_level: str,
+    arguments: dict,
+    callback: Callable,
+):
+    run = context.get("run")
+    if run is None:
+        started = perf_counter()
+        try:
+            result = callback()
+        except Exception:
+            inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="failed")
+            raise
+        else:
+            inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="completed")
+            return result
+        finally:
+            observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
+    started_at = _utc_now()
+    started = perf_counter()
+    with get_cursor() as cursor:
+        tool_call_id = repository.create_tool_call(
+            cursor,
+            run_id=run["id"],
+            user_id=user_id,
+            course_id=context["course"]["id"],
+            tool_name=tool_name,
+            risk_level=risk_level,
+            arguments=arguments,
+            idempotency_key=f"{run['request_id']}:{tool_name}:{uuid4().hex[:12]}",
+            started_at=started_at,
+        )
+    try:
+        result = callback()
+    except Exception as exc:
+        inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="failed")
+        observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
+        with get_cursor() as cursor:
+            repository.finish_tool_call(
+                cursor,
+                tool_call_id,
+                user_id,
+                status="failed",
+                error_message=str(exc),
+                completed_at=_utc_now(),
+            )
+        raise
+    with get_cursor() as cursor:
+        repository.finish_tool_call(
+            cursor,
+            tool_call_id,
+            user_id,
+            status="completed",
+            result=result,
+            completed_at=_utc_now(),
+        )
+    inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="completed")
+    observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
+    return result
+
+
+def _fail_run(user_id: int, context: dict, exc: Exception) -> None:
+    run = context.get("run")
+    if run is None:
+        return
+    with get_cursor() as cursor:
+        repository.finish_agent_run(
+            cursor,
+            run["id"],
+            user_id,
+            status="failed",
+            error_message=str(exc),
+            completed_at=_utc_now(),
+        )
+
+
+def _match_knowledge_point_id(message: str, mastery: list[dict]) -> int | None:
+    explicit = re.search(r"知识点\s*[#：:]?\s*(\d+)", message)
+    if explicit:
+        point_id = int(explicit.group(1))
+        if any(point["id"] == point_id for point in mastery):
+            return point_id
+    compact = re.sub(r"\s+", "", message.lower())
+    matches = [
+        point
+        for point in mastery
+        if re.sub(r"\s+", "", point.get("name", "").lower()) in compact
+    ]
+    if matches:
+        return max(matches, key=lambda point: len(point.get("name", "")))["id"]
+    return mastery[0]["id"] if mastery else None
+
+
+def _persist_assistant(
+    user_id: int,
+    context: dict,
+    reply: str,
+    intent: str,
+    risk_level: str,
+    citations: list[dict],
+    cards: list[dict],
+    resources: list[dict],
+    actions: list[dict],
+    confirmation: dict | None,
+    context_report: dict | None = None,
+    complete_run: bool = True,
+) -> dict:
+    course = context["course"]
+    tool_calls = {
+        "intent": intent,
+        "risk_level": risk_level,
+        "cards": cards,
+        "resources": resources,
+        "actions": actions,
+        "confirmation": confirmation,
+        "context": context_report,
+    }
+    server_time_utc = _utc_now().isoformat(timespec="milliseconds") + "Z"
+    with get_cursor() as cursor:
+        # Keep the same lock order as _prepare_context: agent before session.
+        if context.get("agent"):
+            repository.touch_course_agent(cursor, context["agent"]["id"], user_id)
+        message = repository.add_message(
+            cursor,
+            user_id,
+            context["session"]["id"],
+            course["id"] if course else None,
+            "assistant",
+            reply,
+            tool_calls=tool_calls,
+            sources=citations,
+        )
+        repository.add_audit_log(
+            cursor,
+            user_id,
+            "AGENT_CHAT_V1",
+            "chat_session",
+            context["session"]["id"],
+            {
+                "intent": intent,
+                "risk_level": risk_level,
+                "course_id": course["id"] if course else None,
+                "citation_count": len(citations),
+                "resource_count": len(resources),
+                "agent_run_id": context["run"]["id"] if context.get("run") else None,
+                "confirmation_id": confirmation.get("id") if confirmation else None,
+                "client_time_hint": context["user_message"].get("client_time_hint"),
+                "server_time_utc": server_time_utc,
+            },
+        )
+        if context.get("run"):
+            if complete_run:
+                repository.finish_agent_run(
+                    cursor,
+                    context["run"]["id"],
+                    user_id,
+                    status="completed",
+                    assistant_message_id=message["id"],
+                    output_summary=reply,
+                    completed_at=_utc_now(),
+                )
+            else:
+                repository.pause_agent_run(
+                    cursor,
+                    context["run"]["id"],
+                    user_id,
+                    assistant_message_id=message["id"],
+                    output_summary=reply,
+                )
+        if context.get("agent"):
+            current_agent = repository.get_course_agent(
+                cursor, context["course"]["id"], user_id
+            )
+            unsummarized = repository.list_messages_after(
+                cursor,
+                user_id,
+                context["session"]["id"],
+                current_agent.get("last_summarized_message_id") if current_agent else None,
+            )
+            summarizable = unsummarized[:-RECENT_TURNS]
+            if summarizable:
+                repository.update_conversation_summary(
+                    cursor,
+                    context["agent"]["id"],
+                    user_id,
+                    build_rolling_summary(
+                        current_agent.get("conversation_summary") if current_agent else None,
+                        summarizable,
+                    ),
+                    int(summarizable[-1]["id"]),
+                )
+    return message
+
+
+def _request_task_deletion(user_id: int, context: dict, message: str) -> tuple[str, dict | None]:
+    matches = re.findall(r"\d+", message)
+    if not matches:
+        return "请提供要删除的任务 ID。删除操作会在你再次确认后执行。", None
+    task_id = int(matches[0])
+    now = _utc_now()
+    with get_cursor() as cursor:
+        task = repository.get_task(cursor, task_id, user_id)
+        if task is None:
+            return f"没有找到任务 #{task_id}，或该任务不属于你。", None
+        blocked = RiskConfirmationMiddleware({"delete_task": "destructive"}).intercept(
+            "delete_task",
+            {"task_id": task_id, "task_title": task["title"]},
+        )
+        if blocked is None:
+            raise AppError("风险操作未被确认中间件拦截", 500, "RISK_MIDDLEWARE_BYPASSED")
+        action = repository.create_action_request(
+            cursor,
+            user_id,
+            context["session"]["id"],
+            context["course"]["id"] if context["course"] else None,
+            blocked.tool_name,
+            blocked.arguments,
+            uuid4().hex,
+            now + timedelta(minutes=10),
+            now,
+        )
+    confirmation = {
+        "id": action["id"],
+        "tool_name": action["tool_name"],
+        "risk_level": action["risk_level"],
+        "summary": f"删除任务“{task['title']}”",
+        "expires_at": action["expires_at"],
+        "status": "pending",
+    }
+    return f"删除任务“{task['title']}”需要二次确认。确认前数据库不会发生删除。", confirmation
+
+
+def run_agent_chat(
+    user_id: int,
+    request: AgentChatRequest,
+    reply_provider: Callable = generate_agent_reply,
+    search_provider: Callable = search_course_materials,
+    external_search_provider: Callable = search_external_resources,
+) -> dict:
+    intent, risk_level = _classify_intent(request.message)
+    context = _retry_transaction(
+        lambda: _prepare_context(user_id, request, intent, risk_level)
+    )
+    course = context["course"]
+    citations: list[dict] = []
+    cards: list[dict] = []
+    resources: list[dict] = []
+    actions: list[dict] = []
+    confirmation = None
+
+    try:
+        if intent == "delete_task":
+            reply, confirmation = _execute_tool(
+                user_id,
+                context,
+                "request_task_deletion",
+                "destructive",
+                {"message": request.message[:200]},
+                lambda: _request_task_deletion(user_id, context, request.message),
+            )
+        elif intent == "get_today":
+            if course is None:
+                reply = "请先选择一门课程，再查看今日学习。"
+                actions.append({"type": "navigate", "label": "选择课程", "to": "/courses"})
+            else:
+                today = _execute_tool(
+                    user_id,
+                    context,
+                    "get_today_learning",
+                    "read",
+                    {"course_id": course["id"]},
+                    lambda: get_today_learning(user_id, course["id"]),
+                )
+                cards.append({"type": "today", "data": today})
+                reply = "已在对话中加载今日学习单元。" if today else "今天没有待完成的学习单元。"
+                actions.append(
+                    {
+                        "type": "open_panel",
+                        "panel": "plan",
+                        "label": "查看课程计划",
+                        "to": "/today",
+                    }
+                )
+        elif intent == "get_progress":
+            if course is None:
+                reply = "请先选择一门课程，再查看学习进度。"
+                actions.append({"type": "navigate", "label": "选择课程", "to": "/courses"})
+            else:
+                progress = _execute_tool(
+                    user_id,
+                    context,
+                    "get_course_progress",
+                    "read",
+                    {"course_id": course["id"]},
+                    lambda: get_course_progress(user_id, course["id"]),
+                )
+                cards.append({"type": "progress", "data": progress})
+                reply = f"《{course['name']}》已完成 {progress['completion_rate']:.1f}% 的计划。"
+                actions.append(
+                    {
+                        "type": "open_panel",
+                        "panel": "overview",
+                        "label": "查看完整进度",
+                        "to": "/progress",
+                    }
+                )
+        elif intent == "get_plan":
+            if course is None:
+                reply = "请先选择一门课程，再查看学习计划。"
+                actions.append({"type": "navigate", "label": "选择课程", "to": "/courses"})
+            else:
+                plan = _execute_tool(
+                    user_id,
+                    context,
+                    "get_study_plan",
+                    "read",
+                    {"course_id": course["id"]},
+                    lambda: get_study_plan(user_id, course["id"]),
+                )
+                cards.append({"type": "plan", "data": plan})
+                reply = "已加载这门课的完整计划。" if plan else "这门课还没有学习计划，可以先完成诊断。"
+                actions.append({"type": "open_panel", "panel": "plan", "label": "打开计划面板"})
+        elif intent == "get_wrong_answers":
+            if course is None:
+                reply = "请先选择一门课程，再查看错题。"
+                actions.append({"type": "navigate", "label": "选择课程", "to": "/courses"})
+            else:
+                wrong = _execute_tool(
+                    user_id,
+                    context,
+                    "get_wrong_answers",
+                    "read",
+                    {"course_id": course["id"]},
+                    lambda: get_wrong_answers(user_id, course["id"]),
+                )
+                cards.append(
+                    {
+                        "type": "wrong_answers",
+                        "data": {"total": wrong["total"], "items": wrong["items"][:3]},
+                    }
+                )
+                reply = f"当前共记录 {wrong['total']} 道错题。" if wrong["total"] else "目前还没有错题记录。"
+                actions.append({"type": "open_panel", "panel": "wrong", "label": "查看全部错题"})
+        elif intent == "generate_practice":
+            if course is None:
+                reply = "请先选择一门课程，再生成针对性练习。"
+                actions.append({"type": "navigate", "label": "选择课程", "to": "/courses"})
+            else:
+                point_id = _match_knowledge_point_id(request.message, context["mastery"])
+                practice = _execute_tool(
+                    user_id,
+                    context,
+                    "generate_practice",
+                    "generate",
+                    {
+                        "course_id": course["id"],
+                        "knowledge_point_id": point_id,
+                        "question_count": 3,
+                    },
+                    lambda: generate_practice(user_id, course["id"], 3, point_id, "medium"),
+                )
+                cards.append({"type": "practice", "data": practice})
+                reply = "已生成 3 道针对性练习。直接在下方作答，提交后会更新掌握度和后续计划。"
+                actions.append({"type": "open_panel", "panel": "practice", "label": "查看做题记录"})
+        elif intent == "generate_diagnostic":
+            if course is None:
+                reply = "请先选择课程并完成资料处理，再生成诊断题。"
+                actions.append({"type": "navigate", "label": "选择课程", "to": "/courses"})
+            else:
+                with get_cursor() as cursor:
+                    quiz_id = repository.get_latest_diagnostic_id(cursor, user_id, course["id"])
+                diagnostic = _execute_tool(
+                    user_id,
+                    context,
+                    "get_or_generate_diagnostic",
+                    "generate",
+                    {"course_id": course["id"], "existing_quiz_id": quiz_id},
+                    lambda: get_diagnostic(user_id, quiz_id)
+                    if quiz_id
+                    else generate_diagnostic(user_id, course["id"]),
+                )
+                cards.append({"type": "diagnostic", "data": diagnostic, "reused": quiz_id is not None})
+                if diagnostic.get("submitted"):
+                    reply = "这门课程已经完成诊断，可以直接开始今日学习。"
+                    actions.append(
+                        {"type": "open_panel", "panel": "plan", "label": "查看今日学习", "to": "/today"}
+                    )
+                else:
+                    reply = "已找到现有诊断题，可以继续作答。" if quiz_id else "已生成课程诊断题。"
+                    actions.append(
+                        {
+                            "type": "open_panel",
+                            "panel": "practice",
+                            "label": "开始诊断",
+                            "to": "/courses?tab=diagnostic",
+                        }
+                    )
+        elif intent == "search_external_resources":
+            if course is None:
+                reply = "请先选择一门课程，我才能根据课程知识点筛选外部视频。"
+                actions.append({"type": "navigate", "label": "选择课程", "to": "/courses"})
+            else:
+                try:
+                    search_result = _execute_tool(
+                        user_id,
+                        context,
+                        "search_course_knowledge",
+                        "read",
+                        {"course_id": course["id"], "query": request.message, "top_k": 5},
+                        lambda: search_provider(user_id, course["id"], request.message, 5),
+                    )
+                    citations = search_result.get("citations", [])
+                except Exception:
+                    citations = []
+                external_result = _execute_tool(
+                    user_id,
+                    context,
+                    "search_external_videos",
+                    "read",
+                    {"course_id": course["id"], "topic": request.message, "max_results": 4},
+                    lambda: external_search_provider(
+                        user_id,
+                        course["id"],
+                        ExternalResourceSearchRequest(topic=request.message, max_results=4),
+                    ),
+                )
+                resources = external_result.get("resources", [])
+                reply = reply_provider(
+                    request.message,
+                    course,
+                    context["profile"],
+                    context["mastery"],
+                    context["recent_messages"],
+                    citations,
+                    request.current_time,
+                )
+                if resources:
+                    reply = f"{reply}\n\n我筛选了 {len(resources)} 个与本课知识点相关的外部视频，放在回答下方。"
+                else:
+                    reply = f"{reply}\n\n{external_result.get('warning') or '外部视频暂时没有返回结果。'}"
+                actions.append({"type": "open_panel", "panel": "materials", "label": "查看收藏资源"})
+        else:
+            if course is not None:
+                try:
+                    search_result = _execute_tool(
+                        user_id,
+                        context,
+                        "search_course_knowledge",
+                        "read",
+                        {"course_id": course["id"], "query": request.message, "top_k": 5},
+                        lambda: search_provider(user_id, course["id"], request.message, 5),
+                    )
+                    citations = search_result.get("citations", [])
+                except Exception:
+                    citations = []
+            reply = reply_provider(
+                request.message,
+                course,
+                context["profile"],
+                context["mastery"],
+                context["recent_messages"],
+                citations,
+                request.current_time,
+            )
+    except Exception as exc:
+        _fail_run(user_id, context, exc)
+        raise
+
+    assistant_message = _retry_transaction(
+        lambda: _persist_assistant(
+            user_id,
+            context,
+            reply,
+            intent,
+            risk_level,
+            citations,
+            cards,
+            resources,
+            actions,
+            confirmation,
+            context.get("context_report"),
+        )
+    )
+    return {
+        "session": {
+            **context["session"],
+            "course_id": course["id"] if course else None,
+        },
+        "course": course,
+        "agent": context.get("agent"),
+        "message": assistant_message,
+        "reply": reply,
+        "intent": intent,
+        "risk_level": risk_level,
+        "citations": citations,
+        "cards": cards,
+        "resources": resources,
+        "actions": actions,
+        "confirmation": confirmation,
+        "current_time": request.current_time,
+        "run_id": context["run"]["id"] if context.get("run") else None,
+    }
+
+
+def decide_action(user_id: int, action_id: int, confirmed: bool) -> dict:
+    with get_cursor() as cursor:
+        existing = repository.get_action_request(cursor, action_id, user_id)
+    if existing and existing.get("checkpoint"):
+        return _decide_durable_action(user_id, action_id, confirmed)
+
+    now = _utc_now()
+    expired = False
+    outcome = None
+    with get_cursor() as cursor:
+        action = repository.get_action_request(cursor, action_id, user_id, for_update=True)
+        if action is None:
+            raise AppError("确认请求不存在或无访问权限", 404, "ACTION_NOT_FOUND")
+        if action["status"] == "executed":
+            return {"action": action, "result": action["result"], "idempotent": True}
+        if action["status"] != "pending":
+            raise AppError("确认请求已失效", 409, "ACTION_NOT_PENDING")
+        if action["expires_at"] < now:
+            repository.set_action_status(cursor, action_id, "expired")
+            expired = True
+        elif not confirmed:
+            repository.set_action_status(cursor, action_id, "cancelled")
+            repository.add_audit_log(
+                cursor,
+                user_id,
+                "AGENT_ACTION_CANCELLED",
+                action["tool_name"],
+                action_id,
+                {"server_time_utc": now.isoformat() + "Z"},
+            )
+            repository.add_message(
+                cursor,
+                user_id,
+                action["session_id"],
+                action.get("course_id"),
+                "assistant",
+                "已取消该操作，数据没有发生变化。",
+                tool_calls={"intent": action["tool_name"], "action_status": "cancelled"},
+            )
+            outcome = {"action_id": action_id, "status": "cancelled"}
+        else:
+            if action["tool_name"] == "delete_task":
+                task_id = int(action["payload"]["task_id"])
+                deleted = repository.delete_task(cursor, task_id, user_id)
+                result = {"task_id": task_id, "deleted": deleted}
+                target_type = "task"
+                target_id = task_id
+                reply = "任务已删除。" if deleted else "任务已经不存在，无需重复删除。"
+            else:
+                raise AppError("不支持的受控工具", 400, "UNSUPPORTED_AGENT_TOOL")
+
+            repository.set_action_status(cursor, action_id, "executed", result)
+            repository.add_audit_log(
+                cursor,
+                user_id,
+                "AGENT_ACTION_EXECUTED",
+                target_type,
+                target_id,
+                {
+                    "action_request_id": action_id,
+                    "tool_name": action["tool_name"],
+                    "result": result,
+                    "server_time_utc": now.isoformat() + "Z",
+                },
+            )
+            repository.add_message(
+                cursor,
+                user_id,
+                action["session_id"],
+                action.get("course_id"),
+                "assistant",
+                reply,
+                tool_calls={"intent": action["tool_name"], "action_result": result},
+            )
+            outcome = {"action_id": action_id, "status": "executed", "result": result}
+
+    if expired:
+        raise AppError("确认请求已过期", 409, "ACTION_EXPIRED")
+    if outcome is None:
+        raise RuntimeError("action decision finished without an outcome")
+    return outcome
+
+
+def _native_delete_task(user_id: int, task_id: int) -> bool:
+    with get_cursor() as cursor:
+        return repository.delete_task(cursor, task_id, user_id)
+
+
+def _native_latest_diagnostic_id(user_id: int, course_id: int) -> int | None:
+    with get_cursor() as cursor:
+        return repository.get_latest_diagnostic_id(cursor, user_id, course_id)
+
+
+def _load_native_resume_context(user_id: int, action: dict) -> dict:
+    checkpoint = action.get("checkpoint") or {}
+    run_id = checkpoint.get("run_id")
+    if not run_id:
+        raise AppError("确认请求缺少图运行检查点", 409, "ACTION_CHECKPOINT_MISSING")
+    with get_cursor() as cursor:
+        run = repository.get_agent_run(cursor, int(run_id), user_id)
+        if run is None:
+            raise AppError("原 Agent 运行不存在", 404, "AGENT_RUN_NOT_FOUND")
+        if run["session_id"] != action["session_id"] or run["course_id"] != action["course_id"]:
+            raise AppError("确认请求与原 Agent 运行不匹配", 409, "ACTION_CHECKPOINT_MISMATCH")
+        session = repository.get_session(cursor, run["session_id"], user_id)
+        course = course_repository.get_course(cursor, run["course_id"], user_id)
+        agent = repository.get_course_agent(cursor, run["course_id"], user_id)
+        user_message = repository.get_message(cursor, run["user_message_id"], user_id)
+        if session is None or course is None or agent is None or user_message is None:
+            raise AppError("原 Agent 上下文已不可用", 409, "AGENT_CONTEXT_UNAVAILABLE")
+        memories = repository.list_course_memories(cursor, agent["id"], user_id)
+        profile = repository.load_profile(cursor, user_id)
+        if memories:
+            profile = {
+                "profile": profile or {},
+                "course_memories": [
+                    {
+                        "key": item["memory_key"],
+                        "type": item["memory_type"],
+                        "content": item["content"],
+                    }
+                    for item in memories
+                ],
+            }
+        mastery = learning_repository.list_points_with_mastery(cursor, user_id, course["id"])
+        recent_messages = repository.list_messages(cursor, user_id, session["id"], None, 12)
+    memories = select_relevant_memories(action["tool_name"], memories)
+    if isinstance(profile, dict) and "course_memories" in profile:
+        profile["course_memories"] = [
+            {
+                "key": memory["memory_key"],
+                "type": memory["memory_type"],
+                "content": memory["content"],
+            }
+            for memory in memories
+        ]
+    prompt_context, context_report = build_agent_context(
+        course=course,
+        profile=profile,
+        mastery=mastery,
+        memories=memories,
+        messages=recent_messages,
+        conversation_summary=agent.get("conversation_summary"),
+    )
+    return {
+        "session": session,
+        "course": course,
+        "profile": profile,
+        "mastery": mastery,
+        "recent_messages": recent_messages,
+        "user_message": user_message,
+        "agent": agent,
+        "memories": memories,
+        "prompt_context": prompt_context,
+        "context_report": context_report,
+        "run": run,
+    }
+
+
+def _native_confirmation(
+    user_id: int,
+    context: dict,
+    action_request: dict,
+    graph_config: dict,
+) -> tuple[str, dict | None]:
+    """Persist a HumanInTheLoop interruption for the existing confirmation UI."""
+    if action_request.get("name") != "delete_task":
+        return "该工具需要确认后才能继续。", None
+    arguments = action_request.get("args") or {}
+    try:
+        task_id = int(arguments["task_id"])
+    except (KeyError, TypeError, ValueError):
+        return "删除操作缺少有效的任务 ID。", None
+    with get_cursor() as cursor:
+        task = repository.get_task(cursor, task_id, user_id)
+        if task is None:
+            return f"没有找到任务 #{task_id}，或该任务不属于你。", None
+        now = _utc_now()
+        action = repository.create_action_request(
+            cursor,
+            user_id,
+            context["session"]["id"],
+            context["course"]["id"] if context.get("course") else None,
+            "delete_task",
+            {"task_id": task_id, "task_title": task["title"], "tool_call_id": action_request.get("id")},
+            uuid4().hex,
+            now + timedelta(minutes=10),
+            now,
+            checkpoint={
+                "thread_id": graph_config["configurable"]["thread_id"],
+                "checkpoint_ns": graph_config["configurable"].get("checkpoint_ns", ""),
+                "run_id": context["run"]["id"],
+                "request_id": context["run"]["request_id"],
+                "tool_call_id": action_request.get("id"),
+            },
+        )
+    confirmation = {
+        "id": action["id"],
+        "tool_name": action["tool_name"],
+        "risk_level": action["risk_level"],
+        "summary": f"删除任务“{task['title']}”",
+        "expires_at": action["expires_at"],
+        "status": "pending",
+    }
+    return f"删除任务“{task['title']}”需要二次确认。确认前不会执行工具。", confirmation
+
+
+def _build_native_agent(user_id: int, context: dict):
+    return build_course_tool_agent(
+        user_id=user_id,
+        context=context,
+        run_tool=lambda name, risk, args, callback: _execute_tool(
+            user_id, context, name, risk, args, callback
+        ),
+        get_today=get_today_learning,
+        get_progress=get_course_progress,
+        get_plan=get_study_plan,
+        get_wrong_answers=get_wrong_answers,
+        generate_practice=generate_practice,
+        generate_diagnostic=generate_diagnostic,
+        get_diagnostic=get_diagnostic,
+        get_latest_diagnostic_id=_native_latest_diagnostic_id,
+        search_materials=search_course_materials,
+        read_material_evidence=get_course_evidence_context,
+        list_material_outline=list_course_material_outline,
+        read_material_section=read_course_material_section,
+        search_external=search_external_resources,
+        delete_owned_task=_native_delete_task,
+        checkpointer=get_mysql_checkpointer(),
+    )
+
+
+def _resume_native_action(user_id: int, action: dict, confirmed: bool) -> dict:
+    context = _load_native_resume_context(user_id, action)
+    agent, artifacts = _build_native_agent(user_id, context)
+    checkpoint = action["checkpoint"]
+    config = {
+        "configurable": {
+            "thread_id": checkpoint["thread_id"],
+            "checkpoint_ns": checkpoint.get("checkpoint_ns", ""),
+        },
+        "recursion_limit": 18,
+    }
+    decision = {"type": "approve" if confirmed else "reject"}
+    if not confirmed:
+        decision["message"] = "用户取消了该风险操作，未执行工具。"
+    state = agent.invoke(Command(resume={"decisions": [decision]}), config=config)
+    if state.get("__interrupt__"):
+        raise AppError("风险操作恢复后再次中断", 409, "ACTION_RESUME_INTERRUPTED")
+    reply = next(
+        (
+            str(message.content or "").strip()
+            for message in reversed(state.get("messages", []))
+            if isinstance(message, AIMessage) and message.content
+        ),
+        "操作已执行。" if confirmed else "已取消该操作。",
+    )
+    reply = _normalize_native_agent_reply(reply)
+    message = _persist_assistant(
+        user_id,
+        context,
+        reply,
+        "native_tool_agent_resume",
+        "destructive",
+        artifacts.citations,
+        artifacts.cards,
+        artifacts.resources,
+        artifacts.actions,
+        None,
+        context.get("context_report"),
+    )
+    result = None
+    if confirmed and action["tool_name"] == "delete_task":
+        task_id = int(action["payload"]["task_id"])
+        with get_cursor() as cursor:
+            result = {
+                "task_id": task_id,
+                "deleted": repository.get_task(cursor, task_id, user_id) is None,
+            }
+    return {"reply": reply, "message": message, "result": result}
+
+
+def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dict:
+    now = _utc_now()
+    expired = False
+    with get_cursor() as cursor:
+        action = repository.get_action_request(cursor, action_id, user_id, for_update=True)
+        if action is None:
+            raise AppError("确认请求不存在或无访问权限", 404, "ACTION_NOT_FOUND")
+        if action["status"] in {"executed", "cancelled"}:
+            return {
+                "action": action,
+                "status": action["status"],
+                "result": action["result"],
+                "idempotent": True,
+            }
+        if action["status"] == "resuming":
+            raise AppError("确认请求正在执行", 409, "ACTION_IN_PROGRESS")
+        if action["status"] != "pending":
+            raise AppError("确认请求已失效", 409, "ACTION_NOT_PENDING")
+        if action["expires_at"] < now:
+            repository.set_action_status(cursor, action_id, "expired")
+            expired = True
+        else:
+            repository.claim_action_resume(cursor, action_id)
+    if expired:
+        raise AppError("确认请求已过期", 409, "ACTION_EXPIRED")
+
+    try:
+        resumed = _resume_native_action(user_id, action, confirmed)
+    except Exception:
+        with get_cursor() as cursor:
+            repository.reset_action_pending(cursor, action_id)
+        raise
+
+    status = "executed" if confirmed else "cancelled"
+    with get_cursor() as cursor:
+        current = repository.get_action_request(cursor, action_id, user_id, for_update=True)
+        if current is None:
+            raise AppError("确认请求不存在", 404, "ACTION_NOT_FOUND")
+        if current["status"] in {"executed", "cancelled"}:
+            return {
+                "action": current,
+                "status": current["status"],
+                "result": current["result"],
+                "idempotent": True,
+            }
+        if current["status"] != "resuming":
+            raise AppError("确认请求状态冲突", 409, "ACTION_STATE_CONFLICT")
+        repository.set_action_status(cursor, action_id, status, resumed["result"])
+        repository.add_audit_log(
+            cursor,
+            user_id,
+            "AGENT_ACTION_EXECUTED" if confirmed else "AGENT_ACTION_CANCELLED",
+            action["tool_name"],
+            action_id,
+            {
+                "action_request_id": action_id,
+                "tool_name": action["tool_name"],
+                "result": resumed["result"],
+                "graph_thread_id": action["checkpoint"]["thread_id"],
+                "server_time_utc": now.isoformat() + "Z",
+            },
+        )
+    return {
+        "action_id": action_id,
+        "status": status,
+        "result": resumed["result"],
+        "reply": resumed["reply"],
+        "message": resumed["message"],
+    }
+
+
+def run_native_tool_agent_chat(
+    user_id: int,
+    request: AgentChatRequest,
+    on_delta: Callable[[str], None] | None = None,
+    cancel_event: Event | None = None,
+) -> dict:
+    """Run the v1 course agent using native model tool calls, not JSON plans."""
+    context = _retry_transaction(
+        lambda: _prepare_context(user_id, request, "native_tool_agent", "mixed")
+    )
+    course = context.get("course")
+    artifacts = None
+    confirmation = None
+    llm_started = perf_counter()
+    llm_status = "failed"
+    inc_counter(
+        "a3_llm_tokens_total",
+        max(1, (len(request.message) + 3) // 4),
+        direction="input",
+        mode="native_tool_agent",
+    )
+    try:
+        agent, artifacts = _build_native_agent(user_id, context)
+        config = {
+            "configurable": {"thread_id": f"course-agent-{context['run']['request_id']}"},
+            "recursion_limit": 18,
+        }
+        if on_delta is None:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError("客户端已取消生成")
+            state = agent.invoke({"messages": [("user", request.message)]}, config=config)
+        else:
+            for chunk, _metadata in agent.stream(
+                {"messages": [("user", request.message)]},
+                config=config,
+                stream_mode="messages",
+            ):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RuntimeError("客户端已取消生成")
+                if isinstance(chunk, AIMessageChunk) and isinstance(chunk.content, str) and chunk.content:
+                    on_delta(chunk.content)
+            snapshot = agent.get_state(config)
+            state = dict(snapshot.values)
+            if snapshot.interrupts:
+                state["__interrupt__"] = snapshot.interrupts
+        interrupts = state.get("__interrupt__") or []
+        if interrupts:
+            interrupt_value = getattr(interrupts[0], "value", {}) or {}
+            pending = (interrupt_value.get("action_requests") or [{}])[0]
+            reply, confirmation = _native_confirmation(user_id, context, pending, config)
+        else:
+            reply = next(
+                (
+                    str(message.content or "").strip()
+                    for message in reversed(state.get("messages", []))
+                    if isinstance(message, AIMessage) and message.content
+                ),
+                "处理完成。",
+            )
+        reply = _normalize_native_agent_reply(reply)
+        inc_counter(
+            "a3_llm_tokens_total",
+            max(1, (len(reply) + 3) // 4),
+            direction="output",
+            mode="native_tool_agent",
+        )
+        message = _persist_assistant(
+            user_id,
+            context,
+            reply,
+            "native_tool_agent",
+            "destructive" if confirmation else "mixed",
+            artifacts.citations if artifacts else [],
+            artifacts.cards if artifacts else [],
+            artifacts.resources if artifacts else [],
+            artifacts.actions if artifacts else [],
+            confirmation,
+            context.get("context_report"),
+            complete_run=confirmation is None,
+        )
+        llm_status = "completed"
+        return {
+            "session": {**context["session"], "course_id": course["id"] if course else None},
+            "course": course,
+            "agent": context.get("agent"),
+            "message": message,
+            "reply": reply,
+            "intent": "native_tool_agent",
+            "risk_level": "destructive" if confirmation else "mixed",
+            "citations": artifacts.citations if artifacts else [],
+            "cards": artifacts.cards if artifacts else [],
+            "resources": artifacts.resources if artifacts else [],
+            "actions": artifacts.actions if artifacts else [],
+            "confirmation": confirmation,
+            "current_time": request.current_time,
+            "run_id": context["run"]["id"] if context.get("run") else None,
+        }
+    except Exception as exc:
+        _fail_run(user_id, context, exc)
+        raise
+    finally:
+        inc_counter("a3_llm_requests_total", mode="native_tool_agent", status=llm_status)
+        observe(
+            "a3_llm_request_duration_seconds",
+            perf_counter() - llm_started,
+            mode="native_tool_agent",
+        )

@@ -1,60 +1,106 @@
+/* ===== Material Design 3 设计 Token ===== */
 :root {
-  /* 背景色 */
-  --color-bg: #f5f3ee;
-  --color-surface: #ffffff;
-  --color-card: #ffffff;
-  --color-surface-strong: #fafaf8;
-  --color-surface-hover: #f8f7f5;
-
-  /* 边框 */
-  --color-line: rgba(0, 0, 0, 0.08);
-  --color-line-strong: rgba(0, 0, 0, 0.12);
-
-  /* 文本层级 */
-  --color-text: #1a1a1a;
-  --color-text-soft: #4a4a4a;
-  --color-muted: #8a8a8a;
-
-  /* 主色 */
+  /* === 色彩系统 (M3) === */
   --color-primary: #1a6b5a;
   --color-primary-hover: #155a4b;
-  --color-primary-light: rgba(26, 107, 90, 0.08);
+  --color-primary-light: #a0f0d0;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #a0f0d0;
+  --color-on-primary-container: #002115;
 
-  /* 强调色 */
-  --color-accent: #c53030;
-  --color-accent-light: rgba(197, 48, 48, 0.08);
+  --color-secondary: #4a635c;
+  --color-secondary-container: #cce8df;
+  --color-on-secondary-container: #06201a;
+
+  --color-tertiary: #406377;
+  --color-tertiary-container: #c3e8ff;
+  --color-on-tertiary-container: #001e2e;
+
+  --color-error: #ba1a1a;
+  --color-error-container: #ffdad6;
+  --color-on-error: #ffffff;
+  --color-on-error-container: #410002;
+
+  /* 表面色 */
+  --color-surface: #fbfdf9;
+  --color-surface-dim: #dce5df;
+  --color-surface-bright: #fbfdf9;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f6f9f4;
+  --color-surface-container: #f0f3ee;
+  --color-surface-container-high: #eaeee8;
+  --color-surface-container-highest: #e4e8e3;
+
+  --color-on-surface: #191c1b;
+  --color-on-surface-variant: #3f4945;
+  --color-outline: #6f7975;
+  --color-outline-variant: #bfc9c4;
 
   /* 状态色 */
-  --color-success: #22c55e;
-  --color-success-light: rgba(34, 197, 94, 0.08);
-  --color-warning: #f59e0b;
-  --color-warning-light: rgba(245, 158, 11, 0.08);
-  --color-info: #3b82f6;
-  --color-info-light: rgba(59, 130, 246, 0.08);
+  --color-success: #006d3b;
+  --color-success-container: #95f7b8;
+  --color-warning: #7c5800;
+  --color-warning-container: #ffdea3;
+  --color-info: #0061a4;
+  --color-info-container: #d2e4ff;
 
-  /* 圆角 */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  /* 背景 */
+  --color-bg: #fbfdf9;
+  --color-surface: #ffffff;
+  --color-card: #ffffff;
+  --color-surface-strong: #f0f3ee;
+  --color-surface-hover: #eaeee8;
 
-  /* 阴影 */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.08);
+  /* 边框 */
+  --color-line: #c4cec8;
+  --color-line-strong: #8a9490;
 
-  /* 字体 */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  /* 文本层级 */
+  --color-text: #191c1b;
+  --color-text-soft: #3f4945;
+  --color-muted: #6f7975;
 
-  /* 字号 */
-  --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-base: 0.875rem;
-  --text-lg: 1rem;
-  --text-xl: 1.125rem;
-  --text-2xl: 1.375rem;
+  /* === 圆角系统 (M3 Shape) === */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 28px;
+  --radius-full: 9999px;
 
-  /* 间距 */
+  /* === 阴影系统 (M3 Elevation) === */
+  --shadow-none: 0 0 0 rgba(0, 0, 0, 0);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px 1px rgba(0, 0, 0, 0.15);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px 2px rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 4px 8px 3px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 6px 10px 4px rgba(0, 0, 0, 0.15), 0 2px 3px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 8px 12px 6px rgba(0, 0, 0, 0.15), 0 4px 4px rgba(0, 0, 0, 0.3);
+
+  /* === 字体系统 (M3 Type Scale) === */
+  --font-sans: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'Roboto Mono', 'SF Mono', Consolas, monospace;
+
+  --text-display-lg: 3.5625rem;
+  --text-display-md: 2.8125rem;
+  --text-display-sm: 2.25rem;
+
+  --text-headline-lg: 2rem;
+  --text-headline-md: 1.75rem;
+  --text-headline-sm: 1.5rem;
+
+  --text-title-lg: 1.375rem;
+  --text-title-md: 1rem;
+  --text-title-sm: 0.875rem;
+
+  --text-body-lg: 1rem;
+  --text-body-md: 0.875rem;
+  --text-body-sm: 0.75rem;
+
+  --text-label-lg: 0.875rem;
+  --text-label-md: 0.75rem;
+  --text-label-sm: 0.6875rem;
+
+  /* === 间距系统 === */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -62,4 +108,34 @@
   --space-5: 1.25rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* === 动画曲线 (M3 Motion) === */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-standard-decelerate: cubic-bezier(0, 0, 0, 1);
+  --ease-standard-accelerate: cubic-bezier(0.3, 0, 1, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --duration-short1: 50ms;
+  --duration-short2: 100ms;
+  --duration-short3: 150ms;
+  --duration-short4: 200ms;
+  --duration-medium1: 250ms;
+  --duration-medium2: 300ms;
+  --duration-medium3: 350ms;
+  --duration-medium4: 400ms;
+  --duration-long1: 450ms;
+  --duration-long2: 500ms;
+  --duration-long3: 550ms;
+  --duration-long4: 600ms;
+
+  /* === 状态层 (State Layers) === */
+  --state-hover: rgba(26, 107, 90, 0.08);
+  --state-focus: rgba(26, 107, 90, 0.12);
+  --state-pressed: rgba(26, 107, 90, 0.16);
+  --state-dragged: rgba(26, 107, 90, 0.20);
 }

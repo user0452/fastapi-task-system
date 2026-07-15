@@ -1,19 +1,19 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
+import bcrypt
 from fastapi import Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import jwt, JWTError
-from passlib.context import CryptContext
-import os
-from dotenv import load_dotenv
-load_dotenv()
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
 
-SECRET_KEY = os.getenv("SECRET_KEY","dev_secret_key")
-ALGORITHM = os.getenv("ALGORITHM","HS256")
-ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "2"))
+from app.core.config import get_settings
+from app.core.errors import ApiJSONResponse, error_payload
+
+_settings = get_settings()
+SECRET_KEY = _settings.secret_key
+ALGORITHM = _settings.algorithm
+ACCESS_TOKEN_EXPIRE_HOURS = _settings.access_token_expire_hours
 security = HTTPBearer()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def is_valid_status(status: str) -> bool:
@@ -33,11 +33,7 @@ def success(data=None, message="success"):
 
 
 def error(message="error", code: int = 400):
-    return {
-        "code": code,
-        "message": message,
-        "data": None
-    }
+    return ApiJSONResponse(error_payload(message, code), status_code=code)
 
 
 def create_token(data: dict):
@@ -73,12 +69,17 @@ def require_current_user(
     return payload
 
 
-def hash_password(password: str):
-    return pwd_context.hash(password)
+def hash_password(password: str) -> str:
+    pwd_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
 
 
-def verify_password(plain_password: str, hashed_password: str):
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(
+        plain_password.encode('utf-8'),
+        hashed_password.encode('utf-8')
+    )
 
 
 def get_owned_task(cursor, task_id: int, user_id: int):
@@ -127,3 +128,7 @@ def parse_command(text: str):
         }
 
     return None
+
+
+# Keep old imports pointing at the single v1 authentication dependency.
+from app.modules.auth.dependencies import get_current_user as get_current_user  # noqa: E402,F811

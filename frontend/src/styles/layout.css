@@ -1,26 +1,50 @@
+/* ===== Material Design 3 布局系统 ===== */
+
+/* ===== 页面头部 (Top App Bar) ===== */
 .page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 1.5rem;
+  padding: 0.5rem 0;
+  min-height: 64px;
 }
 
 .page-header h1 {
-  font-size: 1.5rem;
-  font-weight: 600;
+  font-size: var(--text-headline-sm);
+  font-weight: 400;
+  color: var(--color-on-surface);
 }
 
 .page-header-actions {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.5rem;
+  align-items: center;
 }
 
+/* ===== 卡片布局 ===== */
 .card {
-  background-color: var(--color-surface);
-  border: 1px solid var(--color-line);
+  background-color: var(--color-surface-container-low);
   border-radius: var(--radius-md);
-  padding: 1.25rem;
-  box-shadow: var(--shadow-soft);
+  padding: 1rem;
+  transition: all var(--duration-medium1) var(--ease-standard);
+}
+
+.card-elevated {
+  box-shadow: var(--shadow-xs);
+}
+
+.card-elevated:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.card-filled {
+  background-color: var(--color-surface-container-highest);
+}
+
+.card-outlined {
+  border: 1px solid var(--color-outline-variant);
+  background-color: var(--color-surface);
 }
 
 .card-header {
@@ -28,11 +52,14 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-outline-variant);
 }
 
 .card-header h3 {
-  font-size: 1.125rem;
-  font-weight: 600;
+  font-size: var(--text-title-lg);
+  font-weight: 500;
+  color: var(--color-on-surface);
 }
 
 .card-body {
@@ -42,12 +69,15 @@
 .card-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 0.75rem;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-outline-variant);
 }
 
+/* ===== 网格系统 ===== */
 .grid {
   display: grid;
-  gap: 1.5rem;
+  gap: 1rem;
 }
 
 .grid-2 {
@@ -62,9 +92,17 @@
   grid-template-columns: repeat(4, 1fr);
 }
 
+.grid-6 {
+  grid-template-columns: repeat(6, 1fr);
+}
+
+/* 响应式网格 */
 @media (max-width: 1199px) {
   .grid-4 {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .grid-6 {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
@@ -72,12 +110,278 @@
   .grid-3 {
     grid-template-columns: repeat(2, 1fr);
   }
+  .grid-6 {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 @media (max-width: 639px) {
   .grid-2,
   .grid-3,
-  .grid-4 {
+  .grid-4,
+  .grid-6 {
     grid-template-columns: 1fr;
   }
+}
+
+/* ===== 弹性布局工具 ===== */
+.flex {
+  display: flex;
+}
+
+.flex-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.items-start {
+  align-items: flex-start;
+}
+
+.items-end {
+  align-items: flex-end;
+}
+
+.justify-center {
+  justify-content: center;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+.justify-end {
+  justify-content: flex-end;
+}
+
+.gap-1 { gap: 0.25rem; }
+.gap-2 { gap: 0.5rem; }
+.gap-3 { gap: 0.75rem; }
+.gap-4 { gap: 1rem; }
+.gap-6 { gap: 1.5rem; }
+.gap-8 { gap: 2rem; }
+
+/* ===== 间距工具 ===== */
+.m-1 { margin: 0.25rem; }
+.m-2 { margin: 0.5rem; }
+.m-3 { margin: 0.75rem; }
+.m-4 { margin: 1rem; }
+.m-6 { margin: 1.5rem; }
+
+.mt-1 { margin-top: 0.25rem; }
+.mt-2 { margin-top: 0.5rem; }
+.mt-3 { margin-top: 0.75rem; }
+.mt-4 { margin-top: 1rem; }
+.mt-6 { margin-top: 1.5rem; }
+
+.mb-1 { margin-bottom: 0.25rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+.mb-3 { margin-bottom: 0.75rem; }
+.mb-4 { margin-bottom: 1rem; }
+.mb-6 { margin-bottom: 1.5rem; }
+
+.p-1 { padding: 0.25rem; }
+.p-2 { padding: 0.5rem; }
+.p-3 { padding: 0.75rem; }
+.p-4 { padding: 1rem; }
+.p-6 { padding: 1.5rem; }
+
+/* ===== 文本工具 ===== */
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+.text-left { text-align: left; }
+
+.text-xs { font-size: var(--text-label-sm); }
+.text-sm { font-size: var(--text-label-md); }
+.text-base { font-size: var(--text-body-md); }
+.text-lg { font-size: var(--text-body-lg); }
+.text-xl { font-size: var(--text-title-lg); }
+
+.font-normal { font-weight: 400; }
+.font-medium { font-weight: 500; }
+.font-bold { font-weight: 700; }
+
+.text-primary { color: var(--color-primary); }
+.text-secondary { color: var(--color-on-surface-variant); }
+.text-muted { color: var(--color-outline); }
+.text-error { color: var(--color-error); }
+.text-success { color: var(--color-success); }
+
+/* ===== 宽度工具 ===== */
+.w-full { width: 100%; }
+.h-full { height: 100%; }
+.min-h-screen { min-height: 100vh; }
+
+/* ===== 容器 ===== */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.container-sm {
+  max-width: 640px;
+}
+
+.container-md {
+  max-width: 768px;
+}
+
+.container-lg {
+  max-width: 1024px;
+}
+
+/* ===== 分割线 ===== */
+.divider {
+  height: 1px;
+  background-color: var(--color-outline-variant);
+  margin: 1rem 0;
+}
+
+.divider-vertical {
+  width: 1px;
+  height: 100%;
+  background-color: var(--color-outline-variant);
+  margin: 0 1rem;
+}
+
+/* ===== Surface 容器 ===== */
+.surface {
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+}
+
+.surface-dim {
+  background-color: var(--color-surface-dim);
+  color: var(--color-on-surface);
+}
+
+.surface-bright {
+  background-color: var(--color-surface-bright);
+  color: var(--color-on-surface);
+}
+
+.surface-container {
+  background-color: var(--color-surface-container);
+  color: var(--color-on-surface);
+}
+
+.surface-container-low {
+  background-color: var(--color-surface-container-low);
+  color: var(--color-on-surface);
+}
+
+.surface-container-high {
+  background-color: var(--color-surface-container-high);
+  color: var(--color-on-surface);
+}
+
+.surface-container-highest {
+  background-color: var(--color-surface-container-highest);
+  color: var(--color-on-surface);
+}
+
+/* ===== 边框 ===== */
+.border {
+  border: 1px solid var(--color-outline-variant);
+}
+
+.border-t {
+  border-top: 1px solid var(--color-outline-variant);
+}
+
+.border-b {
+  border-bottom: 1px solid var(--color-outline-variant);
+}
+
+.border-l {
+  border-left: 1px solid var(--color-outline-variant);
+}
+
+.border-r {
+  border-right: 1px solid var(--color-outline-variant);
+}
+
+/* ===== 圆角 ===== */
+.rounded-sm { border-radius: var(--radius-sm); }
+.rounded-md { border-radius: var(--radius-md); }
+.rounded-lg { border-radius: var(--radius-lg); }
+.rounded-xl { border-radius: var(--radius-xl); }
+.rounded-full { border-radius: var(--radius-full); }
+
+/* ===== 阴影 ===== */
+.shadow-xs { box-shadow: var(--shadow-xs); }
+.shadow-sm { box-shadow: var(--shadow-sm); }
+.shadow-md { box-shadow: var(--shadow-md); }
+.shadow-lg { box-shadow: var(--shadow-lg); }
+.shadow-xl { box-shadow: var(--shadow-xl); }
+
+/* ===== 过渡动画工具 ===== */
+.transition {
+  transition: all var(--duration-short4) var(--ease-standard);
+}
+
+.transition-slow {
+  transition: all var(--duration-medium2) var(--ease-standard);
+}
+
+.transition-fast {
+  transition: all var(--duration-short2) var(--ease-standard);
+}
+
+/* ===== 入场动画 ===== */
+.animate-fade-in {
+  animation: fadeIn var(--duration-medium2) var(--ease-emphasized-decelerate);
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp var(--duration-medium2) var(--ease-emphasized-decelerate);
+}
+
+.animate-fade-in-down {
+  animation: fadeInDown var(--duration-medium2) var(--ease-emphasized-decelerate);
+}
+
+.animate-scale-in {
+  animation: scaleIn var(--duration-medium1) var(--ease-spring);
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft var(--duration-medium2) var(--ease-emphasized-decelerate);
+}
+
+.animate-slide-in-right {
+  animation: slideInRight var(--duration-medium2) var(--ease-emphasized-decelerate);
+}
+
+/* 交错动画 */
+.stagger-1 { animation-delay: 50ms; }
+.stagger-2 { animation-delay: 100ms; }
+.stagger-3 { animation-delay: 150ms; }
+.stagger-4 { animation-delay: 200ms; }
+.stagger-5 { animation-delay: 250ms; }
+.stagger-6 { animation-delay: 300ms; }
+.stagger-7 { animation-delay: 350ms; }
+.stagger-8 { animation-delay: 400ms; }
+
+/* 填充模式 */
+.fill-forwards {
+  animation-fill-mode: forwards;
+}
+
+.fill-backwards {
+  animation-fill-mode: backwards;
+}
+
+.fill-both {
+  animation-fill-mode: both;
 }

@@ -2,7 +2,7 @@ import json
 
 from fastapi import APIRouter, Depends
 
-from db import get_conn
+from db import get_cursor
 from models import ExternalResourceSearchRequest
 from services.external_resource_service import search_external_learning_resources
 from utils import success, error, get_current_user
@@ -32,43 +32,34 @@ def search_external_resources(
     except Exception as e:
         return error(message=f"外部学习资源检索失败：{str(e)}", code=500)
 
-    conn = get_conn()
-    cursor = conn.cursor()
-
     try:
-        cursor.execute(
-            """
-            INSERT INTO operation_logs
-                (user_id, action, target_type, target_id, detail)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (
-                user["id"],
-                "A3_SEARCH_EXTERNAL_RESOURCES",
-                "external_resources",
-                None,
-                json.dumps(
-                    {
-                        "course_name": request.course_name,
-                        "topic": request.topic,
-                        "learner_level": request.learner_level,
-                        "max_results": request.max_results,
-                        "result_count": len(result.get("resources", [])),
-                        "queries": result.get("queries", [])
-                    },
-                    ensure_ascii=False
+        with get_cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO operation_logs
+                    (user_id, action, target_type, target_id, detail)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    user["id"],
+                    "A3_SEARCH_EXTERNAL_RESOURCES",
+                    "external_resources",
+                    None,
+                    json.dumps(
+                        {
+                            "course_name": request.course_name,
+                            "topic": request.topic,
+                            "learner_level": request.learner_level,
+                            "max_results": request.max_results,
+                            "result_count": len(result.get("resources", [])),
+                            "queries": result.get("queries", [])
+                        },
+                        ensure_ascii=False
+                    )
                 )
             )
-        )
-
-        conn.commit()
-
     except Exception:
-        conn.rollback()
-
-    finally:
-        cursor.close()
-        conn.close()
+        pass  # 日志记录失败不影响主流程
 
     return success(
         data=result,

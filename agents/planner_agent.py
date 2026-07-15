@@ -3,7 +3,7 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
-from llm_client import get_llm
+from llm_client import invoke_agent_messages
 from models import LearningPlan
 
 def generate_learning_plan(
@@ -12,7 +12,6 @@ def generate_learning_plan(
         days: int,
         profile: dict | None = None
 )->dict:
-    llm = get_llm()
     profile_text = json.dumps(profile) if profile else "无"
     messages = [
         SystemMessage(
@@ -53,7 +52,7 @@ def generate_learning_plan(
             )
         )
     ]
-    result = llm.invoke(messages)
+    result = invoke_agent_messages(messages).message
     content = result.content.strip()
 
     try:

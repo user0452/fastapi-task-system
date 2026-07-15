@@ -1,4 +1,4 @@
-from llm_client import get_llm
+from llm_client import invoke_agent_messages
 import json
 from langchain_core.messages import HumanMessage,SystemMessage
 from pydantic import ValidationError
@@ -11,7 +11,6 @@ def generate_learning_resource(
         profile:dict |None = None,
         rag_context: list[dict] | None = None
 )->dict:
-    llm = get_llm()
     rag_context_text = "暂无课程资料检索结果"
 
     if rag_context:
@@ -95,7 +94,7 @@ def generate_learning_resource(
                     - 如果需要补充通用知识，可以补充，但要保持和课程资料一致。"""
         )
     ]
-    result = llm.invoke(messages)
+    result = invoke_agent_messages(messages).message
     content = result.content.strip()
 
     try:

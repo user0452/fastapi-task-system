@@ -1,4 +1,6 @@
+import logging
 import os
+import re
 from urllib.parse import urlparse
 
 import requests
@@ -11,6 +13,7 @@ except Exception:
 
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+logger = logging.getLogger(__name__)
 
 
 def _get_tavily_api_key() -> str:
@@ -30,6 +33,59 @@ def _get_domain(url: str) -> str:
         return domain
     except Exception:
         return ""
+
+
+def _is_placeholder_thumbnail(url: str | None) -> bool:
+    if not url:
+        return True
+
+    path = urlparse(url).path.lower()
+    return (
+        "transparent.png" in path
+        or path.endswith("/favicon.ico")
+        or path.endswith("favicon.ico")
+        or "favicon" in path
+    )
+
+
+def _normalize_image_url(url: str | None) -> str | None:
+    if not isinstance(url, str) or not url:
+        return None
+
+    value = url.strip()
+    if not value:
+        return None
+    if value.startswith("//"):
+        value = "https:" + value
+    if value.startswith("http://"):
+        value = value.replace("http://", "https://", 1)
+    if urlparse(value).scheme not in {"http", "https"}:
+        return None
+    if _is_placeholder_thumbnail(value):
+        return None
+    return value
+
+
+def _extract_raw_image(raw_result: dict) -> str | None:
+    for key in ("thumbnail", "image_url", "image"):
+        image_url = _normalize_image_url(raw_result.get(key))
+        if image_url:
+            return image_url
+
+    images = raw_result.get("images")
+    if isinstance(images, list):
+        for item in images:
+            if isinstance(item, str):
+                image_url = _normalize_image_url(item)
+            elif isinstance(item, dict):
+                image_url = _normalize_image_url(item.get("url") or item.get("src"))
+            else:
+                image_url = None
+
+            if image_url:
+                return image_url
+
+    return None
 
 
 def _classify_resource_type(title: str, url: str, content: str) -> str:
@@ -103,6 +159,72 @@ def _estimate_time(resource_type: str) -> str:
     if resource_type == "document":
         return "15-30分钟"
     return "10-20分钟"
+
+
+def _extract_video_id(url: str) -> tuple[str, str]:
+    """
+    从视频 URL 中提取平台和视频 ID。
+    返回 (platform, video_id) 或 ("", "")。
+    """
+    # YouTube watch、短链、Shorts、embed、live 和 youtube-nocookie。
+    youtube_match = re.search(
+        r'(?:youtube(?:-nocookie)?\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|embed/|live/)|youtu\.be/)'
+        r'([a-zA-Z0-9_-]{11})',
+        url,
+    )
+    if youtube_match:
+        return "youtube", youtube_match.group(1)
+
+    # Bilibili: https://www.bilibili.com/video/BVxxxxxxxxxx
+    bilibili_match = re.search(r'bilibili\.com/video/(BV[a-zA-Z0-9]+)', url)
+    if bilibili_match:
+        return "bilibili", bilibili_match.group(1)
+
+    # 优酷: https://v.youku.com/v_show/id_Xxxxxx.html
+    youku_match = re.search(r'youku\.com/v_show/id_([a-zA-Z0-9=]+)', url)
+    if youku_match:
+        return "youku", youku_match.group(1)
+
+    return "", ""
+
+
+def _get_video_thumbnail(url: str) -> str | None:
+    """
+    根据视频 URL 获取缩略图。
+    支持 YouTube、Bilibili 等主流视频平台。
+    """
+    platform, video_id = _extract_video_id(url)
+
+    if platform == "youtube" and video_id:
+        # YouTube 缩略图有多种分辨率：default, mqdefault, hqdefault, sddefault, maxresdefault
+        return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+
+    if platform == "bilibili" and video_id:
+        # Bilibili 缩略图需要通过 API 获取
+        try:
+            import requests
+            api_url = f"https://api.bilibili.com/x/web-interface/view?bvid={video_id}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://www.bilibili.com/"
+            }
+            resp = requests.get(api_url, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("code") == 0:
+                    pic = data.get("data", {}).get("pic", "")
+                    if pic:
+                        return _normalize_image_url(pic)
+        except Exception:
+            pass
+        # 如果 API 调用失败，返回 None，由前端显示占位封面。
+        return None
+
+    if platform == "youku" and video_id:
+        # 优酷缩略图
+        return None
+
+    return None
 
 def _get_resource_type_priority(resource_type: str) -> int:
     priority_map = {
@@ -182,6 +304,7 @@ def _normalize_tavily_result(
     content = raw_result.get("content") or ""
     score = raw_result.get("score", 0)
     favicon = raw_result.get("favicon")
+    raw_image = _extract_raw_image(raw_result)
 
     resource_type = _classify_resource_type(
         title=title,
@@ -193,6 +316,13 @@ def _normalize_tavily_result(
 
     if len(snippet) > 300:
         snippet = snippet[:300] + "..."
+
+    # 获取视频缩略图
+    thumbnail = None
+    if resource_type == "video":
+        thumbnail = _normalize_image_url(_get_video_thumbnail(url)) or raw_image
+    else:
+        thumbnail = raw_image or favicon
 
     return {
         "title": title,
@@ -208,7 +338,8 @@ def _normalize_tavily_result(
         "estimated_time": _estimate_time(resource_type),
         "snippet": snippet,
         "score": score,
-        "favicon": favicon
+        "favicon": favicon,
+        "thumbnail": thumbnail
     }
 
 
@@ -230,14 +361,20 @@ def search_external_learning_resources(
 
     raw_results = []
     seen_urls = set()
+    failures = []
 
     per_query_limit = max(3, min(5, max_results))
 
     for query in query_list:
-        results = _call_tavily_search(
-            query=query,
-            max_results=per_query_limit
-        )
+        try:
+            results = _call_tavily_search(
+                query=query,
+                max_results=per_query_limit
+            )
+        except Exception as exc:
+            logger.warning("external_resource_search_failed query=%s error=%s", query, exc)
+            failures.append(str(exc))
+            continue
 
         for item in results:
             url = item.get("url")
@@ -251,14 +388,19 @@ def search_external_learning_resources(
             seen_urls.add(url)
             raw_results.append(item)
 
-    normalized_resources = [
-        _normalize_tavily_result(
-            raw_result=item,
-            topic=topic,
-            learner_level=learner_level
-        )
-        for item in raw_results
-    ]
+    normalized_resources = []
+    for item in raw_results:
+        try:
+            normalized_resources.append(
+                _normalize_tavily_result(
+                    raw_result=item,
+                    topic=topic,
+                    learner_level=learner_level,
+                )
+            )
+        except Exception as exc:
+            logger.warning("external_resource_normalization_failed error=%s", exc)
+            failures.append(str(exc))
 
     normalized_resources.sort(
         key=lambda item: (
@@ -268,11 +410,18 @@ def search_external_learning_resources(
         reverse=True
     )
 
+    degraded = bool(failures)
+    warning = None
+    if degraded:
+        warning = "外部搜索暂时不可用，课程资料学习、诊断、练习和计划功能不受影响。"
+
     return {
         "course_name": course_name,
         "topic": topic,
         "learner_level": learner_level,
         "queries": query_list,
         "total": min(len(normalized_resources), max_results),
-        "resources": normalized_resources[:max_results]
+        "resources": normalized_resources[:max_results],
+        "degraded": degraded,
+        "warning": warning,
     }

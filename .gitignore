@@ -5,6 +5,9 @@ build/
 dist/
 wheels/
 *.egg-info
+.coverage
+htmlcov/
+*.log
 .idea/
 .env
 .claude/
@@ -13,3 +16,12 @@ data_manager.py
 ai_playground/
 # Virtual environments
 .venv
+
+# Frontend test artifacts
+frontend/test-results/
+frontend/playwright-report/
+
+# Runtime uploads
+var/uploads/
+var/rag-evaluation/
+var/rag_indexes/

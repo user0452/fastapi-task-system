@@ -1,38 +1,45 @@
 import { request } from './http'
 
-export function getMaterials(params = {}) {
-  const query = new URLSearchParams(params).toString()
-  return request(`/materials${query ? '?' + query : ''}`)
+export function getCourseMaterials(courseId) {
+  return request(`/api/v1/courses/${courseId}/materials`)
 }
 
-export function createMaterial(payload) {
-  return request('/materials', {
+export function getKnowledgePoints(courseId) {
+  return request(`/api/v1/courses/${courseId}/knowledge-points`)
+}
+
+export function getKnowledgeGraph(courseId) {
+  return request(`/api/v1/courses/${courseId}/knowledge-graph`)
+}
+
+export function searchCourseMaterials(courseId, query, topK = 5) {
+  return request(`/api/v1/courses/${courseId}/materials/search`, {
+    method: 'POST',
+    body: JSON.stringify({ query, top_k: topK })
+  })
+}
+
+export function createCourseTextMaterial(courseId, payload) {
+  return request(`/api/v1/courses/${courseId}/materials/text`, {
     method: 'POST',
     body: JSON.stringify(payload)
   })
 }
 
-export function uploadMaterial({ courseName, title, file }) {
+export function uploadCourseMaterial(courseId, { title, file }) {
   const formData = new FormData()
-  formData.append('course_name', courseName)
   formData.append('title', title)
   formData.append('file', file)
-
-  return request('/materials/upload', {
+  return request(`/api/v1/courses/${courseId}/materials/upload`, {
     method: 'POST',
     body: formData
   })
 }
 
-export function buildMaterialIndex(materialId) {
-  return request(`/materials/${materialId}/build-index`, {
-    method: 'POST'
-  })
+export function retryCourseMaterial(materialId) {
+  return request(`/api/v1/materials/${materialId}/retry`, { method: 'POST' })
 }
 
-export function ragSearch(payload) {
-  return request('/materials/rag-search', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  })
+export function deleteCourseMaterial(materialId) {
+  return request(`/api/v1/materials/${materialId}`, { method: 'DELETE' })
 }

@@ -4,6 +4,7 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-dotenv
 pymysql
+DBUtils>=3.0
 pydantic
 langchain-openai
 langchain-core

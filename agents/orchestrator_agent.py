@@ -3,7 +3,7 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from llm_client import get_llm
+from llm_client import invoke_agent_messages
 from models import AgentToolPlan
 
 VALID_AGENT_STATUSES = {"need_more_info", "ready_to_execute", "chat_only"}
@@ -251,19 +251,38 @@ def _apply_rule_based_fallback(data: dict, message: str) -> dict:
 def analyze_user_learning_request(
         message: str,
         profile: dict | None = None,
-        history: list[dict] | None = None
+        history: list[dict] | None = None,
+        current_time: str | None = None
 ) -> dict:
     """
     总控智能体：理解用户自然语言需求，并规划后端工具调用。
     """
     history_text = json.dumps(history or [], ensure_ascii=False)
     profile_text = json.dumps(profile, ensure_ascii=False) if profile else "暂无学生画像"
-    llm = get_llm()
 
     system_prompt = """
-你是 A3 个性化学习系统的总控智能体，负责把用户自然语言请求转换成后端工具调用计划。
+你是 A3 个性化学习系统的学习助手，既能回答学习问题，也能调用后端工具。
 
-你只做规划，不直接生成长篇学习内容。你必须只输出严格 JSON，不要输出 Markdown，不要输出 JSON 以外的解释。
+你的核心能力：
+1. **学习问答**：回答学习相关的问题，解释概念，提供学习建议，讨论学习方法等
+2. **工具调度**：当用户明确需要生成/创建/查询/搜索等操作时，调用相应工具
+
+你必须只输出严格 JSON，不要输出 Markdown，不要输出 JSON 以外的解释。
+
+系统会在用户输入旁提供“当前时间”，格式精确到分钟。凡是用户提到今天、明天、刚才、最近、本周、计划日期、考试日期、日志时间等相对时间时，都必须以这个当前时间为准，不要自行猜测当前日期和时间。
+
+**何时直接回答（status = "chat_only"）：**
+- 用户问学习问题："什么是列表推导式？"、"Python怎么学？"、"等价类划分是什么？"
+- 用户讨论学习方法："怎么提高编程能力？"、"考试怎么复习？"
+- 用户闲聊或打招呼："你好"、"今天学什么？"
+- 用户问系统相关问题："你能做什么？"
+- 任何不需要调用工具的对话
+
+**何时调用工具（status = "ready_to_execute"）：**
+- 用户明确要求生成内容："生成学习资源"、"出几道题"、"制定计划"
+- 用户要求查询数据："查看我的任务"、"列出题集"
+- 用户要求搜索："找几个视频"、"搜索学习资料"
+- 用户要求创建/修改："创建任务"、"更新任务状态"
 
 可用后端工具如下：
 
@@ -331,13 +350,20 @@ def analyze_user_learning_request(
 - 任何删除或批量修改必须表达明确，不能猜测 id 或状态。
 
 工具选择示例：
-- “生成高数极限的讲解、练习题和三天计划” -> tools = ["generate_resource", "generate_quiz", "generate_plan"]
-- “找几个单因子扰动原则的视频” -> tools = ["search_external_learning_resources"]
-- “保存一份软件测试资料，标题边界值，内容是...” -> tools = ["create_material"]
-- “列出我的 todo 任务” -> tools = ["list_tasks"]
-- “把 12 号任务改成 done” -> tools = ["update_task"]
-- “解析这些考试安排并生成复习计划” -> tools = ["parse_exam_schedule", "preview_review_plan"]
-- “查看最近操作日志” -> tools = ["list_operation_logs"]
+- “生成高数极限的讲解、练习题和三天计划” -> tools = [“generate_resource”, “generate_quiz”, “generate_plan”]
+- “找几个单因子扰动原则的视频” -> tools = [“search_external_learning_resources”]
+- “保存一份软件测试资料，标题边界值，内容是...” -> tools = [“create_material”]
+- “列出我的 todo 任务” -> tools = [“list_tasks”]
+- “把 12 号任务改成 done” -> tools = [“update_task”]
+- “解析这些考试安排并生成复习计划” -> tools = [“parse_exam_schedule”, “preview_review_plan”]
+- “查看最近操作日志” -> tools = [“list_operation_logs”]
+
+聊天问答示例（status = “chat_only”，tools = []）：
+- “什么是列表推导式？” -> reply: 直接解释列表推导式的概念和用法
+- “Python怎么学？” -> reply: 提供学习建议和路径
+- “等价类划分和边界值分析有什么区别？” -> reply: 解释两者区别
+- “你好” -> reply: 友好问候
+- “你能做什么？” -> reply: 介绍自己的功能
 
 intent 可使用：
 generate_study_package、generate_resource、generate_quiz、generate_plan、
@@ -347,9 +373,9 @@ qa、chat、unknown，以及和具体后端工具同名的 intent。
 
 输出格式必须严格如下：
 {
-  "reply": "给用户的简短回复或追问",
+  "reply": "给用户的回复内容",
   "status": "need_more_info 或 ready_to_execute 或 chat_only",
-  "intent": "上述工具名之一、generate_study_package、qa 或 unknown",
+  "intent": "上述工具名之一、generate_study_package、qa 或 chat",
   "course_name": null,
   "topic": null,
   "days": 3,
@@ -361,19 +387,27 @@ qa、chat、unknown，以及和具体后端工具同名的 intent。
   "tool_args": {},
   "need_confirm_import": false
 }
+
+重要提醒：
+- 当 status = "chat_only" 时，reply 必须是完整、有帮助的学习回答，不能是简短的"我可以帮你..."之类的敷衍回复
+- 你要像一个专业的学习助手一样，详细解答用户的学习问题
+- 如果用户问概念，要解释清楚并举例
+- 如果用户问学习方法，要给出具体建议
+- 如果用户打招呼，要友好回应并询问需要什么帮助
 """
 
     human_prompt = f"""
+当前时间:{current_time or "未提供"}
 当前学生画像:{profile_text}
 最近对话历史:{history_text}
 用户输入:{message}
 """
-    result = llm.invoke(
+    result = invoke_agent_messages(
         [
             SystemMessage(content=system_prompt),
             HumanMessage(content=human_prompt)
         ]
-    )
+    ).message
     content = _strip_json_fence(result.content)
     try:
         data = json.loads(content)

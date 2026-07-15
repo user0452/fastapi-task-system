@@ -1,20 +1,25 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { login as apiLogin, register as apiRegister } from '../api/auth'
+import {
+  getCurrentUser,
+  login as apiLogin,
+  logout as apiLogout,
+  register as apiRegister
+} from '../api/auth'
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref(localStorage.getItem('token') || '')
-  const username = ref(localStorage.getItem('username') || '')
+  const authenticated = ref(false)
+  const initialized = ref(false)
+  const username = ref('')
 
-  const isLoggedIn = computed(() => !!token.value)
+  const isLoggedIn = computed(() => authenticated.value)
 
   async function login(user, password) {
     const res = await apiLogin(user, password)
     if (res.code === 200 && res.data) {
-      token.value = res.data.token || res.data.access_token || ''
-      username.value = user
-      localStorage.setItem('token', token.value)
-      localStorage.setItem('username', user)
+      authenticated.value = true
+      initialized.value = true
+      username.value = res.data.username || user
       return { success: true }
     }
     return { success: false, message: res.message || '登录失败' }
@@ -28,24 +33,32 @@ export const useAuthStore = defineStore('auth', () => {
     return { success: false, message: res.message || '注册失败' }
   }
 
-  function logout() {
-    token.value = ''
+  async function logout() {
+    if (authenticated.value) await apiLogout()
+    clearSession()
+  }
+
+  function clearSession() {
+    authenticated.value = false
+    initialized.value = true
     username.value = ''
-    localStorage.removeItem('token')
-    localStorage.removeItem('username')
   }
 
   if (typeof window !== 'undefined') {
-    window.addEventListener('auth:expired', logout)
+    window.addEventListener('auth:expired', clearSession)
   }
 
-  function restore() {
-    token.value = localStorage.getItem('token') || ''
-    username.value = localStorage.getItem('username') || ''
+  async function restore() {
+    if (initialized.value) return authenticated.value
+    const res = await getCurrentUser()
+    authenticated.value = res.code === 200 && !!res.data
+    username.value = authenticated.value ? res.data.username : ''
+    initialized.value = true
+    return authenticated.value
   }
 
   return {
-    token,
+    initialized,
     username,
     isLoggedIn,
     login,

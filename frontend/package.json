@@ -1,21 +1,35 @@
 {
-  "name": "frontend",
+  "name": "a3-course-coach-frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "dompurify": "^3.4.12",
     "lucide-vue-next": "^0.577.0",
+    "marked": "^18.0.6",
     "pinia": "^3.0.4",
     "vue": "^3.5.34",
     "vue-router": "^5.1.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@playwright/test": "^1.61.1",
     "@vitejs/plugin-vue": "^6.0.6",
-    "vite": "^8.0.12"
+    "@vue/test-utils": "^2.4.11",
+    "eslint": "^9.0.0",
+    "eslint-plugin-vue": "^10.0.0",
+    "globals": "^16.0.0",
+    "jsdom": "^29.1.1",
+    "vite": "^8.0.12",
+    "vitest": "^4.1.10"
   }
 }

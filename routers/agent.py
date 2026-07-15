@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -11,10 +12,13 @@ from agents.planner_agent import generate_learning_plan
 from agents.profile_agent import generate_student_profile
 from agents.quiz_agent import generate_quiz_set
 from agents.resource_agent import generate_learning_resource
-from db import get_conn
+from db import get_conn, get_cursor
 from llm_client import parse_exam_schedule, preview_review_plan
 from models import AgentChatRequest
 from services.external_resource_service import search_external_learning_resources
+from services.memory_service import memory_service
+from services.memory_extractor import memory_extractor
+from services.memory_injector import memory_injector
 from services.rag_service import search_similar_chunks, split_text_to_chunks
 from utils import (
     error,
@@ -108,6 +112,18 @@ def _optional_text(value: Any) -> str | None:
 
     text = str(value).strip()
     return text or None
+
+
+def _format_current_time_minute() -> str:
+    now = datetime.now().astimezone()
+    offset = now.strftime("%z")
+    timezone_text = f"UTC{offset[:3]}:{offset[3:]}" if offset else ""
+    return f"{now:%Y-%m-%d %H:%M} {timezone_text}".strip()
+
+
+def _request_current_time(value: Any) -> str:
+    text = _optional_text(value)
+    return text or _format_current_time_minute()
 
 
 def _to_int(value: Any, default: int | None = None) -> int | None:
@@ -700,6 +716,20 @@ def _execute_agent_tools(plan: dict, cursor, user: dict, profile: dict | None, o
     for tool in plan.get("tools") or []:
         args = _get_tool_args(plan, tool)
 
+        if tool in {
+            "delete_task",
+            "bulk_update_tasks_status",
+            "bulk_delete_tasks_status",
+        }:
+            yield {"type": "status", "message": "该操作需要在新版 AI 助教中二次确认"}
+            tool_results["confirmation_required"] = {
+                "tool": tool,
+                "risk_level": "destructive",
+                "executed": False,
+                "message": "兼容接口不会直接执行破坏性操作，请使用 /api/v1/agent。",
+            }
+            continue
+
         if tool == "generate_profile":
             yield {"type": "status", "message": "正在生成学生画像"}
             text = _require_text(args.get("text") or original_message, "缺少画像描述文本")
@@ -1110,6 +1140,26 @@ def _execute_agent_tools(plan: dict, cursor, user: dict, profile: dict | None, o
                 days=days,
                 profile=active_profile
             )
+
+            # 根据计划时长推荐 1-2 个视频
+            try:
+                yield {"type": "status", "message": "正在推荐相关视频"}
+                video_results = search_external_learning_resources(
+                    course_name=course_name,
+                    topic=topic,
+                    learner_level="beginner",
+                    max_results=3
+                )
+                # 只保留视频类型的资源，取前 2 个
+                videos = [
+                    v for v in video_results.get("resources", [])
+                    if v.get("resource_type") == "video"
+                ][:2]
+                learning_plan["recommended_videos"] = videos
+            except Exception as e:
+                print(f"推荐视频失败: {e}")
+                learning_plan["recommended_videos"] = []
+
             tool_results["learning_plan"] = learning_plan
             continue
 
@@ -1657,14 +1707,12 @@ def _execute_agent_tools(plan: dict, cursor, user: dict, profile: dict | None, o
     return tool_results
 
 
-def _run_agent_chat_events(message: str, user: dict):
-    conn = None
-    cursor = None
+def _run_agent_chat_events(message: str, user: dict, current_time: str | None = None):
+    conn = get_conn()
+    cursor = conn.cursor()
+    request_time = _request_current_time(current_time)
 
     try:
-        conn = get_conn()
-        cursor = conn.cursor()
-
         yield {"type": "status", "message": "正在记录你的问题"}
         user_message_id = _insert_chat_message(
             cursor,
@@ -1677,11 +1725,30 @@ def _run_agent_chat_events(message: str, user: dict):
         profile = _load_profile(cursor, user["id"])
         history_rows = _fetch_chat_history(cursor, user["id"], user_message_id)
 
+        # 检索相关记忆
+        yield {"type": "status", "message": "正在检索相关记忆"}
+        memory_context = memory_injector.build_memory_context(
+            user_id=user["id"],
+            current_query=message
+        )
+
+        # 用记忆增强消息
+        enhanced_message = message
+        if memory_context:
+            enhanced_message = f"""【用户历史记忆】
+{memory_context}
+
+【当前问题】
+{message}
+
+请结合用户的历史记忆，提供更个性化的回答。"""
+
         yield {"type": "status", "message": "正在理解学习需求"}
         plan = analyze_user_learning_request(
-            message=message,
+            message=enhanced_message,
             profile=profile,
-            history=history_rows
+            history=history_rows,
+            current_time=request_time
         )
 
         tool_results = {}
@@ -1697,9 +1764,14 @@ def _run_agent_chat_events(message: str, user: dict):
                 _compact_tool_calls_for_storage(plan, tool_results)
             )
             conn.commit()
+
+            # 提取记忆
+            _extract_and_save_memories(user["id"], message, reply, plan)
+
             return {
                 "plan": plan,
-                "tool_results": tool_results
+                "tool_results": tool_results,
+                "current_time": request_time
             }
 
         tool_runner = _execute_agent_tools(
@@ -1727,6 +1799,7 @@ def _run_agent_chat_events(message: str, user: dict):
             {
                 **_build_agent_summary(plan, tool_results),
                 "days": plan.get("days"),
+                "current_time": request_time,
                 "tool_result_keys": list(tool_results.keys())
             }
         )
@@ -1741,24 +1814,57 @@ def _run_agent_chat_events(message: str, user: dict):
         )
         conn.commit()
 
+        # 提取记忆
+        _extract_and_save_memories(user["id"], message, reply, plan)
+
         return {
             "plan": plan,
-            "tool_results": tool_results
+            "tool_results": tool_results,
+            "current_time": request_time
         }
 
     except Exception:
-        if conn:
-            conn.rollback()
+        conn.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+        cursor.close()
+        conn.close()
 
 
-def _consume_agent_chat(message: str, user: dict) -> dict:
-    runner = _run_agent_chat_events(message, user)
+def _extract_and_save_memories(user_id: int, user_message: str, ai_reply: str, plan: dict):
+    """从对话中提取并保存记忆"""
+    try:
+        # 构建上下文
+        context = {}
+        if plan.get("course_name"):
+            context["course_name"] = plan["course_name"]
+        if plan.get("topic"):
+            context["topic"] = plan["topic"]
+
+        # 提取记忆
+        new_memories = memory_extractor.extract_from_conversation(
+            user_message=user_message,
+            ai_response=ai_reply,
+            context=context
+        )
+
+        # 保存记忆
+        for memory in new_memories:
+            memory_service.save_memory(
+                user_id=user_id,
+                memory_type="episodic",
+                content=memory["content"],
+                category=memory["type"],
+                source="conversation",
+                importance=memory.get("importance", 0.5)
+            )
+    except Exception as e:
+        # 记忆提取失败不影响主流程
+        print(f"记忆提取失败: {e}")
+
+
+def _consume_agent_chat(message: str, user: dict, current_time: str | None = None) -> dict:
+    runner = _run_agent_chat_events(message, user, current_time)
 
     while True:
         try:
@@ -1776,7 +1882,7 @@ def agent_chat(
     AI 学习助手总入口：解析用户自然语言需求，并调度后端工具。
     """
     try:
-        result = _consume_agent_chat(request.message, user)
+        result = _consume_agent_chat(request.message, user, request.current_time)
         return success(
             data=result,
             message="AI助手已完成处理"
@@ -1799,7 +1905,7 @@ def agent_chat_stream(
         user=Depends(get_current_user)
 ):
     def event_stream():
-        runner = _run_agent_chat_events(request.message, user)
+        runner = _run_agent_chat_events(request.message, user, request.current_time)
 
         try:
             while True:
