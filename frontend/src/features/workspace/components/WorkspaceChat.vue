@@ -29,6 +29,7 @@ const statusText = ref('')
 const viewport = ref(null)
 const inputElement = ref(null)
 let loadVersion = 0
+let streamVersion = 0
 let streamController = null
 
 const quickPrompts = [
@@ -64,11 +65,17 @@ async function load() {
   }
 }
 
+function cancelStream() {
+  streamVersion += 1
+  streamController?.abort()
+  streamController = null
+}
+
 async function switchCourse() {
   // A session is scoped to one course. Clear it before loading the next one so
   // a new course message can never be sent with the previous course session id.
-  streamController?.abort()
-  streamController = null
+  cancelStream()
+  sending.value = false
   messages.value = []
   session.value = null
   agent.value = null
@@ -95,12 +102,14 @@ function updateResource(updated) {
 async function send(textOverride = '') {
   const text = String(textOverride || input.value).trim()
   if (!text || sending.value) return
-  messages.value.push({ id: `local-user-${Date.now()}`, role: 'user', content: text, sources: [] })
+  const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`
+  const assistantId = `local-assistant-${requestId}`
+  const requestCourseId = props.courseId
+  messages.value.push({ id: `local-user-${requestId}`, role: 'user', content: text, sources: [] })
   input.value = ''
   localStorage.removeItem(`a3:course-draft:${props.courseId}`)
-  const assistantIndex = messages.value.length
   messages.value.push({
-    id: `local-assistant-${Date.now()}`,
+    id: assistantId,
     role: 'assistant',
     content: '',
     sources: [],
@@ -115,28 +124,52 @@ async function send(textOverride = '') {
   const controller = new AbortController()
   streamController?.abort()
   streamController = controller
+  const requestVersion = ++streamVersion
+  const isCurrentRequest = () => (
+    requestVersion === streamVersion
+    && requestCourseId === props.courseId
+    && !controller.signal.aborted
+  )
+  const currentAssistant = () => (
+    isCurrentRequest()
+      ? messages.value.find(message => message.id === assistantId)
+      : null
+  )
   try {
     await sendAgentMessageStream(
-      { message: text, session_id: session.value?.id || null, course_id: props.courseId },
+      {
+        message: text,
+        session_id: session.value?.id || null,
+        course_id: requestCourseId,
+        client_request_id: requestId
+      },
       {
         onStatus(message) {
+          if (!isCurrentRequest()) return
           statusText.value = message
         },
         onDelta(delta) {
-          messages.value[assistantIndex].content += delta
+          const assistant = currentAssistant()
+          if (!assistant) return
+          assistant.content += delta
           scrollBottom()
         },
         onResult(result) {
+          const assistant = currentAssistant()
+          if (!assistant) return
           received = result
           session.value = result.session
           agent.value = result.agent || agent.value
+          const assistantIndex = messages.value.findIndex(message => message.id === assistantId)
+          if (assistantIndex < 0) return
           messages.value[assistantIndex] = {
             ...result.message,
-            content: result.reply || messages.value[assistantIndex].content,
+            content: result.reply || assistant.content,
             streaming: false
           }
         },
         onDone() {
+          if (!isCurrentRequest()) return
           statusText.value = ''
         }
       },
@@ -144,18 +177,25 @@ async function send(textOverride = '') {
     )
   } catch (error) {
     if (error.name === 'AbortError' || controller.signal.aborted) return
+    const assistant = currentAssistant()
+    if (!assistant) return
+    const assistantIndex = messages.value.findIndex(message => message.id === assistantId)
+    if (assistantIndex < 0) return
     messages.value[assistantIndex] = {
-      ...messages.value[assistantIndex],
+      ...assistant,
       content: `请求失败：${error.message}`,
       streaming: false
     }
   } finally {
-    if (streamController === controller) streamController = null
-    if (!received) messages.value[assistantIndex].streaming = false
-    sending.value = false
-    statusText.value = ''
-    emit('data-changed', received?.intent || 'chat')
-    await scrollBottom()
+    if (isCurrentRequest()) {
+      if (streamController === controller) streamController = null
+      const assistant = currentAssistant()
+      if (!received && assistant) assistant.streaming = false
+      sending.value = false
+      statusText.value = ''
+      emit('data-changed', received?.intent || 'chat')
+      await scrollBottom()
+    }
   }
 }
 
@@ -213,8 +253,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   loadVersion += 1
-  streamController?.abort()
-  streamController = null
+  cancelStream()
 })
 
 defineExpose({ send, focus: () => inputElement.value?.focus() })

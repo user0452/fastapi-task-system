@@ -99,6 +99,7 @@ export async function sendAgentMessageStream(payload, handlers = {}, options = {
   const reader = response.body.getReader()
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
+  let completed = false
 
   function dispatch(event) {
     if (event.type === 'status') handlers.onStatus?.(event.message || '')
@@ -108,15 +109,27 @@ export async function sendAgentMessageStream(payload, handlers = {}, options = {
     if (event.type === 'error') throw new Error(event.message || 'AI 助教处理失败')
   }
 
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-    for (const rawLine of lines) {
-      if (rawLine.trim()) dispatch(JSON.parse(rawLine))
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const rawLine of lines) {
+        if (rawLine.trim()) dispatch(JSON.parse(rawLine))
+      }
     }
+    if (buffer.trim()) dispatch(JSON.parse(buffer))
+    completed = true
+  } finally {
+    if (!completed) {
+      try {
+        await reader.cancel()
+      } catch {
+        // The browser may already have released the stream after an abort.
+      }
+    }
+    reader.releaseLock()
   }
-  if (buffer.trim()) dispatch(JSON.parse(buffer))
 }

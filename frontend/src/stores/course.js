@@ -17,17 +17,21 @@ export const useCourseStore = defineStore('course', () => {
   // Route changes can cause both the shell and the course workspace to select
   // a course. Only the latest selection is allowed to update shared state.
   let selectionVersion = 0
+  let loadVersion = 0
+  let loadPromise = null
 
   const hasCourses = computed(() => courses.value.length > 0)
 
-  async function load() {
+  function load() {
+    const requestVersion = ++loadVersion
     loading.value = true
     error.value = ''
-    try {
+    const operation = (async () => {
       const [coursesResponse, currentResponse] = await Promise.all([
         getCourses(),
         getCurrentCourse()
       ])
+      if (requestVersion !== loadVersion) return current.value
       if (coursesResponse.code === 200) {
         courses.value = coursesResponse.data?.items || []
       } else {
@@ -37,14 +41,18 @@ export const useCourseStore = defineStore('course', () => {
         current.value = currentResponse.data || courses.value[0] || null
       }
       loaded.value = true
-    } finally {
-      loading.value = false
-    }
-    return current.value
+      return current.value
+    })()
+    loadPromise = operation
+    return operation.finally(() => {
+      if (requestVersion === loadVersion) loading.value = false
+      if (loadPromise === operation) loadPromise = null
+    })
   }
 
   async function ensureLoaded() {
-    return loaded.value && !error.value ? current.value : load()
+    if (loaded.value && !error.value) return current.value
+    return loadPromise || load()
   }
 
   async function select(courseId) {
@@ -76,10 +84,14 @@ export const useCourseStore = defineStore('course', () => {
   }
 
   function reset() {
+    loadVersion += 1
+    selectionVersion += 1
     courses.value = []
     current.value = null
+    loading.value = false
     loaded.value = false
     error.value = ''
+    loadPromise = null
   }
 
   return {

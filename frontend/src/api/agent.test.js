@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { formatCurrentTimestampMinute } from './agent'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { formatCurrentTimestampMinute, sendAgentMessageStream } from './agent'
 
 
 function localTime(offsetMinutes) {
@@ -22,5 +22,32 @@ describe('formatCurrentTimestampMinute', () => {
     expect(formatCurrentTimestampMinute(localTime(-(5 * 60 + 30)))).toBe(
       '2026-07-12 09:07 UTC-05:30'
     )
+  })
+})
+
+describe('sendAgentMessageStream', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('cancels and releases the reader when streaming is interrupted', async () => {
+    const abortError = new Error('aborted')
+    abortError.name = 'AbortError'
+    const reader = {
+      read: vi.fn().mockRejectedValue(abortError),
+      cancel: vi.fn().mockResolvedValue(undefined),
+      releaseLock: vi.fn()
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: { getReader: () => reader }
+    }))
+
+    await expect(sendAgentMessageStream({ message: 'test' })).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+
+    expect(reader.cancel).toHaveBeenCalledOnce()
+    expect(reader.releaseLock).toHaveBeenCalledOnce()
   })
 })

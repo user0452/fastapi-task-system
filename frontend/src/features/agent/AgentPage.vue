@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Menu, Plus, Send, Sparkles } from 'lucide-vue-next'
 import {
@@ -31,6 +31,9 @@ const actionBusy = ref(false)
 const showSessions = ref(false)
 const messageViewport = ref(null)
 const inputElement = ref(null)
+let streamVersion = 0
+let streamController = null
+let messageLoadVersion = 0
 
 const quickPrompts = [
   '今天学什么？',
@@ -42,6 +45,14 @@ const quickPrompts = [
 async function scrollBottom() {
   await nextTick()
   if (messageViewport.value) messageViewport.value.scrollTop = messageViewport.value.scrollHeight
+}
+
+function cancelStream() {
+  streamVersion += 1
+  streamController?.abort()
+  streamController = null
+  sending.value = false
+  statusText.value = ''
 }
 
 async function loadSessions(selectFirst = true) {
@@ -56,8 +67,11 @@ async function loadSessions(selectFirst = true) {
 
 async function loadActiveSession() {
   if (!activeId.value) return
+  const requestVersion = ++messageLoadVersion
+  const requestedSessionId = activeId.value
   loadingMessages.value = true
-  const response = await getAgentSession(activeId.value, { size: 100 })
+  const response = await getAgentSession(requestedSessionId, { size: 100 })
+  if (requestVersion !== messageLoadVersion || requestedSessionId !== activeId.value) return
   loadingMessages.value = false
   if (response.code >= 200 && response.code < 300) {
     messages.value = response.data?.messages || []
@@ -68,12 +82,14 @@ async function loadActiveSession() {
 }
 
 async function selectSession(session) {
+  cancelStream()
   activeId.value = session.id
   showSessions.value = false
   await loadActiveSession()
 }
 
 async function newSession() {
+  cancelStream()
   const response = await createAgentSession({
     course_id: courses.current?.id || null,
     title: '新对话'
@@ -105,57 +121,94 @@ async function archiveSession(session) {
 async function send() {
   const text = input.value.trim()
   if (!text || sending.value) return
-  const userMessage = { id: `local-user-${Date.now()}`, role: 'user', content: text, sources: [] }
+  const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`
+  const assistantId = `local-assistant-${requestId}`
+  const requestedSessionId = activeId.value
+  const requestedCourseId = courses.current?.id || null
+  const userMessage = { id: `local-user-${requestId}`, role: 'user', content: text, sources: [] }
   messages.value.push(userMessage)
   input.value = ''
-  const assistantIndex = messages.value.length
-  messages.value.push({ id: `local-assistant-${Date.now()}`, role: 'assistant', content: '', sources: [], streaming: true })
+  messages.value.push({ id: assistantId, role: 'assistant', content: '', sources: [], streaming: true })
   sending.value = true
   statusText.value = '正在连接课程助教'
   await scrollBottom()
 
   let receivedResult = null
+  const controller = new AbortController()
+  streamController?.abort()
+  streamController = controller
+  const requestVersion = ++streamVersion
+  const isCurrentRequest = () => (
+    requestVersion === streamVersion
+    && requestedCourseId === (courses.current?.id || null)
+    && !controller.signal.aborted
+  )
+  const currentAssistant = () => (
+    isCurrentRequest()
+      ? messages.value.find(message => message.id === assistantId)
+      : null
+  )
   try {
     await sendAgentMessageStream(
       {
         message: text,
-        session_id: activeId.value,
-        course_id: courses.current?.id || null
+        session_id: requestedSessionId,
+        course_id: requestedCourseId,
+        client_request_id: requestId
       },
       {
         onStatus(message) {
+          if (!isCurrentRequest()) return
           statusText.value = message
         },
         onDelta(delta) {
-          messages.value[assistantIndex].content += delta
+          const assistant = currentAssistant()
+          if (!assistant) return
+          assistant.content += delta
           scrollBottom()
         },
         onResult(result) {
+          const assistant = currentAssistant()
+          if (!assistant) return
           receivedResult = result
           activeId.value = result.session.id
+          const assistantIndex = messages.value.findIndex(message => message.id === assistantId)
+          if (assistantIndex < 0) return
           messages.value[assistantIndex] = {
             ...result.message,
-            content: result.reply || messages.value[assistantIndex].content,
+            content: result.reply || assistant.content,
             streaming: false
           }
         },
         onDone() {
+          if (!isCurrentRequest()) return
           statusText.value = ''
         }
-      }
+      },
+      { signal: controller.signal }
     )
+    if (!isCurrentRequest()) return
     await loadSessions(false)
   } catch (error) {
+    if (error.name === 'AbortError' || controller.signal.aborted) return
+    const assistant = currentAssistant()
+    if (!assistant) return
+    const assistantIndex = messages.value.findIndex(message => message.id === assistantId)
+    if (assistantIndex < 0) return
     messages.value[assistantIndex] = {
-      ...messages.value[assistantIndex],
+      ...assistant,
       content: `请求失败：${error.message}`,
       streaming: false
     }
   } finally {
-    if (!receivedResult) messages.value[assistantIndex].streaming = false
-    sending.value = false
-    statusText.value = ''
-    await scrollBottom()
+    if (isCurrentRequest()) {
+      if (streamController === controller) streamController = null
+      const assistant = currentAssistant()
+      if (!receivedResult && assistant) assistant.streaming = false
+      sending.value = false
+      statusText.value = ''
+      await scrollBottom()
+    }
   }
 }
 
@@ -189,6 +242,23 @@ onMounted(async () => {
     router.replace({ path: '/agent' })
     nextTick(() => inputElement.value?.focus())
   }
+})
+
+watch(
+  () => courses.current?.id || null,
+  (nextCourseId, previousCourseId) => {
+    if (nextCourseId === previousCourseId) return
+    cancelStream()
+    messageLoadVersion += 1
+    activeId.value = null
+    messages.value = []
+    sessions.value = []
+  }
+)
+
+onBeforeUnmount(() => {
+  messageLoadVersion += 1
+  cancelStream()
 })
 </script>
 

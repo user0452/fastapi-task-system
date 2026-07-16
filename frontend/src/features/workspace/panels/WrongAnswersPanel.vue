@@ -33,8 +33,7 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
         </header>
         <h3>{{ item.question }}</h3>
         <div><span>你的答案</span><p>{{ item.user_answer }}</p></div>
-        <div><span>参考思路</span><p>{{ item.reference_answer }}</p></div>
-        <small>{{ item.feedback }}</small>
+        <div><span>批改反馈</span><p>{{ item.feedback }}</p></div>
         <button type="button" @click="$emit('prompt', `针对“${item.knowledge_point_name || item.question}”再给我出 3 道题`)" title="针对性重做">
           <RotateCcw :size="14" /> 针对性重做
         </button>

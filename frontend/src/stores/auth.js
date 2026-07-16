@@ -6,6 +6,7 @@ import {
   logout as apiLogout,
   register as apiRegister
 } from '../api/auth'
+import { useCourseStore } from './course'
 
 export const useAuthStore = defineStore('auth', () => {
   const authenticated = ref(false)
@@ -14,9 +15,19 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoggedIn = computed(() => authenticated.value)
 
+  function clearUserCaches() {
+    useCourseStore().reset()
+    if (typeof localStorage === 'undefined') return
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index)
+      if (key?.startsWith('a3:course-draft:')) localStorage.removeItem(key)
+    }
+  }
+
   async function login(user, password) {
     const res = await apiLogin(user, password)
     if (res.code === 200 && res.data) {
+      clearUserCaches()
       authenticated.value = true
       initialized.value = true
       username.value = res.data.username || user
@@ -39,6 +50,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function clearSession() {
+    clearUserCaches()
     authenticated.value = false
     initialized.value = true
     username.value = ''
@@ -53,6 +65,7 @@ export const useAuthStore = defineStore('auth', () => {
     const res = await getCurrentUser()
     authenticated.value = res.code === 200 && !!res.data
     username.value = authenticated.value ? res.data.username : ''
+    if (!authenticated.value) clearUserCaches()
     initialized.value = true
     return authenticated.value
   }
