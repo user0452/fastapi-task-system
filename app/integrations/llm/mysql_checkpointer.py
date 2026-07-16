@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator, Sequence
+from datetime import datetime
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -280,6 +282,43 @@ class MySQLCheckpointSaver(BaseCheckpointSaver[str]):
                 "DELETE FROM agent_graph_checkpoint_blobs WHERE thread_id = %s",
                 (thread_id,),
             )
+
+    def gc_stale_threads(self, cutoff: datetime) -> int:
+        with get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT thread_id
+                FROM agent_graph_checkpoints
+                GROUP BY thread_id
+                HAVING MAX(created_at) < %s
+                """,
+                (cutoff,),
+            )
+            candidates = {str(row["thread_id"]) for row in cursor.fetchall()}
+            cursor.execute(
+                """
+                SELECT checkpoint_json
+                FROM agent_action_requests
+                WHERE status IN ('pending', 'resuming')
+                  AND checkpoint_json IS NOT NULL
+                """
+            )
+            active_threads: set[str] = set()
+            for row in cursor.fetchall():
+                value = row.get("checkpoint_json")
+                if isinstance(value, str):
+                    try:
+                        value = json.loads(value)
+                        if isinstance(value, str):
+                            value = json.loads(value)
+                    except (TypeError, json.JSONDecodeError):
+                        value = None
+                if isinstance(value, dict) and value.get("thread_id"):
+                    active_threads.add(str(value["thread_id"]))
+            thread_ids = sorted(candidates - active_threads)
+        for thread_id in thread_ids:
+            self.delete_thread(thread_id)
+        return len(thread_ids)
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         return self.get_tuple(config)

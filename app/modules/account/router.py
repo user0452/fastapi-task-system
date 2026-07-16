@@ -4,11 +4,30 @@ from fastapi import Depends, Query
 from sqlalchemy import func, select
 
 from app.core.database import get_cursor
+from app.core.errors import AppError
 from app.core.responses import V1APIRouter, success
 from app.models import model_as_dict, reflected_model
+from app.modules.account.schemas import AccountSettingsUpdate
+from app.modules.account.service import get_account_settings, update_user_timezone
 from app.modules.auth.dependencies import get_current_user
 
 router = V1APIRouter(tags=["account"])
+
+
+@router.get("/account/settings")
+def account_settings(user=Depends(get_current_user)):
+    return success(data=get_account_settings(user["id"]))
+
+
+@router.patch("/account/settings")
+def update_account_settings(
+    request: AccountSettingsUpdate,
+    user=Depends(get_current_user),
+):
+    return success(
+        data=update_user_timezone(user["id"], request.timezone),
+        message="账户设置已更新",
+    )
 
 
 @router.get("/account/profile")
@@ -22,9 +41,22 @@ def get_profile(user=Depends(get_current_user)):
     if row is None:
         return success(data=None, message="当前用户还没有学习画像")
 
-    profile = json.loads(row["profile_json"])
-    if isinstance(profile, str):
-        profile = json.loads(profile)
+    try:
+        profile = json.loads(row["profile_json"])
+        if isinstance(profile, str):
+            profile = json.loads(profile)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise AppError(
+            "学习画像数据格式无效，请重新生成画像",
+            422,
+            "PROFILE_DATA_INVALID",
+        ) from exc
+    if not isinstance(profile, dict):
+        raise AppError(
+            "学习画像数据格式无效，请重新生成画像",
+            422,
+            "PROFILE_DATA_INVALID",
+        )
     return success(
         data={
             "id": row["id"],

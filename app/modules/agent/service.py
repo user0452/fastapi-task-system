@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import re
@@ -5,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Event
 from time import perf_counter, sleep
 from typing import Callable
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langgraph.types import Command
@@ -22,6 +23,7 @@ from app.integrations.embedding.service import (
 from app.integrations.llm.agent_responder import generate_agent_reply
 from app.integrations.llm.agent_runtime import RiskConfirmationMiddleware
 from app.integrations.llm.mysql_checkpointer import get_mysql_checkpointer
+from app.modules.account.service import get_user_server_time
 from app.modules.agent import repository
 from app.modules.agent.context_manager import (
     RECENT_TURNS,
@@ -55,6 +57,21 @@ from app.modules.resources.service import search_external_resources
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class AgentRunCancelled(RuntimeError):
+    pass
+
+
+def _raise_if_cancelled(context: dict) -> None:
+    cancel_event = context.get("cancel_event")
+    if cancel_event is not None and cancel_event.is_set():
+        raise AgentRunCancelled("客户端已取消生成")
+
+
+def _stable_idempotency_key(request_id: str, tool_name: str, arguments: dict) -> str:
+    payload = json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(f"{request_id}\0{tool_name}\0{payload}".encode("utf-8")).hexdigest()
 
 
 def _normalize_native_agent_reply(reply: str) -> str:
@@ -297,6 +314,7 @@ def _prepare_context(
     intent: str,
     risk_level: str,
 ) -> dict:
+    server_time = get_user_server_time(user_id)
     with get_cursor() as cursor:
         session = None
         if request.session_id is not None:
@@ -329,6 +347,50 @@ def _prepare_context(
             memories = repository.list_course_memories(cursor, agent["id"], user_id)
         elif session is None:
             session = repository.create_session(cursor, user_id, None, request.message[:28])
+
+        request_id = (
+            str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"a3-agent:{user_id}:{session['id']}:{request.client_request_id}",
+                )
+            )
+            if request.client_request_id is not None
+            else str(uuid4())
+        )
+        existing_run = (
+            repository.get_agent_run_by_request_id(cursor, request_id, user_id)
+            if agent is not None
+            else None
+        )
+        if existing_run is not None:
+            if course is None:
+                raise RuntimeError("agent run exists without an owning course")
+            if (
+                existing_run["session_id"] != session["id"]
+                or existing_run["course_id"] != course["id"]
+            ):
+                raise AppError("客户端请求 ID 已用于其他会话", 409, "CLIENT_REQUEST_ID_CONFLICT")
+            user_message = (
+                repository.get_message(cursor, existing_run["user_message_id"], user_id)
+                if existing_run.get("user_message_id")
+                else None
+            )
+            assistant_message = (
+                repository.get_message(cursor, existing_run["assistant_message_id"], user_id)
+                if existing_run.get("assistant_message_id")
+                else None
+            )
+            return {
+                "session": session,
+                "course": course,
+                "user_message": user_message,
+                "agent": agent,
+                "run": existing_run,
+                "existing_assistant_message": assistant_message,
+                "server_time": server_time,
+                "duplicate_request": True,
+            }
 
         user_message = repository.add_message(
             cursor,
@@ -363,14 +425,20 @@ def _prepare_context(
             if course
             else []
         )
-        recent_messages = repository.list_messages(cursor, user_id, session["id"], None, 12)
+        recent_messages = repository.list_messages(
+            cursor,
+            user_id,
+            session["id"],
+            user_message["id"],
+            12,
+        )
         run = None
         if agent is not None:
             if course is None:
                 raise RuntimeError("course agent exists without an owning course")
             run = repository.create_agent_run(
                 cursor,
-                request_id=str(uuid4()),
+                request_id=request_id,
                 agent_id=agent["id"],
                 user_id=user_id,
                 course_id=course["id"],
@@ -405,6 +473,7 @@ def _prepare_context(
         memories=memories,
         messages=recent_messages,
         conversation_summary=agent.get("conversation_summary") if agent else None,
+        server_time=server_time,
     )
     return {
         "session": session,
@@ -418,6 +487,8 @@ def _prepare_context(
         "prompt_context": prompt_context,
         "context_report": context_report,
         "run": run,
+        "server_time": server_time,
+        "duplicate_request": False,
     }
 
 
@@ -429,6 +500,7 @@ def _execute_tool(
     arguments: dict,
     callback: Callable,
 ):
+    _raise_if_cancelled(context)
     run = context.get("run")
     if run is None:
         started = perf_counter()
@@ -438,14 +510,16 @@ def _execute_tool(
             inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="failed")
             raise
         else:
+            _raise_if_cancelled(context)
             inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="completed")
             return result
         finally:
             observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
     started_at = _utc_now()
     started = perf_counter()
+    idempotency_key = _stable_idempotency_key(run["request_id"], tool_name, arguments)
     with get_cursor() as cursor:
-        tool_call_id = repository.create_tool_call(
+        tool_call, claimed = repository.claim_tool_call(
             cursor,
             run_id=run["id"],
             user_id=user_id,
@@ -453,11 +527,31 @@ def _execute_tool(
             tool_name=tool_name,
             risk_level=risk_level,
             arguments=arguments,
-            idempotency_key=f"{run['request_id']}:{tool_name}:{uuid4().hex[:12]}",
+            idempotency_key=idempotency_key,
             started_at=started_at,
         )
+    tool_call_id = tool_call["id"]
+    if not claimed:
+        if tool_call["status"] == "completed":
+            return tool_call["result"]
+        raise AppError("相同工具调用正在执行", 409, "TOOL_CALL_IN_PROGRESS")
     try:
+        _raise_if_cancelled(context)
         result = callback()
+        _raise_if_cancelled(context)
+    except AgentRunCancelled as exc:
+        inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="cancelled")
+        observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
+        with get_cursor() as cursor:
+            repository.finish_tool_call(
+                cursor,
+                tool_call_id,
+                user_id,
+                status="cancelled",
+                error_message=str(exc),
+                completed_at=_utc_now(),
+            )
+        raise
     except Exception as exc:
         inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="failed")
         observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
@@ -498,6 +592,26 @@ def _fail_run(user_id: int, context: dict, exc: Exception) -> None:
             error_message=str(exc),
             completed_at=_utc_now(),
         )
+
+
+def _cancel_run(user_id: int, context: dict, reason: str = "客户端已取消生成") -> None:
+    run = context.get("run")
+    if run is None:
+        return
+    with get_cursor() as cursor:
+        repository.finish_agent_run(
+            cursor,
+            run["id"],
+            user_id,
+            status="cancelled",
+            error_message=reason,
+            completed_at=_utc_now(),
+        )
+
+
+def gc_agent_checkpoints(retention_minutes: int = 60) -> int:
+    cutoff = _utc_now() - timedelta(minutes=max(1, int(retention_minutes)))
+    return get_mysql_checkpointer().gc_stale_threads(cutoff)
 
 
 def _match_knowledge_point_id(message: str, mastery: list[dict]) -> int | None:
@@ -641,7 +755,11 @@ def _request_task_deletion(user_id: int, context: dict, message: str) -> tuple[s
             context["course"]["id"] if context["course"] else None,
             blocked.tool_name,
             blocked.arguments,
-            uuid4().hex,
+            _stable_idempotency_key(
+                context["run"]["request_id"] if context.get("run") else str(context["session"]["id"]),
+                blocked.tool_name,
+                blocked.arguments,
+            ),
             now + timedelta(minutes=10),
             now,
         )
@@ -656,6 +774,35 @@ def _request_task_deletion(user_id: int, context: dict, message: str) -> tuple[s
     return f"删除任务“{task['title']}”需要二次确认。确认前数据库不会发生删除。", confirmation
 
 
+def _existing_run_response(context: dict, request: AgentChatRequest) -> dict:
+    run = context["run"]
+    message = context.get("existing_assistant_message")
+    tool_calls = message.get("tool_calls") or {} if message else {}
+    course = context.get("course")
+    return {
+        "session": {
+            **context["session"],
+            "course_id": course["id"] if course else context["session"].get("course_id"),
+        },
+        "course": course,
+        "agent": context.get("agent"),
+        "message": message,
+        "reply": message.get("content") if message else run.get("output_summary") or "",
+        "intent": tool_calls.get("intent") or run.get("intent"),
+        "risk_level": tool_calls.get("risk_level") or run.get("risk_level"),
+        "citations": message.get("sources") or [] if message else [],
+        "cards": tool_calls.get("cards") or [],
+        "resources": tool_calls.get("resources") or [],
+        "actions": tool_calls.get("actions") or [],
+        "confirmation": tool_calls.get("confirmation"),
+        "current_time": context["server_time"],
+        "run_id": run["id"],
+        "request_status": run["status"],
+        "error": run.get("error_message"),
+        "idempotent": True,
+    }
+
+
 def run_agent_chat(
     user_id: int,
     request: AgentChatRequest,
@@ -667,6 +814,8 @@ def run_agent_chat(
     context = _retry_transaction(
         lambda: _prepare_context(user_id, request, intent, risk_level)
     )
+    if context.get("duplicate_request"):
+        return _existing_run_response(context, request)
     course = context["course"]
     citations: list[dict] = []
     cards: list[dict] = []
@@ -863,7 +1012,7 @@ def run_agent_chat(
                     context["mastery"],
                     context["recent_messages"],
                     citations,
-                    request.current_time,
+                    context["server_time"],
                 )
                 if resources:
                     reply = f"{reply}\n\n我筛选了 {len(resources)} 个与本课知识点相关的外部视频，放在回答下方。"
@@ -891,7 +1040,7 @@ def run_agent_chat(
                 context["mastery"],
                 context["recent_messages"],
                 citations,
-                request.current_time,
+                context["server_time"],
             )
     except Exception as exc:
         _fail_run(user_id, context, exc)
@@ -928,7 +1077,7 @@ def run_agent_chat(
         "resources": resources,
         "actions": actions,
         "confirmation": confirmation,
-        "current_time": request.current_time,
+        "current_time": context["server_time"],
         "run_id": context["run"]["id"] if context.get("run") else None,
     }
 
@@ -1069,6 +1218,7 @@ def _load_native_resume_context(user_id: int, action: dict) -> dict:
             }
             for memory in memories
         ]
+    server_time = get_user_server_time(user_id)
     prompt_context, context_report = build_agent_context(
         course=course,
         profile=profile,
@@ -1076,6 +1226,7 @@ def _load_native_resume_context(user_id: int, action: dict) -> dict:
         memories=memories,
         messages=recent_messages,
         conversation_summary=agent.get("conversation_summary"),
+        server_time=server_time,
     )
     return {
         "session": session,
@@ -1089,6 +1240,7 @@ def _load_native_resume_context(user_id: int, action: dict) -> dict:
         "prompt_context": prompt_context,
         "context_report": context_report,
         "run": run,
+        "server_time": server_time,
     }
 
 
@@ -1118,7 +1270,11 @@ def _native_confirmation(
             context["course"]["id"] if context.get("course") else None,
             "delete_task",
             {"task_id": task_id, "task_title": task["title"], "tool_call_id": action_request.get("id")},
-            uuid4().hex,
+            _stable_idempotency_key(
+                context["run"]["request_id"],
+                "delete_task",
+                {"task_id": task_id},
+            ),
             now + timedelta(minutes=10),
             now,
             checkpoint={
@@ -1217,6 +1373,7 @@ def _resume_native_action(user_id: int, action: dict, confirmed: bool) -> dict:
 
 def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dict:
     now = _utc_now()
+    resume_owner = uuid4().hex
     expired = False
     with get_cursor() as cursor:
         action = repository.get_action_request(cursor, action_id, user_id, for_update=True)
@@ -1229,15 +1386,21 @@ def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dic
                 "result": action["result"],
                 "idempotent": True,
             }
-        if action["status"] == "resuming":
-            raise AppError("确认请求正在执行", 409, "ACTION_IN_PROGRESS")
-        if action["status"] != "pending":
+        if action["status"] not in {"pending", "resuming"}:
             raise AppError("确认请求已失效", 409, "ACTION_NOT_PENDING")
         if action["expires_at"] < now:
             repository.set_action_status(cursor, action_id, "expired")
             expired = True
         else:
-            repository.claim_action_resume(cursor, action_id)
+            claimed = repository.claim_action_resume(
+                cursor,
+                action_id,
+                owner=resume_owner,
+                started_at=now,
+                lease_expires_at=now + timedelta(minutes=3),
+            )
+            if not claimed:
+                raise AppError("确认请求正在执行", 409, "ACTION_IN_PROGRESS")
     if expired:
         raise AppError("确认请求已过期", 409, "ACTION_EXPIRED")
 
@@ -1245,7 +1408,7 @@ def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dic
         resumed = _resume_native_action(user_id, action, confirmed)
     except Exception:
         with get_cursor() as cursor:
-            repository.reset_action_pending(cursor, action_id)
+            repository.reset_action_pending(cursor, action_id, owner=resume_owner)
         raise
 
     status = "executed" if confirmed else "cancelled"
@@ -1262,6 +1425,8 @@ def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dic
             }
         if current["status"] != "resuming":
             raise AppError("确认请求状态冲突", 409, "ACTION_STATE_CONFLICT")
+        if (current.get("checkpoint") or {}).get("resume_owner") != resume_owner:
+            raise AppError("确认请求已由其他进程接管", 409, "ACTION_STATE_CONFLICT")
         repository.set_action_status(cursor, action_id, status, resumed["result"])
         repository.add_audit_log(
             cursor,
@@ -1296,6 +1461,9 @@ def run_native_tool_agent_chat(
     context = _retry_transaction(
         lambda: _prepare_context(user_id, request, "native_tool_agent", "mixed")
     )
+    if context.get("duplicate_request"):
+        return _existing_run_response(context, request)
+    context["cancel_event"] = cancel_event
     course = context.get("course")
     artifacts = None
     confirmation = None
@@ -1309,13 +1477,13 @@ def run_native_tool_agent_chat(
     )
     try:
         agent, artifacts = _build_native_agent(user_id, context)
+        thread_id = f"course-agent-{context['run']['request_id']}"
         config = {
-            "configurable": {"thread_id": f"course-agent-{context['run']['request_id']}"},
+            "configurable": {"thread_id": thread_id},
             "recursion_limit": 18,
         }
+        _raise_if_cancelled(context)
         if on_delta is None:
-            if cancel_event is not None and cancel_event.is_set():
-                raise RuntimeError("客户端已取消生成")
             state = agent.invoke({"messages": [("user", request.message)]}, config=config)
         else:
             for chunk, _metadata in agent.stream(
@@ -1323,14 +1491,14 @@ def run_native_tool_agent_chat(
                 config=config,
                 stream_mode="messages",
             ):
-                if cancel_event is not None and cancel_event.is_set():
-                    raise RuntimeError("客户端已取消生成")
+                _raise_if_cancelled(context)
                 if isinstance(chunk, AIMessageChunk) and isinstance(chunk.content, str) and chunk.content:
                     on_delta(chunk.content)
             snapshot = agent.get_state(config)
             state = dict(snapshot.values)
             if snapshot.interrupts:
                 state["__interrupt__"] = snapshot.interrupts
+        _raise_if_cancelled(context)
         interrupts = state.get("__interrupt__") or []
         if interrupts:
             interrupt_value = getattr(interrupts[0], "value", {}) or {}
@@ -1366,6 +1534,8 @@ def run_native_tool_agent_chat(
             context.get("context_report"),
             complete_run=confirmation is None,
         )
+        if confirmation is None:
+            get_mysql_checkpointer().delete_thread(thread_id)
         llm_status = "completed"
         return {
             "session": {**context["session"], "course_id": course["id"] if course else None},
@@ -1380,9 +1550,13 @@ def run_native_tool_agent_chat(
             "resources": artifacts.resources if artifacts else [],
             "actions": artifacts.actions if artifacts else [],
             "confirmation": confirmation,
-            "current_time": request.current_time,
+            "current_time": context["server_time"],
             "run_id": context["run"]["id"] if context.get("run") else None,
         }
+    except AgentRunCancelled as exc:
+        _cancel_run(user_id, context, str(exc))
+        llm_status = "cancelled"
+        raise
     except Exception as exc:
         _fail_run(user_id, context, exc)
         raise
@@ -1392,4 +1566,126 @@ def run_native_tool_agent_chat(
             "a3_llm_request_duration_seconds",
             perf_counter() - llm_started,
             mode="native_tool_agent",
+        )
+
+
+async def run_native_tool_agent_chat_async(
+    user_id: int,
+    request: AgentChatRequest,
+    on_delta: Callable[[str], None] | None = None,
+    cancel_event: Event | None = None,
+) -> dict:
+    """Run the streaming agent on LangGraph's async interface so cancellation propagates."""
+    context = _retry_transaction(
+        lambda: _prepare_context(user_id, request, "native_tool_agent", "mixed")
+    )
+    if context.get("duplicate_request"):
+        return _existing_run_response(context, request)
+    context["cancel_event"] = cancel_event
+    course = context.get("course")
+    artifacts = None
+    confirmation = None
+    llm_started = perf_counter()
+    llm_status = "failed"
+    inc_counter(
+        "a3_llm_tokens_total",
+        max(1, (len(request.message) + 3) // 4),
+        direction="input",
+        mode="native_tool_agent_async",
+    )
+    thread_id = f"course-agent-{context['run']['request_id']}"
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": 18,
+    }
+    try:
+        agent, artifacts = _build_native_agent(user_id, context)
+        _raise_if_cancelled(context)
+        async for chunk, _metadata in agent.astream(
+            {"messages": [("user", request.message)]},
+            config=config,
+            stream_mode="messages",
+        ):
+            _raise_if_cancelled(context)
+            if isinstance(chunk, AIMessageChunk) and isinstance(chunk.content, str) and chunk.content:
+                if on_delta is not None:
+                    on_delta(chunk.content)
+        snapshot = await agent.aget_state(config)
+        state = dict(snapshot.values)
+        if snapshot.interrupts:
+            state["__interrupt__"] = snapshot.interrupts
+        _raise_if_cancelled(context)
+        interrupts = state.get("__interrupt__") or []
+        if interrupts:
+            interrupt_value = getattr(interrupts[0], "value", {}) or {}
+            pending = (interrupt_value.get("action_requests") or [{}])[0]
+            reply, confirmation = _native_confirmation(user_id, context, pending, config)
+        else:
+            reply = next(
+                (
+                    str(message.content or "").strip()
+                    for message in reversed(state.get("messages", []))
+                    if isinstance(message, AIMessage) and message.content
+                ),
+                "处理完成。",
+            )
+        reply = _normalize_native_agent_reply(reply)
+        inc_counter(
+            "a3_llm_tokens_total",
+            max(1, (len(reply) + 3) // 4),
+            direction="output",
+            mode="native_tool_agent_async",
+        )
+        message = _persist_assistant(
+            user_id,
+            context,
+            reply,
+            "native_tool_agent",
+            "destructive" if confirmation else "mixed",
+            artifacts.citations if artifacts else [],
+            artifacts.cards if artifacts else [],
+            artifacts.resources if artifacts else [],
+            artifacts.actions if artifacts else [],
+            confirmation,
+            context.get("context_report"),
+            complete_run=confirmation is None,
+        )
+        if confirmation is None:
+            get_mysql_checkpointer().delete_thread(thread_id)
+        llm_status = "completed"
+        return {
+            "session": {**context["session"], "course_id": course["id"] if course else None},
+            "course": course,
+            "agent": context.get("agent"),
+            "message": message,
+            "reply": reply,
+            "intent": "native_tool_agent",
+            "risk_level": "destructive" if confirmation else "mixed",
+            "citations": artifacts.citations if artifacts else [],
+            "cards": artifacts.cards if artifacts else [],
+            "resources": artifacts.resources if artifacts else [],
+            "actions": artifacts.actions if artifacts else [],
+            "confirmation": confirmation,
+            "current_time": context["server_time"],
+            "run_id": context["run"]["id"] if context.get("run") else None,
+        }
+    except asyncio.CancelledError:
+        if cancel_event is not None:
+            cancel_event.set()
+        _cancel_run(user_id, context)
+        llm_status = "cancelled"
+        raise
+    except AgentRunCancelled as exc:
+        _cancel_run(user_id, context, str(exc))
+        llm_status = "cancelled"
+        raise
+    except Exception as exc:
+        _fail_run(user_id, context, exc)
+        raise
+    finally:
+        inc_counter("a3_llm_requests_total", mode="native_tool_agent_async", status=llm_status)
+        observe(
+            "a3_llm_request_duration_seconds",
+            perf_counter() - llm_started,
+            mode="native_tool_agent_async",
         )

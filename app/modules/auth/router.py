@@ -2,7 +2,6 @@ import hashlib
 import hmac
 from datetime import datetime, timedelta, timezone
 
-import bcrypt
 from fastapi import Depends, Request, Response, status
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
@@ -12,12 +11,14 @@ from app.core.database import get_cursor
 from app.core.errors import AppError
 from app.core.responses import ApiResponse, V1APIRouter, success
 from app.models import model_as_dict, reflected_model
+from app.modules.auth.client_ip import get_client_ip
 from app.modules.auth.dependencies import get_current_user
+from app.modules.auth.passwords import hash_password, verify_password_and_rehash
 from app.modules.auth.schemas import AuthCredentials, AuthUser
 from app.modules.auth.tokens import COOKIE_NAME, create_access_token
 
 router = V1APIRouter(prefix="/auth", tags=["auth"])
-_DUMMY_HASH = bcrypt.hashpw(b"not-the-user-password", bcrypt.gensalt()).decode("utf-8")
+_DUMMY_HASH = hash_password("not-the-user-password")
 
 
 def _privacy_hash(value: str) -> str:
@@ -44,9 +45,7 @@ def _set_cookie(response: Response, token: str) -> None:
     response_model=ApiResponse[AuthUser],
 )
 def register(credentials: AuthCredentials):
-    password_hash = bcrypt.hashpw(
-        credentials.password.encode("utf-8"), bcrypt.gensalt()
-    ).decode("utf-8")
+    password_hash = hash_password(credentials.password)
     User = reflected_model("users")
     try:
         with get_cursor() as cursor:
@@ -57,7 +56,11 @@ def register(credentials: AuthCredentials):
     except IntegrityError:
         raise AppError("无法注册该用户名", 409, "USERNAME_UNAVAILABLE") from None
     return success(
-        {"id": user_id, "username": credentials.username},
+        {
+            "id": user_id,
+            "username": credentials.username,
+            "timezone": "Asia/Shanghai",
+        },
         "注册成功",
         code=201,
     )
@@ -67,7 +70,7 @@ def register(credentials: AuthCredentials):
 def login(credentials: AuthCredentials, request: Request, response: Response):
     settings = get_settings()
     identifier_hash = _privacy_hash(credentials.username)
-    ip_hash = _privacy_hash(request.client.host if request.client else "unknown")
+    ip_hash = _privacy_hash(get_client_ip(request))
     User = reflected_model("users")
     LoginEvent = reflected_model("auth_login_events")
     with get_cursor() as cursor:
@@ -75,7 +78,11 @@ def login(credentials: AuthCredentials, request: Request, response: Response):
             select(
                 func.coalesce(func.sum(case((LoginEvent.identifier_hash == identifier_hash, 1), else_=0)), 0),
                 func.coalesce(func.sum(case((LoginEvent.ip_hash == ip_hash, 1), else_=0)), 0),
-            ).where(LoginEvent.created_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=10))
+            ).where(
+                LoginEvent.succeeded.is_(False),
+                LoginEvent.created_at
+                >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=10),
+            )
         ).one()
         if settings.auth_rate_limit_enabled and (
             int(attempts[0] or 0) >= 8
@@ -86,8 +93,9 @@ def login(credentials: AuthCredentials, request: Request, response: Response):
         user = model_as_dict(user_model) if user_model is not None else None
 
     stored_hash = user["password"] if user else _DUMMY_HASH
-    password_ok = bcrypt.checkpw(
-        credentials.password.encode("utf-8"), stored_hash.encode("utf-8")
+    password_ok, replacement_hash = verify_password_and_rehash(
+        credentials.password,
+        stored_hash,
     )
     succeeded = bool(user and password_ok and user.get("is_active"))
     with get_cursor() as cursor:
@@ -99,11 +107,20 @@ def login(credentials: AuthCredentials, request: Request, response: Response):
             user_model = cursor.session.get(User, user["id"])
             if user_model is not None:
                 user_model.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                if replacement_hash:
+                    user_model.password = replacement_hash
     if not succeeded:
         raise AppError("用户名或密码错误", 401, "INVALID_CREDENTIALS")
     assert user is not None
     _set_cookie(response, create_access_token(user))
-    return success({"id": user["id"], "username": user["username"]}, "登录成功")
+    return success(
+        {
+            "id": user["id"],
+            "username": user["username"],
+            "timezone": user["timezone"],
+        },
+        "登录成功",
+    )
 
 
 @router.post("/logout", response_model=ApiResponse[None])

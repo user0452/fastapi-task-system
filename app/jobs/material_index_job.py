@@ -7,7 +7,12 @@ from uuid import uuid4
 
 from app.core.database import get_cursor
 from app.core.metrics import inc_counter, observe, set_gauge
-from app.modules.materials.service import backfill_knowledge_point_vectors, process_material
+from app.modules.materials.service import (
+    MATERIAL_DELETION_STATUSES,
+    MaterialProcessingCancelled,
+    backfill_knowledge_point_vectors,
+    process_material,
+)
 
 logger = logging.getLogger(__name__)
 LEASE_MINUTES = 60
@@ -168,6 +173,17 @@ def _finish_job(job: dict, *, error: Exception | None = None) -> None:
                 (job["id"], job["worker_id"]),
             )
             return
+        if isinstance(error, MaterialProcessingCancelled):
+            cursor.execute(
+                """
+                UPDATE material_processing_jobs
+                SET status = 'cancelled', worker_id = NULL, lease_expires_at = NULL,
+                    completed_at = CURRENT_TIMESTAMP(6), last_error = %s
+                WHERE id = %s
+                """,
+                (str(error)[:2000], job["id"]),
+            )
+            return
         retrying = int(job["attempts"]) < int(job["max_attempts"])
         if retrying:
             cursor.execute(
@@ -202,11 +218,19 @@ def run_material_processing_job(user_id: int, material_id: int) -> bool:
     """Claim and process one material; duplicate workers safely become no-ops."""
     with get_cursor() as cursor:
         cursor.execute(
-            "SELECT course_id FROM course_materials WHERE id = %s AND user_id = %s",
+            """
+            SELECT course_id, processing_status
+            FROM course_materials
+            WHERE id = %s AND user_id = %s
+            """,
             (material_id, user_id),
         )
         material = cursor.fetchone()
-    if material is None or material.get("course_id") is None:
+    if (
+        material is None
+        or material.get("course_id") is None
+        or material.get("processing_status") in MATERIAL_DELETION_STATUSES
+    ):
         return False
     enqueue_material_processing_job(user_id, material["course_id"], material_id)
     worker_id = _worker_id()

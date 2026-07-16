@@ -1,13 +1,14 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-import bcrypt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
 from app.core.config import get_settings
 from app.core.errors import ApiJSONResponse, error_payload
+from app.modules.auth.passwords import hash_password as _hash_password
+from app.modules.auth.passwords import verify_password as _verify_password
 
 _settings = get_settings()
 SECRET_KEY = _settings.secret_key
@@ -70,16 +71,11 @@ def require_current_user(
 
 
 def hash_password(password: str) -> str:
-    pwd_bytes = password.encode('utf-8')
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
+    return _hash_password(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(
-        plain_password.encode('utf-8'),
-        hashed_password.encode('utf-8')
-    )
+    return _verify_password(plain_password, hashed_password)
 
 
 def get_owned_task(cursor, task_id: int, user_id: int):

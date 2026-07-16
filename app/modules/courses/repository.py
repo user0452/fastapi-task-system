@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.models import Course, model_as_dict
+from app.models import Course, model_as_dict, reflected_model
 
 
 def _session(cursor: Any) -> Session:
@@ -33,6 +33,15 @@ def get_course(cursor, course_id: int, user_id: int) -> dict | None:
     return _course_dict(course)
 
 
+def get_course_for_update(cursor, course_id: int, user_id: int) -> dict | None:
+    course = _session(cursor).scalar(
+        select(Course)
+        .where(Course.id == course_id, Course.user_id == user_id)
+        .with_for_update()
+    )
+    return _course_dict(course)
+
+
 def get_current_course(cursor, user_id: int) -> dict | None:
     course = _session(cursor).scalar(
         select(Course)
@@ -45,6 +54,14 @@ def get_current_course(cursor, user_id: int) -> dict | None:
         .limit(1)
     )
     return _course_dict(course)
+
+
+def lock_user(cursor, user_id: int) -> bool:
+    User = reflected_model("users")
+    user = _session(cursor).scalar(
+        select(User.id).where(User.id == user_id).with_for_update()
+    )
+    return user is not None
 
 
 def create_course(cursor, user_id: int, data: dict, is_current: bool) -> dict:
@@ -72,7 +89,7 @@ def update_course(cursor, course_id: int, user_id: int, changes: dict) -> dict |
     if course is None:
         return None
     for field, value in changes.items():
-        if field in {"name", "goal", "exam_at", "daily_minutes", "status"}:
+        if field in {"name", "goal", "exam_at", "daily_minutes"}:
             setattr(course, field, value)
     session.flush()
     session.refresh(course)
@@ -95,14 +112,21 @@ def set_current_course(cursor, course_id: int, user_id: int) -> dict | None:
     return model_as_dict(course)
 
 
-def archive_course(cursor, course_id: int, user_id: int) -> bool:
+def transition_course_status(
+    cursor,
+    course_id: int,
+    user_id: int,
+    status: str,
+) -> dict | None:
     session = _session(cursor)
     course = session.scalar(
         select(Course).where(Course.id == course_id, Course.user_id == user_id).with_for_update()
     )
     if course is None:
-        return False
-    course.status = "archived"
-    course.is_current = False
+        return None
+    course.status = status
+    if status == "archived":
+        course.is_current = False
     session.flush()
-    return True
+    session.refresh(course)
+    return model_as_dict(course)

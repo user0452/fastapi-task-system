@@ -2,11 +2,22 @@ from sqlalchemy import update
 
 from app.core.database import get_cursor
 from app.core.errors import AppError
+from app.core.time_utils import to_utc_naive
 from app.models import reflected_model
+from app.modules.account.service import get_user_timezone
 from app.modules.agent import repository as agent_repository
 from app.modules.audit.service import record_audit
 from app.modules.courses import repository
 from app.modules.courses.schemas import CourseCreate, CourseUpdate
+
+COURSE_STATUS_TRANSITIONS = {
+    "draft": {"preparing", "archived"},
+    "preparing": {"diagnostic_pending", "archived"},
+    "diagnostic_pending": {"active", "archived"},
+    "active": {"completed", "archived"},
+    "completed": {"archived"},
+    "archived": set(),
+}
 
 
 def list_user_courses(user_id: int, include_archived: bool = False) -> list[dict]:
@@ -45,12 +56,16 @@ def get_user_current_course(user_id: int) -> dict | None:
 
 
 def create_user_course(user_id: int, request: CourseCreate) -> dict:
+    data = request.model_dump()
+    data["exam_at"] = to_utc_naive(data.get("exam_at"), get_user_timezone(user_id))
     with get_cursor() as cursor:
+        if not repository.lock_user(cursor, user_id):
+            raise AppError("用户不存在", 404, "USER_NOT_FOUND")
         current = repository.get_current_course(cursor, user_id)
         course = repository.create_course(
             cursor,
             user_id,
-            request.model_dump(),
+            data,
             is_current=current is None,
         )
         agent_repository.ensure_course_agent(cursor, user_id, course)
@@ -66,6 +81,12 @@ def create_user_course(user_id: int, request: CourseCreate) -> dict:
 
 
 def update_user_course(user_id: int, course_id: int, request: CourseUpdate) -> dict:
+    changes = request.model_dump(exclude_unset=True)
+    if "exam_at" in changes:
+        changes["exam_at"] = to_utc_naive(
+            changes["exam_at"],
+            get_user_timezone(user_id),
+        )
     with get_cursor() as cursor:
         if repository.get_course(cursor, course_id, user_id) is None:
             raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
@@ -73,10 +94,10 @@ def update_user_course(user_id: int, course_id: int, request: CourseUpdate) -> d
             cursor,
             course_id,
             user_id,
-            request.model_dump(exclude_unset=True),
+            changes,
         )
         if course is None:
-            raise AppError("璇剧▼涓嶅瓨鍦ㄦ垨鏃犺闂潈闄?", 404, "COURSE_NOT_FOUND")
+            raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
         agent_repository.ensure_course_agent(cursor, user_id, course)
         record_audit(
             user_id,
@@ -91,6 +112,8 @@ def update_user_course(user_id: int, course_id: int, request: CourseUpdate) -> d
 
 def select_user_course(user_id: int, course_id: int) -> dict:
     with get_cursor() as cursor:
+        if not repository.lock_user(cursor, user_id):
+            raise AppError("用户不存在", 404, "USER_NOT_FOUND")
         course = repository.set_current_course(cursor, course_id, user_id)
         if course is None:
             raise AppError("课程不存在、已归档或无访问权限", 404, "COURSE_NOT_FOUND")
@@ -99,12 +122,65 @@ def select_user_course(user_id: int, course_id: int) -> dict:
         return course
 
 
-def archive_user_course(user_id: int, course_id: int) -> None:
+def transition_user_course(user_id: int, course_id: int, target_status: str) -> dict:
+    if target_status == "archived":
+        return archive_user_course(user_id, course_id)
     with get_cursor() as cursor:
-        course = repository.get_course(cursor, course_id, user_id)
+        if not repository.lock_user(cursor, user_id):
+            raise AppError("用户不存在", 404, "USER_NOT_FOUND")
+        course = repository.get_course_for_update(cursor, course_id, user_id)
         if course is None:
             raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
-        repository.archive_course(cursor, course_id, user_id)
+        current_status = str(course["status"])
+        if target_status == current_status:
+            return course
+        if target_status not in COURSE_STATUS_TRANSITIONS.get(current_status, set()):
+            raise AppError(
+                f"课程不能从 {current_status} 转换为 {target_status}",
+                409,
+                "COURSE_STATUS_TRANSITION_INVALID",
+            )
+        updated = repository.transition_course_status(
+            cursor,
+            course_id,
+            user_id,
+            target_status,
+        )
+        if updated is None:
+            raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        agent_repository.ensure_course_agent(cursor, user_id, updated)
+        record_audit(
+            user_id,
+            "COURSE_STATUS_CHANGED",
+            "course",
+            course_id,
+            {"from": current_status, "to": target_status},
+            cursor=cursor,
+        )
+        return updated
+
+
+def complete_user_course(user_id: int, course_id: int) -> dict:
+    return transition_user_course(user_id, course_id, "completed")
+
+
+def archive_user_course(user_id: int, course_id: int) -> dict:
+    with get_cursor() as cursor:
+        if not repository.lock_user(cursor, user_id):
+            raise AppError("用户不存在", 404, "USER_NOT_FOUND")
+        course = repository.get_course_for_update(cursor, course_id, user_id)
+        if course is None:
+            raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        if course["status"] == "archived":
+            return course
+        archived = repository.transition_course_status(
+            cursor,
+            course_id,
+            user_id,
+            "archived",
+        )
+        if archived is None:
+            raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
         CourseAgent = reflected_model("course_agents")
         cursor.session.execute(
             update(CourseAgent)
@@ -116,3 +192,4 @@ def archive_user_course(user_id: int, course_id: int) -> None:
             remaining = repository.list_courses(cursor, user_id)
             if remaining:
                 repository.set_current_course(cursor, remaining[0]["id"], user_id)
+        return archived

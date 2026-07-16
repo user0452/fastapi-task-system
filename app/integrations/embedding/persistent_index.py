@@ -16,6 +16,7 @@ ROOT_DIR = Path(__file__).resolve().parents[3]
 INDEX_ROOT = Path(os.getenv("RAG_INDEX_DIR", ROOT_DIR / "var" / "rag_indexes")).resolve()
 _LOCK = RLock()
 _CACHE: dict[str, tuple[int, object]] = {}
+INDEX_FORMAT_VERSION = 1
 
 
 def _index_path(user_id: int, course_id: int) -> Path:
@@ -26,12 +27,21 @@ def _metadata_path(user_id: int, course_id: int) -> Path:
     return _index_path(user_id, course_id).with_suffix(".json")
 
 
+def _read_metadata(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def rebuild_course_vector_index(
     user_id: int,
     course_id: int,
     rows: list[dict],
     *,
     embedding_model: str,
+    generation: int,
 ) -> int:
     """Atomically replace one course index using already-persisted embeddings."""
     import faiss
@@ -60,9 +70,32 @@ def rebuild_course_vector_index(
     metadata = _metadata_path(user_id, course_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK:
+        current_metadata = _read_metadata(metadata)
+        current_generation = int(current_metadata.get("generation") or 0)
+        if current_generation > int(generation):
+            return int(current_metadata.get("count") or 0)
         if not vectors:
             target.unlink(missing_ok=True)
-            metadata.unlink(missing_ok=True)
+            meta_temp = metadata.with_name(f"{metadata.name}.{uuid4().hex}.tmp")
+            try:
+                meta_temp.write_text(
+                    json.dumps(
+                        {
+                            "user_id": int(user_id),
+                            "course_id": int(course_id),
+                            "embedding_model": embedding_model,
+                            "dimension": 0,
+                            "count": 0,
+                            "generation": int(generation),
+                            "index_version": INDEX_FORMAT_VERSION,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                os.replace(meta_temp, metadata)
+            finally:
+                meta_temp.unlink(missing_ok=True)
             _CACHE.pop(str(target), None)
             return 0
         matrix = np.vstack(vectors).astype("float32")
@@ -81,6 +114,8 @@ def rebuild_course_vector_index(
                         "embedding_model": embedding_model,
                         "dimension": dimension,
                         "count": len(ids),
+                        "generation": int(generation),
+                        "index_version": INDEX_FORMAT_VERSION,
                     },
                     ensure_ascii=False,
                 ),

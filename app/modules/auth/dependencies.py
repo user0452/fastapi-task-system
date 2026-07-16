@@ -36,7 +36,11 @@ def get_current_user(
         or int(user.get("token_version") or 0) != token_version
     ):
         raise AppError("登录状态无效，请重新登录", 401, "AUTH_REVOKED")
-    return {"id": user["id"], "username": user["username"]}
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "timezone": user["timezone"],
+    }
 
 
 __all__ = ["get_current_user"]

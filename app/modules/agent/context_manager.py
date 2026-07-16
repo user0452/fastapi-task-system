@@ -80,6 +80,7 @@ def build_agent_context(
     memories: list[dict],
     messages: list[dict],
     conversation_summary: str | None,
+    server_time: str | None = None,
 ) -> tuple[str, dict]:
     """Assemble layers under an explicit model-token budget."""
     weak_points = sorted(
@@ -102,6 +103,7 @@ def build_agent_context(
             for memory in selected_memories
         ],
         "conversation_summary": (conversation_summary or "")[:3500],
+        "server_time": server_time,
     }
     fixed_text = _compact(fixed_layers, 4_200)
     remaining = max(800, MAX_CONTEXT_TOKENS - estimate_tokens(fixed_text))

@@ -42,6 +42,7 @@ def get_engine() -> Engine:
     if _engine is None:
         _engine = create_engine(
             database_url(),
+            connect_args={"init_command": "SET time_zone = '+00:00'"},
             pool_size=5,
             max_overflow=15,
             pool_timeout=30,
@@ -57,6 +58,15 @@ def get_session_factory() -> sessionmaker[Session]:
     if _session_factory is None:
         _session_factory = sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
     return _session_factory
+
+
+def dispose_engine() -> None:
+    """Release pooled connections so a disposable test database can be dropped."""
+    global _engine, _session_factory
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    _session_factory = None
 
 
 @contextmanager

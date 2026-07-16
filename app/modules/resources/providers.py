@@ -1,7 +1,7 @@
 import html
 import re
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Protocol
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -16,6 +16,33 @@ TRACKING_KEYS = {
     "si",
     "share_source",
     "share_medium",
+}
+ALLOWED_VIDEO_HOSTS = {
+    "bilibili.com",
+    "m.bilibili.com",
+    "www.bilibili.com",
+    "youtube.com",
+    "m.youtube.com",
+    "www.youtube.com",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+    "youtu.be",
+    "www.youtu.be",
+}
+CANONICAL_VIDEO_HOSTS = {
+    "m.bilibili.com": "bilibili.com",
+    "www.bilibili.com": "bilibili.com",
+    "m.youtube.com": "youtube.com",
+    "www.youtube.com": "youtube.com",
+    "www.youtube-nocookie.com": "youtube-nocookie.com",
+    "www.youtu.be": "youtu.be",
+}
+ALLOWED_IMAGE_HOSTS = {
+    "archive.biliimg.com",
+    "img.youtube.com",
+    "i.ytimg.com",
+    "s1.hdslb.com",
+    *(f"i{index}.hdslb.com" for index in range(10)),
 }
 
 
@@ -80,16 +107,26 @@ def canonicalize_url(value: str) -> str | None:
         return None
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
-    host = parsed.netloc.lower()
-    if host.startswith("www."):
-        host = host[4:]
+    try:
+        host = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        host not in ALLOWED_VIDEO_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 80, 443}
+    ):
+        return None
+    host = CANONICAL_VIDEO_HOSTS.get(host, host)
     query = []
     for key, item in parse_qsl(parsed.query, keep_blank_values=False):
         if key.lower().startswith("utm_") or key.lower() in TRACKING_KEYS:
             continue
-        if "bilibili.com" in host:
+        if host == "bilibili.com":
             continue
-        if "youtube.com" in host and key != "v":
+        if host in {"youtube.com", "youtube-nocookie.com"} and key != "v":
             continue
         query.append((key, item))
     return urlunparse(("https", host, parsed.path.rstrip("/"), "", urlencode(query), ""))
@@ -106,6 +143,18 @@ def normalize_image_url(value: str | None) -> str | None:
     parsed = urlparse(normalized)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
+    try:
+        host = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        host not in ALLOWED_IMAGE_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 80, 443}
+    ):
+        return None
     lowered = parsed.path.lower()
     if "favicon" in lowered or "transparent.png" in lowered:
         return None
@@ -115,6 +164,16 @@ def normalize_image_url(value: str | None) -> str | None:
 def _plain_text(value: str | None) -> str:
     without_tags = re.sub(r"<[^>]+>", "", value or "")
     return html.unescape(without_tags).strip()
+
+
+def _response_json(response: requests.Response, provider: str) -> dict:
+    try:
+        payload = response.json()
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{provider} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{provider} returned a non-object JSON payload")
+    return payload
 
 
 def _duration_seconds(value) -> int | None:
@@ -173,7 +232,7 @@ class BilibiliProvider:
             timeout=timeout,
         )
         response.raise_for_status()
-        body = response.json()
+        body = _response_json(response, self.name)
         if body.get("code") != 0:
             raise RuntimeError(body.get("message") or "Bilibili 搜索暂时不可用")
         rows = body.get("data", {}).get("result") or []
@@ -188,7 +247,7 @@ class BilibiliProvider:
             published = None
             if row.get("pubdate"):
                 try:
-                    published = datetime.fromtimestamp(int(row["pubdate"]))
+                    published = datetime.fromtimestamp(int(row["pubdate"]), tz=timezone.utc)
                 except (TypeError, ValueError, OSError):
                     published = None
             candidates.append(
@@ -233,7 +292,7 @@ class YouTubeProvider:
         }
         response = requests.get(self.search_url, params=params, timeout=settings.external_resource_timeout_seconds)
         response.raise_for_status()
-        items = response.json().get("items") or []
+        items = _response_json(response, self.name).get("items") or []
         video_ids = [item.get("id", {}).get("videoId") for item in items]
         video_ids = [item for item in video_ids if item]
         details = {}
@@ -248,7 +307,10 @@ class YouTubeProvider:
                 timeout=settings.external_resource_timeout_seconds,
             )
             detail_response.raise_for_status()
-            details = {item["id"]: item for item in detail_response.json().get("items") or []}
+            details = {
+                item["id"]: item
+                for item in _response_json(detail_response, self.name).get("items") or []
+            }
         candidates = []
         for item in items:
             video_id = item.get("id", {}).get("videoId")
@@ -311,7 +373,7 @@ class TavilyVideoProvider:
             timeout=settings.external_resource_timeout_seconds,
         )
         response.raise_for_status()
-        body = response.json()
+        body = _response_json(response, self.name)
         candidates = []
         for row in body.get("results") or []:
             raw_url = row.get("url") or ""

@@ -1,8 +1,9 @@
 import json
-from datetime import date, datetime
+from datetime import date
 
 from sqlalchemy import select
 
+from app.core.time_utils import utc_now_naive
 from app.models import model_as_dict, reflected_model
 
 
@@ -23,7 +24,7 @@ def list_points_with_mastery(cursor, user_id: int, course_id: int) -> list[dict]
           ON mr.knowledge_point_id = kp.id
          AND mr.user_id = %s
          AND mr.course_id = %s
-        WHERE kp.user_id = %s AND kp.course_id = %s
+        WHERE kp.user_id = %s AND kp.course_id = %s AND kp.status = 'active'
         ORDER BY mastery ASC, kp.sort_order ASC, kp.id ASC
         """,
         (user_id, course_id, user_id, course_id),
@@ -199,9 +200,8 @@ def claim_evaluation_attempt(
     attempt = get_evaluation_attempt(cursor, user_id, attempt_key, for_update=True)
     if attempt is None:
         raise RuntimeError("evaluation attempt could not be claimed or loaded")
-    reclaimable = (
-        attempt["status"] == "failed"
-        or (attempt["status"] == "evaluating" and attempt["updated_at"] < stale_before)
+    reclaimable = attempt["status"] in {"failed", "evaluation_failed"} or (
+        attempt["status"] == "evaluating" and attempt["updated_at"] < stale_before
     )
     if reclaimable:
         cursor.execute(
@@ -221,37 +221,104 @@ def claim_evaluation_attempt(
     return attempt, False
 
 
+def mark_evaluation_attempt_evaluated(
+    cursor,
+    attempt_id: int,
+    evaluation_id: int,
+    result: dict,
+) -> None:
+    cursor.execute(
+        """
+        UPDATE evaluation_attempts
+        SET status = 'evaluated', evaluation_id = %s, result_json = %s,
+            error_message = NULL, completed_at = NULL
+        WHERE id = %s AND status = 'evaluating'
+        """,
+        (evaluation_id, json.dumps(result, ensure_ascii=False, default=str), attempt_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError("evaluation attempt is no longer owned by this evaluator")
+
+
+def claim_evaluation_planning(
+    cursor,
+    *,
+    user_id: int,
+    attempt_key: str,
+    request_hash: str,
+    started_at,
+    stale_before,
+) -> tuple[dict, bool]:
+    attempt = get_evaluation_attempt(cursor, user_id, attempt_key, for_update=True)
+    if attempt is None:
+        raise RuntimeError("evaluation attempt was not found before planning")
+    if attempt["request_hash"] != request_hash:
+        return attempt, False
+    reclaimable = attempt["status"] in {"evaluated", "planning_failed"} or (
+        attempt["status"] == "planning" and attempt["updated_at"] < stale_before
+    )
+    if reclaimable:
+        cursor.execute(
+            """
+            UPDATE evaluation_attempts
+            SET status = 'planning', error_message = NULL, started_at = %s,
+                completed_at = NULL
+            WHERE id = %s
+            """,
+            (started_at, attempt["id"]),
+        )
+        claimed = get_evaluation_attempt(cursor, user_id, attempt_key, for_update=True)
+        if claimed is None:
+            raise RuntimeError("evaluation planning claim was lost")
+        return claimed, True
+    return attempt, False
+
+
 def finish_evaluation_attempt(
     cursor,
     attempt_id: int,
     evaluation_id: int,
     result: dict,
     completed_at,
+    *,
+    expected_status: str = "evaluating",
 ) -> None:
+    if expected_status not in {"evaluating", "evaluated", "planning"}:
+        raise ValueError("invalid expected evaluation attempt status")
     cursor.execute(
-        """
+        f"""
         UPDATE evaluation_attempts
         SET status = 'completed', evaluation_id = %s, result_json = %s,
             error_message = NULL, completed_at = %s
-        WHERE id = %s AND status = 'evaluating'
+        WHERE id = %s AND status = '{expected_status}'
         """,
         (evaluation_id, json.dumps(result, ensure_ascii=False, default=str), completed_at, attempt_id),
     )
+    if cursor.rowcount != 1:
+        raise RuntimeError("evaluation attempt could not be completed from its current state")
 
 
-def update_evaluation_attempt_result(cursor, attempt_id: int, result: dict) -> None:
+def fail_evaluation_attempt(
+    cursor,
+    attempt_id: int,
+    error_message: str,
+    completed_at,
+    *,
+    phase: str = "evaluation",
+) -> None:
+    if phase == "evaluation":
+        expected_status = "evaluating"
+        failed_status = "evaluation_failed"
+    elif phase == "planning":
+        expected_status = "planning"
+        failed_status = "planning_failed"
+    else:
+        raise ValueError("invalid evaluation failure phase")
     cursor.execute(
-        "UPDATE evaluation_attempts SET result_json = %s WHERE id = %s AND status = 'completed'",
-        (json.dumps(result, ensure_ascii=False, default=str), attempt_id),
-    )
-
-
-def fail_evaluation_attempt(cursor, attempt_id: int, error_message: str, completed_at) -> None:
-    cursor.execute(
-        """
+        f"""
         UPDATE evaluation_attempts
-        SET status = 'failed', error_message = %s, completed_at = %s
-        WHERE id = %s AND status = 'evaluating'
+        SET status = '{failed_status}', error_message = %s, completed_at = %s
+        WHERE id = %s AND status = '{expected_status}'
         """,
         (error_message[:2000], completed_at, attempt_id),
     )
@@ -528,11 +595,11 @@ def update_session_status(
         return
     if status == "in_progress":
         session_model.status = status
-        session_model.started_at = session_model.started_at or datetime.now()
+        session_model.started_at = session_model.started_at or utc_now_naive()
     else:
         session_model.status = status
         session_model.actual_minutes = actual_minutes if actual_minutes is not None else session_model.actual_minutes
-        session_model.completed_at = datetime.now()
+        session_model.completed_at = utc_now_naive()
 
 
 def get_questions_by_ids(cursor, question_ids: list[int], user_id: int) -> list[dict]:
@@ -649,6 +716,56 @@ def get_course_plan(cursor, user_id: int, course_id: int) -> dict | None:
     return plan
 
 
+def get_plan_for_diagnostic(
+    cursor,
+    user_id: int,
+    course_id: int,
+    quiz_set_id: int,
+) -> dict | None:
+    cursor.execute(
+        """
+        SELECT DISTINCT plan.id
+        FROM study_plans plan
+        JOIN study_sessions session_row ON session_row.plan_id = plan.id
+        JOIN study_session_items item ON item.session_id = session_row.id
+        JOIN quiz_questions question_row
+          ON item.source_key = CONCAT('plan:practice:', question_row.id)
+        WHERE plan.user_id = %s AND plan.course_id = %s AND plan.status = 'active'
+          AND question_row.quiz_set_id = %s
+        ORDER BY plan.id DESC
+        LIMIT 1
+        """,
+        (user_id, course_id, quiz_set_id),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    StudyPlan = reflected_model("study_plans")
+    plan = _row(
+        cursor.session.scalar(
+            select(StudyPlan).where(
+                StudyPlan.id == row["id"],
+                StudyPlan.user_id == user_id,
+                StudyPlan.course_id == course_id,
+            )
+        )
+    )
+    if plan is None:
+        return None
+    StudySession = reflected_model("study_sessions")
+    session_ids = cursor.session.scalars(
+        select(StudySession.id)
+        .where(
+            StudySession.user_id == user_id,
+            StudySession.course_id == course_id,
+            StudySession.plan_id == plan["id"],
+        )
+        .order_by(StudySession.scheduled_date, StudySession.id)
+    )
+    plan["sessions"] = [get_session(cursor, session_id, user_id) for session_id in session_ids]
+    return plan
+
+
 def practice_statistics(cursor, user_id: int, course_id: int) -> dict:
     cursor.execute(
         """
@@ -721,7 +838,7 @@ def list_wrong_answers(cursor, user_id: int, course_id: int, limit: int = 100) -
         """
         SELECT answer.id, answer.evaluation_id, answer.question_id,
                answer.knowledge_point_id, point.name AS knowledge_point_name,
-               question.question_type, question.question, question.answer AS reference_answer,
+               question.question_type, question.question,
                answer.user_answer, answer.score, answer.feedback, answer.created_at
         FROM evaluation_answers answer
         JOIN learning_evaluations evaluation ON evaluation.id = answer.evaluation_id

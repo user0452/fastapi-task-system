@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -27,7 +27,21 @@ def _resource(resource: Any | None) -> dict | None:
         return None
     row = model_as_dict(resource)
     row["metadata"] = _loads(row.pop("metadata_json", None), {})
+    if isinstance(row.get("published_at"), datetime):
+        published_at = row["published_at"]
+        row["published_at"] = (
+            published_at.replace(tzinfo=timezone.utc)
+            if published_at.tzinfo is None
+            else published_at.astimezone(timezone.utc)
+        )
     return row
+
+
+def _utc_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return aware.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _resource_models():
@@ -77,7 +91,7 @@ def upsert_resource(cursor, user_id: int, course_id: int, item: dict) -> dict:
             summary=item.get("summary"),
             thumbnail_url=item.get("thumbnail_url"),
             duration_seconds=item.get("duration_seconds"),
-            published_at=item.get("published_at"),
+            published_at=_utc_naive(item.get("published_at")),
             language=item.get("language", "zh-CN"),
             relevance_score=item.get("relevance_score", 0),
             quality_score=item.get("quality_score", 0),
@@ -96,7 +110,7 @@ def upsert_resource(cursor, user_id: int, course_id: int, item: dict) -> dict:
         resource.summary = item.get("summary") or resource.summary
         resource.thumbnail_url = item.get("thumbnail_url") or resource.thumbnail_url
         resource.duration_seconds = item.get("duration_seconds") or resource.duration_seconds
-        resource.published_at = item.get("published_at") or resource.published_at
+        resource.published_at = _utc_naive(item.get("published_at")) or resource.published_at
         resource.relevance_score = max(float(resource.relevance_score or 0), item.get("relevance_score", 0))
         resource.quality_score = max(float(resource.quality_score or 0), item.get("quality_score", 0))
         resource.search_query = item.get("search_query", "")[:500]

@@ -96,3 +96,7 @@ def read_upload(storage_path: str) -> bytes:
     if path.stat().st_size > MAX_UPLOAD_SIZE:
         raise ValueError("文件过大，当前最大支持 100MB")
     return path.read_bytes()
+
+
+def remove_upload(storage_path: str) -> None:
+    resolve_upload_path(storage_path).unlink(missing_ok=True)

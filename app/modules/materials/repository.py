@@ -65,12 +65,26 @@ def get_material(cursor, material_id: int, user_id: int) -> dict | None:
     return cursor.fetchone()
 
 
+def get_material_for_update(cursor, material_id: int, user_id: int) -> dict | None:
+    cursor.execute(
+        f"""
+        SELECT {MATERIAL_COLUMNS}
+        FROM course_materials
+        WHERE id = %s AND user_id = %s
+        FOR UPDATE
+        """,
+        (material_id, user_id),
+    )
+    return cursor.fetchone()
+
+
 def list_course_materials(cursor, course_id: int, user_id: int) -> list[dict]:
     cursor.execute(
         f"""
         SELECT {MATERIAL_SUMMARY_COLUMNS}
         FROM course_materials
         WHERE course_id = %s AND user_id = %s
+          AND processing_status <> 'deleted'
         ORDER BY id DESC
         """,
         (course_id, user_id),
@@ -79,10 +93,38 @@ def list_course_materials(cursor, course_id: int, user_id: int) -> list[dict]:
 
 
 def delete_material(cursor, material_id: int, user_id: int) -> dict | None:
-    """Delete one owned material while retaining mastery-bearing knowledge nodes."""
-    material = get_material(cursor, material_id, user_id)
+    """Prepare an idempotent material deletion while retaining its tombstone."""
+    material = get_material_for_update(cursor, material_id, user_id)
     if material is None:
         return None
+    if material.get("processing_status") == "deleted":
+        return {
+            "material": material,
+            "removed_chunk_count": 0,
+            "removed_knowledge_point_ids": [],
+            "orphaned_knowledge_point_ids": [],
+            "already_deleted": True,
+        }
+
+    cursor.execute(
+        """
+        UPDATE course_materials
+        SET processing_status = 'deleting', index_status = 'deleting',
+            processing_error = NULL
+        WHERE id = %s AND user_id = %s
+        """,
+        (material_id, user_id),
+    )
+    cursor.execute(
+        """
+        UPDATE material_processing_jobs
+        SET status = 'cancelled', worker_id = NULL, lease_expires_at = NULL,
+            completed_at = CURRENT_TIMESTAMP(6), last_error = 'material deletion requested'
+        WHERE material_id = %s AND user_id = %s
+          AND status IN ('queued', 'running', 'failed')
+        """,
+        (material_id, user_id),
+    )
 
     cursor.execute(
         "SELECT id FROM course_material_chunks WHERE material_id = %s AND user_id = %s",
@@ -104,7 +146,7 @@ def delete_material(cursor, material_id: int, user_id: int) -> dict | None:
         affected_point_ids = {int(row["knowledge_point_id"]) for row in cursor.fetchall()}
 
     cursor.execute(
-        "DELETE FROM course_materials WHERE id = %s AND user_id = %s",
+        "DELETE FROM course_material_chunks WHERE material_id = %s AND user_id = %s",
         (material_id, user_id),
     )
 
@@ -142,6 +184,7 @@ def delete_material(cursor, material_id: int, user_id: int) -> dict | None:
         "removed_chunk_count": len(removed_chunk_ids),
         "removed_knowledge_point_ids": [],
         "orphaned_knowledge_point_ids": orphaned_point_ids,
+        "already_deleted": False,
     }
 
 
@@ -154,6 +197,10 @@ def update_material(cursor, material_id: int, user_id: int, **changes) -> dict |
         "processing_error",
         "file_hash",
         "chunker_version",
+        "storage_path",
+        "filename",
+        "mime_type",
+        "file_size",
     }
     updates = []
     values: list[Any] = []
@@ -708,6 +755,7 @@ def list_knowledge_point_relations(cursor, course_id: int, user_id: int) -> list
         JOIN knowledge_points source ON source.id = relation.source_point_id
         JOIN knowledge_points target ON target.id = relation.target_point_id
         WHERE relation.course_id = %s AND relation.user_id = %s
+          AND source.status = 'active' AND target.status = 'active'
         ORDER BY source.sort_order, target.sort_order, relation.id
         """,
         (course_id, user_id),

@@ -1,16 +1,18 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.core.request_models import TrimmedRequestModel
 
 
-class ExternalResourceSearchRequest(BaseModel):
+class ExternalResourceSearchRequest(TrimmedRequestModel):
     topic: str = Field(..., min_length=1, max_length=200)
     knowledge_point_id: int | None = Field(default=None, gt=0)
     max_results: int = Field(default=4, ge=3, le=6)
     force_refresh: bool = False
 
 
-class ResourceInteractionRequest(BaseModel):
+class ResourceInteractionRequest(TrimmedRequestModel):
     interaction_type: Literal[
         "opened",
         "saved",

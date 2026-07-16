@@ -80,6 +80,7 @@ def _resolve_knowledge_point(
              AND mastery.user_id = point.user_id
              AND mastery.course_id = point.course_id
             WHERE point.user_id = %s AND point.course_id = %s
+              AND point.status = 'active'
             ORDER BY point.sort_order, point.id
             """,
             (user_id, course_id),

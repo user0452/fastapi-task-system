@@ -1,5 +1,11 @@
 import asyncio
+import json
+import shutil
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from pathlib import Path
+from threading import Barrier, Event
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -8,7 +14,10 @@ from starlette.datastructures import Headers, UploadFile
 from app.core.database import get_cursor
 from app.core.errors import AppError
 from app.integrations import file_storage
+from app.integrations.embedding import persistent_index
+from app.integrations.file_storage import StoredUpload
 from app.integrations.llm import knowledge_extractor
+from app.jobs.material_index_job import enqueue_material_processing_job
 from app.modules.courses.schemas import CourseCreate
 from app.modules.courses.service import create_user_course, get_user_course
 from app.modules.materials import service as materials_service
@@ -131,8 +140,16 @@ def test_material_delete_removes_chunks_and_owned_knowledge(api_client, two_user
     assert deleted.json()["data"]["removed_chunk_count"] >= 1
 
     with get_cursor() as cursor:
-        cursor.execute("SELECT COUNT(*) AS total FROM course_materials WHERE id = %s", (material["id"],))
-        assert cursor.fetchone()["total"] == 0
+        cursor.execute(
+            """
+            SELECT processing_status, storage_path
+            FROM course_materials WHERE id = %s
+            """,
+            (material["id"],),
+        )
+        tombstone = cursor.fetchone()
+        assert tombstone["processing_status"] == "deleted"
+        assert tombstone["storage_path"] is None
         cursor.execute("SELECT COUNT(*) AS total FROM course_material_chunks WHERE material_id = %s", (material["id"],))
         assert cursor.fetchone()["total"] == 0
         cursor.execute(
@@ -143,6 +160,230 @@ def test_material_delete_removes_chunks_and_owned_knowledge(api_client, two_user
             (course["id"],),
         )
         assert cursor.fetchone()["total"] == 3
+
+    repeated = api_client.delete(f"/api/v1/materials/{material['id']}")
+    assert repeated.status_code == 200
+    assert repeated.json()["data"]["deleted"] is True
+    assert repeated.json()["data"]["already_deleted"] is True
+
+
+def test_uploaded_file_is_removed_when_database_insert_fails(two_users, monkeypatch, tmp_path):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="上传回滚课程"))
+    monkeypatch.setattr(file_storage, "UPLOAD_ROOT", tmp_path.resolve())
+    user_dir = tmp_path / str(user["id"])
+    user_dir.mkdir(parents=True)
+    stored_path = user_dir / "db-failure.txt"
+    stored_path.write_text("待回滚文件", encoding="utf-8")
+    upload = StoredUpload(
+        original_filename="db-failure.txt",
+        storage_path=str(stored_path),
+        mime_type="text/plain",
+        size=stored_path.stat().st_size,
+    )
+
+    monkeypatch.setattr(
+        materials_service.repository,
+        "create_file_material",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("database insert failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="database insert failed"):
+        materials_service.create_uploaded_material(
+            user["id"],
+            course["id"],
+            "数据库失败资料",
+            upload,
+        )
+    assert not stored_path.exists()
+
+
+def test_upload_validates_course_before_saving_file(api_client, monkeypatch):
+    saved = False
+
+    async def save_must_not_run(*args, **kwargs):
+        nonlocal saved
+        saved = True
+        raise AssertionError("file must not be saved before course ownership validation")
+
+    monkeypatch.setattr("app.modules.materials.router.save_upload", save_must_not_run)
+    response = api_client.post(
+        "/api/v1/courses/2147483647/materials/upload",
+        data={"title": "越权上传"},
+        files={"file": ("material.txt", b"content", "text/plain")},
+    )
+
+    assert response.status_code == 404
+    assert saved is False
+
+
+def test_delete_recovers_after_index_rebuild_failure(two_users, monkeypatch, tmp_path):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="删除恢复课程"))
+    monkeypatch.setattr(file_storage, "UPLOAD_ROOT", tmp_path.resolve())
+    user_dir = tmp_path / str(user["id"])
+    user_dir.mkdir(parents=True)
+    stored_path = user_dir / "recoverable-delete.txt"
+    stored_path.write_text("可恢复删除资料正文", encoding="utf-8")
+    material = materials_service.create_uploaded_material(
+        user["id"],
+        course["id"],
+        "可恢复删除资料",
+        StoredUpload(
+            original_filename=stored_path.name,
+            storage_path=str(stored_path),
+            mime_type="text/plain",
+            size=stored_path.stat().st_size,
+        ),
+    )
+    process_material(
+        user["id"],
+        material["id"],
+        embedding_provider=_fake_embeddings,
+        knowledge_provider=_fake_knowledge_points,
+    )
+    enqueue_material_processing_job(user["id"], course["id"], material["id"])
+    real_rebuild = materials_service._rebuild_vector_index
+    monkeypatch.setattr(
+        materials_service,
+        "_rebuild_vector_index",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("index rebuild failed")),
+    )
+
+    with pytest.raises(AppError) as failed:
+        delete_user_material(user["id"], material["id"])
+    assert failed.value.error_code == "MATERIAL_DELETE_RETRYABLE"
+    assert stored_path.exists()
+
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT processing_status, index_status
+            FROM course_materials WHERE id = %s
+            """,
+            (material["id"],),
+        )
+        failed_material = cursor.fetchone()
+        assert failed_material == {"processing_status": "delete_failed", "index_status": "failed"}
+        cursor.execute(
+            "SELECT COUNT(*) AS total FROM course_material_chunks WHERE material_id = %s",
+            (material["id"],),
+        )
+        assert cursor.fetchone()["total"] == 0
+        cursor.execute(
+            "SELECT status FROM material_processing_jobs WHERE material_id = %s",
+            (material["id"],),
+        )
+        assert cursor.fetchone()["status"] == "cancelled"
+
+    monkeypatch.setattr(materials_service, "_rebuild_vector_index", real_rebuild)
+    recovered = delete_user_material(user["id"], material["id"])
+    assert recovered["deleted"] is True
+    assert not stored_path.exists()
+    repeated = delete_user_material(user["id"], material["id"])
+    assert repeated["already_deleted"] is True
+
+
+def test_deleting_material_invalidates_inflight_processing(two_users):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="处理中删除课程"))
+    material = create_text_material(
+        user["id"],
+        course["id"],
+        TextMaterialCreate(title="处理中资料", content="这是一段正在生成向量的资料内容。"),
+    )
+    embedding_started = Event()
+    release_embedding = Event()
+
+    def slow_embeddings(texts):
+        embedding_started.set()
+        assert release_embedding.wait(timeout=10)
+        return _fake_embeddings(texts)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            process_material,
+            user["id"],
+            material["id"],
+            slow_embeddings,
+            _fake_knowledge_points,
+        )
+        assert embedding_started.wait(timeout=10)
+        deleted = delete_user_material(user["id"], material["id"])
+        assert deleted["deleted"] is True
+        release_embedding.set()
+        with pytest.raises(materials_service.MaterialProcessingCancelled):
+            future.result(timeout=20)
+
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT processing_status FROM course_materials WHERE id = %s",
+            (material["id"],),
+        )
+        assert cursor.fetchone()["processing_status"] == "deleted"
+        cursor.execute(
+            "SELECT COUNT(*) AS total FROM course_material_chunks WHERE material_id = %s",
+            (material["id"],),
+        )
+        assert cursor.fetchone()["total"] == 0
+
+
+def test_concurrent_material_indexing_keeps_both_materials(
+    two_users,
+    monkeypatch,
+):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="并发索引课程"))
+    first = create_text_material(
+        user["id"],
+        course["id"],
+        TextMaterialCreate(title="并发资料一", content="第一份并发索引资料。"),
+    )
+    second = create_text_material(
+        user["id"],
+        course["id"],
+        TextMaterialCreate(title="并发资料二", content="第二份并发索引资料。"),
+    )
+    index_root = (
+        Path.cwd()
+        / "var"
+        / "test-rag-indexes"
+        / uuid4().hex
+    ).resolve()
+    index_root.mkdir(parents=True)
+    monkeypatch.setattr(persistent_index, "INDEX_ROOT", index_root)
+    embedding_barrier = Barrier(2)
+
+    def concurrent_embeddings(texts):
+        embedding_barrier.wait(timeout=15)
+        return _fake_embeddings(texts)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    process_material,
+                    user["id"],
+                    material_id,
+                    concurrent_embeddings,
+                    _fake_knowledge_points,
+                )
+                for material_id in (first["id"], second["id"])
+            ]
+            results = [future.result(timeout=30) for future in futures]
+
+        metadata_path = (
+            index_root
+            / str(user["id"])
+            / f"course-{course['id']}.json"
+        )
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        assert metadata["count"] == 2
+        assert metadata["generation"] > 0
+        assert metadata["index_version"] == persistent_index.INDEX_FORMAT_VERSION
+        assert max(result["vector_index_count"] for result in results) == 2
+    finally:
+        shutil.rmtree(index_root, ignore_errors=True)
 
 
 def test_knowledge_definition_summary_and_examples_are_vectorized(two_users):
@@ -327,7 +568,7 @@ def test_course_search_returns_standard_citations(api_client, two_users, monkeyp
         knowledge_provider=_fake_knowledge_points,
     )
 
-    def fake_search(_query, chunks, _points, _top_k):
+    def fake_search(_query, chunks, _points, _top_k, **_kwargs):
         return [
             {
                 **chunks[0],
@@ -360,3 +601,91 @@ def test_course_search_returns_standard_citations(api_client, two_users, monkeyp
     assert payload["trace"]["trace_id"]
     assert payload["trace"]["candidate_chunks"] >= 1
     assert payload["trace"]["timings_ms"]["total"] >= 0
+
+
+def test_rag_candidate_sources_keep_independent_quotas(two_users, monkeypatch):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="候选融合课程"))
+    query = "独有关键词"
+    embedding_calls = []
+    captured_ids = []
+
+    def counted_embeddings(texts):
+        embedding_calls.append(list(texts))
+        return np.tile(np.array([[1.0, 0.0]], dtype="float32"), (len(texts), 1))
+
+    point = {
+        "id": 500,
+        "name": query,
+        "description": "知识点主动召回",
+        "summary": "",
+        "examples": [],
+        "source_chunk_ids": [777],
+        "embedding_json": json.dumps([1.0, 0.0]),
+        "extraction_confidence": 1.0,
+        "status": "active",
+    }
+
+    monkeypatch.setattr(materials_service, "embed_texts", counted_embeddings)
+    monkeypatch.setattr(
+        materials_service.repository,
+        "count_course_search_terms",
+        lambda *_args: 1,
+    )
+    monkeypatch.setattr(
+        materials_service.repository,
+        "keyword_candidate_ids",
+        lambda *_args: [999],
+    )
+    monkeypatch.setattr(
+        materials_service.repository,
+        "list_knowledge_points",
+        lambda *_args: [point],
+    )
+    monkeypatch.setattr(
+        materials_service,
+        "vector_candidates",
+        lambda *_args: [(chunk_id, 1.0) for chunk_id in range(1, 41)],
+    )
+
+    def chunks_by_ids(_cursor, _course_id, _user_id, ids):
+        return [
+            {
+                "id": chunk_id,
+                "material_id": 1,
+                "material_title": "候选资料",
+                "filename": "candidate.txt",
+                "chunk_index": index,
+                "chunk_text": f"候选 {chunk_id}",
+                "embedding_json": json.dumps([1.0, 0.0]),
+                "kb_ids": [],
+            }
+            for index, chunk_id in enumerate(ids)
+        ]
+
+    monkeypatch.setattr(
+        materials_service.repository,
+        "get_course_chunks_by_ids",
+        chunks_by_ids,
+    )
+
+    def capture_search(_query, chunks, _points, _top_k, **kwargs):
+        captured_ids.extend(chunk["id"] for chunk in chunks)
+        assert kwargs["precomputed_query_embeddings"] is not None
+        return []
+
+    monkeypatch.setattr(materials_service, "hybrid_search", capture_search)
+
+    result = materials_service.search_course_materials(
+        user["id"],
+        course["id"],
+        query,
+        top_k=5,
+    )
+
+    assert 999 in captured_ids
+    assert 777 in captured_ids
+    assert result["trace"]["vector_candidates"] == 40
+    assert result["trace"]["keyword_candidates"] == 1
+    assert result["trace"]["knowledge_candidates"] == 1
+    assert embedding_calls == [[query]]

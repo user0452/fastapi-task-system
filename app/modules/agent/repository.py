@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from app.core.time_utils import utc_now_naive
 from app.models import model_as_dict, reflected_model
 
 
@@ -17,7 +18,13 @@ def _json_loads(value: Any, default=None):
     if isinstance(value, (dict, list)):
         return value
     try:
-        return json.loads(value)
+        parsed = json.loads(value)
+        if isinstance(parsed, str):
+            try:
+                return json.loads(parsed)
+            except json.JSONDecodeError:
+                return parsed
+        return parsed
     except (TypeError, json.JSONDecodeError):
         return default
 
@@ -109,7 +116,7 @@ def ensure_course_agent(cursor, user_id: int, course: dict) -> dict:
         if primary is None:
             raise RuntimeError("primary session could not be created or loaded")
         agent.primary_session_id = primary["id"]
-        agent.last_active_at = datetime.now()
+        agent.last_active_at = utc_now_naive()
         session.flush()
     agent_row = _row(agent)
     if agent_row is None:
@@ -140,7 +147,7 @@ def touch_course_agent(cursor, agent_id: int, user_id: int) -> None:
         select(CourseAgent).where(CourseAgent.id == agent_id, CourseAgent.user_id == user_id)
     )
     if agent is not None:
-        agent.last_active_at = datetime.now()
+        agent.last_active_at = utc_now_naive()
 
 
 def list_course_memories(cursor, agent_id: int, user_id: int) -> list[dict]:
@@ -283,6 +290,17 @@ def get_agent_run(cursor, run_id: int, user_id: int) -> dict | None:
     return _row(run)
 
 
+def get_agent_run_by_request_id(cursor, request_id: str, user_id: int) -> dict | None:
+    AgentRun = reflected_model("agent_runs")
+    run = cursor.session.scalar(
+        select(AgentRun).where(
+            AgentRun.request_id == request_id,
+            AgentRun.user_id == user_id,
+        )
+    )
+    return _row(run)
+
+
 def create_tool_call(
     cursor,
     *,
@@ -310,6 +328,69 @@ def create_tool_call(
     cursor.session.add(tool_call)
     cursor.session.flush()
     return tool_call.id
+
+
+def claim_tool_call(
+    cursor,
+    *,
+    run_id: int,
+    user_id: int,
+    course_id: int,
+    tool_name: str,
+    risk_level: str,
+    arguments: dict,
+    idempotency_key: str,
+    started_at: datetime,
+) -> tuple[dict, bool]:
+    cursor.execute(
+        """
+        INSERT IGNORE INTO agent_tool_calls
+            (run_id, user_id, course_id, tool_name, risk_level, arguments_json,
+             status, idempotency_key, started_at)
+        VALUES (%s, %s, %s, %s, %s, %s, 'running', %s, %s)
+        """,
+        (
+            run_id,
+            user_id,
+            course_id,
+            tool_name,
+            risk_level,
+            _json_dumps(arguments),
+            idempotency_key,
+            started_at,
+        ),
+    )
+    created = cursor.rowcount == 1
+    cursor.execute(
+        """
+        SELECT id, run_id, user_id, course_id, tool_name, risk_level,
+               arguments_json, result_json, status, error_message,
+               idempotency_key, started_at, completed_at
+        FROM agent_tool_calls
+        WHERE idempotency_key = %s
+        FOR UPDATE
+        """,
+        (idempotency_key,),
+    )
+    tool_call = cursor.fetchone()
+    if tool_call is None:
+        raise RuntimeError("tool call disappeared after idempotency claim")
+    tool_call["arguments"] = _json_loads(tool_call.pop("arguments_json"), {})
+    tool_call["result"] = _json_loads(tool_call.pop("result_json"), None)
+    if not created and tool_call["status"] in {"failed", "cancelled"}:
+        cursor.execute(
+            """
+            UPDATE agent_tool_calls
+            SET status = 'running', result_json = NULL, error_message = NULL,
+                started_at = %s, completed_at = NULL
+            WHERE id = %s
+            """,
+            (started_at, tool_call["id"]),
+        )
+        tool_call["status"] = "running"
+        tool_call["result"] = None
+        created = True
+    return tool_call, created
 
 
 def finish_tool_call(
@@ -422,7 +503,7 @@ def touch_session(cursor, session_id: int, user_id: int) -> None:
         select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
     )
     if session_model is not None:
-        session_model.updated_at = datetime.now()
+        session_model.updated_at = utc_now_naive()
 
 
 def archive_session(cursor, session_id: int, user_id: int) -> bool:
@@ -436,7 +517,7 @@ def archive_session(cursor, session_id: int, user_id: int) -> bool:
     )
     if session_model is None:
         return False
-    session_model.archived_at = datetime.now()
+    session_model.archived_at = utc_now_naive()
     cursor.session.flush()
     return True
 
@@ -541,6 +622,14 @@ def create_action_request(
     checkpoint: dict | None = None,
 ) -> dict:
     ActionRequest = reflected_model("agent_action_requests")
+    existing = cursor.session.scalar(
+        select(ActionRequest).where(
+            ActionRequest.user_id == user_id,
+            ActionRequest.idempotency_key == idempotency_key,
+        )
+    )
+    if existing is not None:
+        return _action_row(existing) or {}
     action = ActionRequest(
         user_id=user_id,
         session_id=session_id,
@@ -582,26 +671,71 @@ def set_action_status(
     if action is not None:
         action.status = status
         action.result_json = _json_dumps(result) if result is not None else None
+        checkpoint = _json_loads(action.checkpoint_json, {})
+        if isinstance(checkpoint, dict) and status != "resuming":
+            checkpoint.pop("resume_owner", None)
+            checkpoint.pop("resume_started_at", None)
+            checkpoint.pop("resume_lease_expires_at", None)
+            action.checkpoint_json = _json_dumps(checkpoint) if checkpoint else None
         if status == "executed":
-            now = datetime.now()
+            now = utc_now_naive()
             action.confirmed_at = now
             action.executed_at = now
 
 
-def claim_action_resume(cursor, action_id: int) -> None:
+def claim_action_resume(
+    cursor,
+    action_id: int,
+    *,
+    owner: str,
+    started_at: datetime,
+    lease_expires_at: datetime,
+) -> bool:
     ActionRequest = reflected_model("agent_action_requests")
     action = cursor.session.get(ActionRequest, action_id)
-    if action is not None and action.status == "pending":
+    if action is None:
+        return False
+    checkpoint = _json_loads(action.checkpoint_json, {})
+    if not isinstance(checkpoint, dict):
+        checkpoint = {}
+    previous_lease = checkpoint.get("resume_lease_expires_at")
+    lease_expired = action.status == "resuming" and not previous_lease
+    if action.status == "resuming" and previous_lease:
+        try:
+            lease_expired = datetime.fromisoformat(str(previous_lease)) <= started_at
+        except ValueError:
+            lease_expired = True
+    if action.status == "pending" or (action.status == "resuming" and lease_expired):
         action.status = "resuming"
-        action.confirmed_at = datetime.now()
+        action.confirmed_at = started_at
+        checkpoint.update(
+            {
+                "resume_owner": owner,
+                "resume_started_at": started_at.isoformat(),
+                "resume_lease_expires_at": lease_expires_at.isoformat(),
+            }
+        )
+        action.checkpoint_json = _json_dumps(checkpoint)
+        return True
+    return False
 
 
-def reset_action_pending(cursor, action_id: int) -> None:
+def reset_action_pending(cursor, action_id: int, *, owner: str) -> None:
     ActionRequest = reflected_model("agent_action_requests")
     action = cursor.session.get(ActionRequest, action_id)
-    if action is not None and action.status == "resuming":
+    checkpoint = _json_loads(action.checkpoint_json, {}) if action is not None else {}
+    if (
+        action is not None
+        and action.status == "resuming"
+        and isinstance(checkpoint, dict)
+        and checkpoint.get("resume_owner") == owner
+    ):
         action.status = "pending"
         action.confirmed_at = None
+        checkpoint.pop("resume_owner", None)
+        checkpoint.pop("resume_started_at", None)
+        checkpoint.pop("resume_lease_expires_at", None)
+        action.checkpoint_json = _json_dumps(checkpoint) if checkpoint else None
 
 
 def get_task(cursor, task_id: int, user_id: int) -> dict | None:

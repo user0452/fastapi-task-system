@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from functools import lru_cache
+from threading import Lock
 
 import numpy as np
 
@@ -17,14 +18,17 @@ EMBEDDING_MODEL_NAME = os.getenv(
 if USE_MOCK_EMBEDDING:
     EMBEDDING_MODEL_NAME = "mock-deterministic-384"
 _model = None
+_model_lock = Lock()
 
 
 def get_embedding_model():
     global _model
     if _model is None:
-        from sentence_transformers import SentenceTransformer
+        with _model_lock:
+            if _model is None:
+                from sentence_transformers import SentenceTransformer
 
-        _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+                _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
     return _model
 
 

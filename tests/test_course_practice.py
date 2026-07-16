@@ -76,6 +76,16 @@ def _evaluator(quiz_set_id, quiz_title, questions, user_answers, profile=None):
     }
 
 
+def _assert_no_answer_leak(value) -> None:
+    if isinstance(value, dict):
+        assert not ({"answer", "reference_answer", "quiz_json"} & set(value))
+        for nested in value.values():
+            _assert_no_answer_leak(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            _assert_no_answer_leak(nested)
+
+
 def test_chat_practice_submission_updates_mastery_stats_wrong_answers_and_plan(two_users):
     user, other_user = two_users
     course = create_user_course(user["id"], CourseCreate(name="聊天练习闭环"))
@@ -86,12 +96,14 @@ def test_chat_practice_submission_updates_mastery_stats_wrong_answers_and_plan(t
         question_count=3,
         question_provider=_question_provider,
     )
+    _assert_no_answer_leak(practice)
     answers = [
         {"question_id": question["id"], "user_answer": "我的作答"}
         for question in practice["questions"]
     ]
 
     result = submit_practice(user["id"], practice["id"], answers, evaluator=_evaluator)
+    _assert_no_answer_leak(result)
 
     assert result["evaluation"]["score"] == 67
     assert len(result["mastery_changes"]) == 3
@@ -110,7 +122,8 @@ def test_chat_practice_submission_updates_mastery_stats_wrong_answers_and_plan(t
     assert stats["answered"] == 3
     assert stats["wrong"] == 1
     assert wrong["total"] == 1
-    assert wrong["items"][0]["reference_answer"]
+    assert wrong["items"][0]["feedback"]
+    _assert_no_answer_leak(wrong)
 
     plan = get_study_plan(user["id"], course["id"])
     session = next(item for item in plan["sessions"] if item["status"] == "planned")

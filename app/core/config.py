@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from ipaddress import ip_network
 
 from dotenv import load_dotenv
 
@@ -48,6 +49,7 @@ class Settings:
     external_resource_timeout_seconds: float
     external_resource_cache_minutes: int
     auth_rate_limit_enabled: bool
+    trusted_proxy_cidrs: tuple[str, ...]
     enable_legacy_routes: bool
 
     @classmethod
@@ -79,6 +81,14 @@ class Settings:
                 _env("EXTERNAL_RESOURCE_CACHE_MINUTES", "360")
             ),
             auth_rate_limit_enabled=_env_bool("AUTH_RATE_LIMIT_ENABLED", default=True),
+            trusted_proxy_cidrs=tuple(
+                item.strip()
+                for item in _env(
+                    "TRUSTED_PROXY_CIDRS",
+                    "127.0.0.1/32,::1/128",
+                ).split(",")
+                if item.strip()
+            ),
             enable_legacy_routes=_env_bool(
                 "ENABLE_LEGACY_ROUTES",
                 default=_env("APP_ENV", "development").lower() != "production",
@@ -115,6 +125,12 @@ class Settings:
 
         if self.external_resource_cache_minutes < 1:
             errors.append("EXTERNAL_RESOURCE_CACHE_MINUTES 必须大于 0")
+
+        for cidr in self.trusted_proxy_cidrs:
+            try:
+                ip_network(cidr, strict=False)
+            except ValueError:
+                errors.append(f"TRUSTED_PROXY_CIDRS contains an invalid network: {cidr}")
 
         if errors:
             raise RuntimeError("启动配置无效：" + "；".join(errors))

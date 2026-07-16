@@ -6,9 +6,11 @@ from typing import Any, Callable
 
 from app.core.database import get_cursor
 from app.core.errors import AppError
+from app.core.time_utils import utc_naive_to_local
 from app.integrations.llm.diagnostic_generator import generate_diagnostic_questions
 from app.integrations.llm.evaluation import evaluate_quiz_answers
 from app.integrations.llm.practice_generator import generate_practice_questions
+from app.modules.account.service import get_user_local_date, get_user_timezone
 from app.modules.audit.service import record_audit
 from app.modules.courses import repository as course_repository
 from app.modules.courses.service import get_user_course
@@ -16,12 +18,61 @@ from app.modules.learning import repository
 
 
 def _public_quiz(quiz: dict) -> dict:
-    public = dict(quiz)
-    public["questions"] = [
-        {key: value for key, value in question.items() if key != "answer"}
-        for question in quiz.get("questions", [])
-    ]
-    return public
+    return {
+        key: quiz[key]
+        for key in ("id", "course_id", "title", "course_name", "purpose", "submitted")
+        if key in quiz
+    } | {
+        "questions": [
+            {
+                key: question[key]
+                for key in (
+                    "id",
+                    "quiz_set_id",
+                    "knowledge_point_id",
+                    "question_type",
+                    "question",
+                    "difficulty",
+                )
+                if key in question
+            }
+            for question in quiz.get("questions", [])
+        ]
+    }
+
+
+def _public_evaluation(evaluation: dict | None) -> dict | None:
+    if evaluation is None:
+        return None
+    return {
+        key: evaluation[key]
+        for key in (
+            "id",
+            "quiz_set_id",
+            "score",
+            "level",
+            "summary",
+            "weak_points",
+            "suggestions",
+        )
+        if key in evaluation
+    } | {
+        "question_reviews": [
+            {
+                key: review[key]
+                for key in ("question_id", "score", "feedback", "weak_point")
+                if key in review
+            }
+            for review in evaluation.get("question_reviews", [])
+        ]
+    }
+
+
+def _public_submission_result(result: dict) -> dict:
+    public = dict(result)
+    if "evaluation" in public:
+        public["evaluation"] = _public_evaluation(public["evaluation"])
+    return json.loads(json.dumps(public, ensure_ascii=False, default=str))
 
 
 def get_diagnostic(user_id: int, quiz_set_id: int) -> dict:
@@ -115,13 +166,152 @@ def _evaluation_attempt_key(quiz_set_id: int, study_session_id: int | None = Non
     return f"session:{study_session_id}:quiz:{quiz_set_id}"
 
 
+def _validate_complete_answers(
+    questions: list[dict],
+    answers: list[dict],
+    *,
+    subject: str,
+) -> list[dict]:
+    expected_ids = [int(question["id"]) for question in questions]
+    if not expected_ids:
+        raise AppError(f"{subject}没有可提交的题目", 409, "QUIZ_HAS_NO_QUESTIONS")
+    if not answers:
+        raise AppError(f"请填写全部{subject}答案", 400, "ANSWERS_REQUIRED")
+
+    submitted_ids = [int(item["question_id"]) for item in answers]
+    if len(submitted_ids) != len(set(submitted_ids)):
+        raise AppError(f"{subject}答案包含重复题号", 400, "DUPLICATE_QUESTION_IDS")
+
+    expected_set = set(expected_ids)
+    submitted_set = set(submitted_ids)
+    invalid_ids = sorted(submitted_set - expected_set)
+    if invalid_ids:
+        raise AppError(
+            f"{subject}答案包含不属于当前题集的题号",
+            400,
+            "INVALID_QUESTION_IDS",
+            {"question_ids": invalid_ids},
+        )
+
+    missing_ids = [question_id for question_id in expected_ids if question_id not in submitted_set]
+    if missing_ids:
+        raise AppError(
+            f"请完成全部{subject}题目后再提交",
+            400,
+            "INCOMPLETE_ANSWERS",
+            {"question_ids": missing_ids},
+        )
+
+    answer_map: dict[int, str] = {}
+    for item in answers:
+        question_id = int(item["question_id"])
+        user_answer = str(item.get("user_answer") or "").strip()
+        if not user_answer:
+            raise AppError(
+                f"{subject}答案不能为空",
+                400,
+                "BLANK_ANSWER",
+                {"question_id": question_id},
+            )
+        answer_map[question_id] = user_answer
+    return [
+        {"question_id": question_id, "user_answer": answer_map[question_id]}
+        for question_id in expected_ids
+    ]
+
+
+def _normalize_evaluation(quiz: dict, answers: list[dict], raw_evaluation: Any) -> dict:
+    if hasattr(raw_evaluation, "model_dump"):
+        raw_evaluation = raw_evaluation.model_dump()
+    if not isinstance(raw_evaluation, dict):
+        raise AppError("评估结果格式无效", 502, "EVALUATION_RESULT_INVALID")
+
+    reviews = raw_evaluation.get("question_reviews")
+    if not isinstance(reviews, list):
+        raise AppError("评估结果缺少逐题明细", 502, "EVALUATION_RESULT_INVALID")
+
+    review_ids: list[int] = []
+    review_map: dict[int, dict] = {}
+    try:
+        for review in reviews:
+            if not isinstance(review, dict):
+                raise TypeError
+            question_id = int(review["question_id"])
+            review_ids.append(question_id)
+            review_map[question_id] = review
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AppError("评估明细题号无效", 502, "EVALUATION_RESULT_INVALID") from exc
+
+    if len(review_ids) != len(set(review_ids)):
+        raise AppError("评估明细包含重复题号", 502, "EVALUATION_RESULT_INVALID")
+
+    expected_ids = [int(question["id"]) for question in quiz["questions"]]
+    if set(review_ids) != set(expected_ids) or len(review_ids) != len(expected_ids):
+        raise AppError(
+            "评估明细与当前题集不一致",
+            502,
+            "EVALUATION_RESULT_INVALID",
+        )
+
+    question_map = {int(question["id"]): question for question in quiz["questions"]}
+    answer_map = {int(item["question_id"]): item["user_answer"] for item in answers}
+    normalized_reviews: list[dict] = []
+    weak_points: list[str] = []
+    for question_id in expected_ids:
+        raw_review = review_map[question_id]
+        try:
+            score = int(raw_review["score"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AppError("评估分数无效", 502, "EVALUATION_RESULT_INVALID") from exc
+        if not 0 <= score <= 100:
+            raise AppError("评估分数超出范围", 502, "EVALUATION_RESULT_INVALID")
+        feedback = str(raw_review.get("feedback") or "").strip()
+        if not feedback:
+            raise AppError("评估反馈不能为空", 502, "EVALUATION_RESULT_INVALID")
+        weak_point = str(raw_review.get("weak_point") or "").strip() or None
+        if weak_point and weak_point not in weak_points:
+            weak_points.append(weak_point)
+        question = question_map[question_id]
+        normalized_reviews.append(
+            {
+                "question_id": question_id,
+                "question": question["question"],
+                "reference_answer": question["answer"],
+                "user_answer": answer_map[question_id],
+                "score": score,
+                "feedback": feedback,
+                "weak_point": weak_point,
+            }
+        )
+
+    score = round(sum(item["score"] for item in normalized_reviews) / len(normalized_reviews))
+    if score < 60:
+        level = "需要复习"
+        suggestions = ["优先复习低分知识点后再进行针对性练习"]
+    elif score < 80:
+        level = "基本掌握"
+        suggestions = ["根据逐题反馈补齐薄弱环节并继续练习"]
+    else:
+        level = "掌握良好"
+        suggestions = ["继续完成进阶练习并定期复习"]
+    return {
+        "quiz_set_id": quiz["id"],
+        "score": score,
+        "level": level,
+        "summary": f"共评估 {len(normalized_reviews)} 道题，平均得分 {score} 分。",
+        "weak_points": weak_points,
+        "suggestions": suggestions,
+        "question_reviews": normalized_reviews,
+    }
+
+
 def _claim_evaluation(
     user_id: int,
     course_id: int,
     quiz_set_id: int,
     answers: list[dict],
     study_session_id: int | None = None,
-) -> tuple[dict, dict | None]:
+) -> tuple[dict, str]:
     now = _utc_now()
     request_hash = _evaluation_request_hash(quiz_set_id, answers)
     attempt_key = _evaluation_attempt_key(quiz_set_id, study_session_id)
@@ -137,24 +327,67 @@ def _claim_evaluation(
             started_at=now,
             stale_before=now - timedelta(minutes=3),
         )
+    if attempt["request_hash"] != request_hash:
+        raise AppError("该题集已经使用另一份答案提交", 409, "EVALUATION_ALREADY_SUBMITTED")
     if claimed:
-        return attempt, None
-    if attempt and attempt["status"] == "completed":
-        if attempt["request_hash"] != request_hash:
-            raise AppError("该题集已经使用另一份答案提交", 409, "EVALUATION_ALREADY_SUBMITTED")
-        return attempt, attempt.get("result")
+        return attempt, "evaluate"
+    if attempt["status"] == "completed":
+        if attempt.get("result") is None:
+            raise AppError("评估结果状态异常", 500, "EVALUATION_STATE_INVALID")
+        return attempt, "completed"
+    if attempt["status"] in {"evaluated", "planning_failed"}:
+        return attempt, "planning"
+    if attempt["status"] == "planning":
+        raise AppError("学习计划正在生成，请稍后重试", 409, "PLANNING_IN_PROGRESS")
     raise AppError("答案正在评分，请勿重复提交", 409, "EVALUATION_IN_PROGRESS")
+
+
+def _assert_evaluation_claim_current(cursor, attempt: dict) -> None:
+    current = repository.get_evaluation_attempt(
+        cursor,
+        attempt["user_id"],
+        attempt["attempt_key"],
+        for_update=True,
+    )
+    if (
+        current is None
+        or current["id"] != attempt["id"]
+        or current["status"] != "evaluating"
+        or current["started_at"] != attempt["started_at"]
+    ):
+        raise AppError("评估任务已由其他请求接管", 409, "EVALUATION_CLAIM_LOST")
+
+
+def _claim_planning(attempt: dict) -> tuple[dict, str]:
+    now = _utc_now()
+    with get_cursor() as cursor:
+        claimed_attempt, claimed = repository.claim_evaluation_planning(
+            cursor,
+            user_id=attempt["user_id"],
+            attempt_key=attempt["attempt_key"],
+            request_hash=attempt["request_hash"],
+            started_at=now,
+            stale_before=now - timedelta(minutes=3),
+        )
+    if claimed_attempt["request_hash"] != attempt["request_hash"]:
+        raise AppError("该题集已经使用另一份答案提交", 409, "EVALUATION_ALREADY_SUBMITTED")
+    if claimed:
+        return claimed_attempt, "planning"
+    if claimed_attempt["status"] == "completed" and claimed_attempt.get("result") is not None:
+        return claimed_attempt, "completed"
+    raise AppError("学习计划正在生成，请稍后重试", 409, "PLANNING_IN_PROGRESS")
 
 
 def _run_evaluator(attempt: dict, quiz: dict, answers: list[dict], evaluator: Callable) -> dict:
     try:
-        return evaluator(
+        raw_evaluation = evaluator(
             quiz_set_id=quiz["id"],
             quiz_title=quiz["title"],
             questions=quiz["questions"],
             user_answers=answers,
             profile=None,
         )
+        return _normalize_evaluation(quiz, answers, raw_evaluation)
     except Exception as exc:
         with get_cursor() as cursor:
             repository.fail_evaluation_attempt(cursor, attempt["id"], str(exc), _utc_now())
@@ -169,6 +402,18 @@ def _persist_evaluation_and_update_mastery(
     evaluation: dict,
     initial: bool,
 ) -> tuple[dict, list[dict]]:
+    expected_ids = [int(question["id"]) for question in quiz["questions"]]
+    review_ids = [
+        int(review["question_id"])
+        for review in evaluation.get("question_reviews", [])
+    ]
+    if len(review_ids) != len(set(review_ids)) or set(review_ids) != set(expected_ids):
+        raise AppError(
+            "评估明细与当前题集不一致，未更新掌握度",
+            502,
+            "EVALUATION_RESULT_INVALID",
+        )
+
     evaluation_id = repository.create_evaluation(
         cursor,
         user_id,
@@ -235,23 +480,38 @@ def _persist_evaluation_and_update_mastery(
     return evaluation, changes
 
 
-def _plan_length(course: dict) -> int:
+def _plan_length(course: dict, today: date, timezone_name: str) -> int:
     exam_at = course.get("exam_at")
     if not exam_at:
         return 7
-    remaining = (exam_at.date() - date.today()).days + 1
+    exam_date = utc_naive_to_local(exam_at, timezone_name).date()
+    remaining = (exam_date - today).days + 1
     return max(3, min(14, remaining)) if remaining > 0 else 3
 
 
 def generate_study_plan(user_id: int, course_id: int, diagnostic_quiz: dict | None = None) -> dict:
     course = get_user_course(user_id, course_id)
+    diagnostic_quiz_id = diagnostic_quiz.get("id") if diagnostic_quiz else None
+    if diagnostic_quiz_id is not None:
+        with get_cursor() as cursor:
+            existing_plan = repository.get_plan_for_diagnostic(
+                cursor,
+                user_id,
+                course_id,
+                diagnostic_quiz_id,
+            )
+        if existing_plan is not None:
+            existing_plan["days"] = (
+                existing_plan["end_date"] - existing_plan["start_date"]
+            ).days + 1
+            return existing_plan
+
     with get_cursor() as cursor:
         points = repository.list_points_with_mastery(cursor, user_id, course_id)
     if not points:
         raise AppError("课程尚未建立知识点", 409, "KNOWLEDGE_POINTS_NOT_READY")
 
     question_by_point: dict[int, dict] = {}
-    diagnostic_quiz_id = diagnostic_quiz.get("id") if diagnostic_quiz else None
     if diagnostic_quiz:
         for question in diagnostic_quiz.get("questions", []):
             question_by_point.setdefault(question.get("knowledge_point_id"), question)
@@ -259,8 +519,9 @@ def generate_study_plan(user_id: int, course_id: int, diagnostic_quiz: dict | No
         if covered_points:
             points = covered_points
 
-    days = _plan_length(course)
-    start = date.today()
+    timezone_name = get_user_timezone(user_id)
+    start = get_user_local_date(user_id)
+    days = _plan_length(course, start, timezone_name)
     end = start + timedelta(days=days - 1)
     session_ids = []
     with get_cursor() as cursor:
@@ -340,6 +601,7 @@ def submit_diagnostic(
     quiz_set_id: int,
     answers: list[dict],
     evaluator: Callable = evaluate_quiz_answers,
+    plan_provider: Callable = generate_study_plan,
 ) -> dict:
     with get_cursor() as cursor:
         quiz = repository.get_quiz_set(cursor, quiz_set_id, user_id)
@@ -349,59 +611,95 @@ def submit_diagnostic(
             attempt = repository.get_evaluation_attempt(
                 cursor, user_id, _evaluation_attempt_key(quiz_set_id)
             )
-            if attempt and attempt["status"] == "completed" and attempt.get("result"):
-                return attempt["result"]
-            raise AppError("诊断已经提交，请直接进入今日学习", 409, "DIAGNOSTIC_ALREADY_SUBMITTED")
-        allowed_ids = {question["id"] for question in quiz["questions"]}
-        submitted = [item for item in answers if item["question_id"] in allowed_ids]
-        if not submitted:
-            raise AppError("至少填写一道诊断题答案", 400, "ANSWERS_REQUIRED")
+            if attempt is None:
+                raise AppError("诊断已经提交，请直接进入今日学习", 409, "DIAGNOSTIC_ALREADY_SUBMITTED")
+        submitted = _validate_complete_answers(
+            quiz["questions"],
+            answers,
+            subject="诊断",
+        )
 
-    attempt, cached = _claim_evaluation(
+    attempt, action = _claim_evaluation(
         user_id,
         quiz["course_id"],
         quiz_set_id,
         submitted,
     )
-    if cached is not None:
-        return cached
-    evaluation = _run_evaluator(attempt, quiz, submitted, evaluator)
+    if action == "completed":
+        return attempt["result"]
 
+    if action == "evaluate":
+        evaluation = _run_evaluator(attempt, quiz, submitted, evaluator)
+        with get_cursor() as cursor:
+            _assert_evaluation_claim_current(cursor, attempt)
+            current = repository.get_quiz_set(cursor, quiz_set_id, user_id)
+            if current is None or current.get("purpose") != "diagnostic":
+                raise AppError("诊断题不存在或无访问权限", 404, "DIAGNOSTIC_NOT_FOUND")
+            if current.get("submitted"):
+                raise AppError("诊断已经提交，请直接进入今日学习", 409, "DIAGNOSTIC_ALREADY_SUBMITTED")
+            evaluation, changes = _persist_evaluation_and_update_mastery(
+                cursor,
+                user_id,
+                quiz["course_id"],
+                quiz,
+                evaluation,
+                initial=True,
+            )
+            result = {"evaluation": evaluation, "mastery_changes": changes}
+            public_result = _public_submission_result(result)
+            repository.mark_evaluation_attempt_evaluated(
+                cursor,
+                attempt["id"],
+                evaluation["id"],
+                public_result,
+            )
+            record_audit(
+                user_id,
+                "COURSE_DIAGNOSTIC_SUBMITTED",
+                "quiz_set",
+                quiz_set_id,
+                {"course_id": quiz["course_id"], "score": evaluation["score"]},
+                cursor=cursor,
+            )
+        attempt = {
+            **attempt,
+            "status": "evaluated",
+            "evaluation_id": evaluation["id"],
+            "result": public_result,
+        }
+    else:
+        resumed_result = attempt.get("result")
+        if attempt.get("evaluation_id") is None or not isinstance(resumed_result, dict):
+            raise AppError("诊断恢复状态不完整", 500, "EVALUATION_STATE_INVALID")
+        public_result = resumed_result
+
+    planning_attempt, planning_action = _claim_planning(attempt)
+    if planning_action == "completed":
+        return planning_attempt["result"]
+    try:
+        plan = plan_provider(user_id, quiz["course_id"], quiz)
+    except Exception as exc:
+        with get_cursor() as cursor:
+            repository.fail_evaluation_attempt(
+                cursor,
+                planning_attempt["id"],
+                str(exc),
+                _utc_now(),
+                phase="planning",
+            )
+        raise
+
+    public_result = _public_submission_result({**public_result, "plan": plan})
     with get_cursor() as cursor:
-        current = repository.get_quiz_set(cursor, quiz_set_id, user_id)
-        if current is None or current.get("purpose") != "diagnostic":
-            raise AppError("诊断题不存在或无访问权限", 404, "DIAGNOSTIC_NOT_FOUND")
-        if current.get("submitted"):
-            raise AppError("诊断已经提交，请直接进入今日学习", 409, "DIAGNOSTIC_ALREADY_SUBMITTED")
-        evaluation, changes = _persist_evaluation_and_update_mastery(
-            cursor,
-            user_id,
-            quiz["course_id"],
-            quiz,
-            evaluation,
-            initial=True,
-        )
-        result = {"evaluation": evaluation, "mastery_changes": changes}
         repository.finish_evaluation_attempt(
             cursor,
-            attempt["id"],
-            evaluation["id"],
-            result,
+            planning_attempt["id"],
+            planning_attempt["evaluation_id"],
+            public_result,
             _utc_now(),
+            expected_status="planning",
         )
-        record_audit(
-            user_id,
-            "COURSE_DIAGNOSTIC_SUBMITTED",
-            "quiz_set",
-            quiz_set_id,
-            {"course_id": quiz["course_id"], "score": evaluation["score"]},
-            cursor=cursor,
-        )
-    plan = generate_study_plan(user_id, quiz["course_id"], quiz)
-    result["plan"] = plan
-    with get_cursor() as cursor:
-        repository.update_evaluation_attempt_result(cursor, attempt["id"], result)
-    return result
+    return public_result
 
 
 def _hydrate_session_questions(cursor, session: dict, user_id: int) -> dict:
@@ -425,8 +723,9 @@ def _hydrate_session_questions(cursor, session: dict, user_id: int) -> dict:
 
 def get_today_learning(user_id: int, course_id: int) -> dict | None:
     get_user_course(user_id, course_id)
+    today = get_user_local_date(user_id)
     with get_cursor() as cursor:
-        session = repository.get_today_session(cursor, user_id, course_id, date.today())
+        session = repository.get_today_session(cursor, user_id, course_id, today)
         hydrated = _hydrate_session_questions(cursor, session, user_id) if session else None
         record_audit(
             user_id,
@@ -464,8 +763,14 @@ def start_learning_session(user_id: int, session_id: int) -> dict:
         return hydrated
 
 
-def _adapt_next_session(cursor, user_id: int, course: dict, change: dict, point_name: str) -> dict:
-    tomorrow = date.today() + timedelta(days=1)
+def _adapt_next_session(
+    cursor,
+    user_id: int,
+    course: dict,
+    change: dict,
+    point_name: str,
+    tomorrow: date,
+) -> dict:
     session_id = repository.get_or_create_session_for_date(
         cursor,
         user_id,
@@ -603,28 +908,33 @@ def submit_learning_session(
                 cursor=cursor,
             )
             return {"evaluation": None, "mastery_changes": [], "adaptations": []}
-        allowed_ids = {question["id"] for question in questions}
-        answers = [item for item in answers if item["question_id"] in allowed_ids]
-        if not answers:
-            raise AppError("至少填写一道当前学习单元的答案", 400, "ANSWERS_REQUIRED")
+        answers = _validate_complete_answers(
+            questions,
+            answers,
+            subject="当前学习单元",
+        )
         quiz = {
             "id": questions[0]["quiz_set_id"],
             "title": questions[0]["quiz_title"],
             "questions": questions,
         }
 
-    attempt, cached = _claim_evaluation(
+    attempt, action = _claim_evaluation(
         user_id,
         session["course_id"],
         quiz["id"],
         answers,
         study_session_id=session_id,
     )
-    if cached is not None:
-        return cached
+    if action == "completed":
+        return attempt["result"]
+    if action != "evaluate":
+        raise AppError("当前学习单元评估状态异常", 409, "EVALUATION_IN_PROGRESS")
     evaluation = _run_evaluator(attempt, quiz, answers, evaluator)
+    tomorrow = get_user_local_date(user_id) + timedelta(days=1)
 
     with get_cursor() as cursor:
+        _assert_evaluation_claim_current(cursor, attempt)
         current_session = repository.get_session(cursor, session_id, user_id)
         if current_session is None:
             raise AppError("学习单元不存在或无访问权限", 404, "SESSION_NOT_FOUND")
@@ -657,6 +967,7 @@ def submit_learning_session(
                 course,
                 change,
                 point_names.get(change["knowledge_point_id"], "知识点"),
+                tomorrow,
             )
             for change in changes
         ]
@@ -678,14 +989,15 @@ def submit_learning_session(
             "mastery_changes": changes,
             "adaptations": adaptations,
         }
+        public_result = _public_submission_result(result)
         repository.finish_evaluation_attempt(
             cursor,
             attempt["id"],
             evaluation["id"],
-            result,
+            public_result,
             _utc_now(),
         )
-    return result
+    return public_result
 
 
 def get_course_progress(user_id: int, course_id: int) -> dict:
@@ -781,19 +1093,22 @@ def submit_practice(
                 return attempt["result"]
             raise AppError("练习已经提交，请重新生成一组题目", 409, "PRACTICE_ALREADY_SUBMITTED")
         active_plan = repository.get_course_plan(cursor, user_id, preview["course_id"])
-        allowed_ids = {question["id"] for question in preview["questions"]}
-        submitted = [item for item in answers if item["question_id"] in allowed_ids]
-        if not submitted:
-            raise AppError("至少填写一道当前练习的答案", 400, "ANSWERS_REQUIRED")
+        submitted = _validate_complete_answers(
+            preview["questions"],
+            answers,
+            subject="练习",
+        )
 
-    attempt, cached = _claim_evaluation(
+    attempt, action = _claim_evaluation(
         user_id,
         preview["course_id"],
         quiz_set_id,
         submitted,
     )
-    if cached is not None:
-        return cached
+    if action == "completed":
+        return attempt["result"]
+    if action != "evaluate":
+        raise AppError("练习评估状态异常", 409, "EVALUATION_IN_PROGRESS")
     if active_plan is None:
         try:
             generate_study_plan(user_id, preview["course_id"])
@@ -802,8 +1117,10 @@ def submit_practice(
                 repository.fail_evaluation_attempt(cursor, attempt["id"], str(exc), _utc_now())
             raise
     evaluation = _run_evaluator(attempt, preview, submitted, evaluator)
+    tomorrow = get_user_local_date(user_id) + timedelta(days=1)
 
     with get_cursor() as cursor:
+        _assert_evaluation_claim_current(cursor, attempt)
         quiz = repository.get_quiz_set(cursor, quiz_set_id, user_id)
         if quiz is None or quiz.get("purpose") != "practice":
             raise AppError("练习不存在或无访问权限", 404, "PRACTICE_NOT_FOUND")
@@ -829,6 +1146,7 @@ def submit_practice(
                 course,
                 change,
                 point_names.get(change["knowledge_point_id"], "知识点"),
+                tomorrow,
             )
             for change in changes
         ]
@@ -837,6 +1155,7 @@ def submit_practice(
             "mastery_changes": changes,
             "adaptations": adaptations,
         }
+        public_result = _public_submission_result(result)
         repository.persist_practice_result_in_agent_message(
             cursor,
             user_id,
@@ -869,10 +1188,10 @@ def submit_practice(
             cursor,
             attempt["id"],
             evaluation["id"],
-            result,
+            public_result,
             _utc_now(),
         )
-    return result
+    return public_result
 
 
 def get_practice_statistics(user_id: int, course_id: int) -> dict:

@@ -34,14 +34,14 @@ def test_agent_v1_routes_delegate_and_keep_response_envelope(api_client, monkeyp
 
 
 def test_agent_stream_emits_real_deltas_result_and_done(api_client, monkeypatch):
-    def fake_chat(_user_id, request, *, on_delta, cancel_event):
+    async def fake_chat(_user_id, request, *, on_delta, cancel_event):
         assert request.message == "stream this"
         assert not cancel_event.is_set()
         on_delta("first ")
         on_delta("second")
         return {"reply": "first second", "citations": [{"chunk_id": 9}]}
 
-    monkeypatch.setattr(agent_router, "run_native_tool_agent_chat", fake_chat)
+    monkeypatch.setattr(agent_router, "run_native_tool_agent_chat_async", fake_chat)
 
     with api_client.stream(
         "POST", "/api/v1/agent/chat/stream", json={"message": "stream this"}
@@ -59,10 +59,10 @@ def test_agent_stream_emits_real_deltas_result_and_done(api_client, monkeypatch)
 
 
 def test_agent_stream_serializes_worker_failure(api_client, monkeypatch):
-    def failed_chat(*_args, **_kwargs):
+    async def failed_chat(*_args, **_kwargs):
         raise RuntimeError("model unavailable")
 
-    monkeypatch.setattr(agent_router, "run_native_tool_agent_chat", failed_chat)
+    monkeypatch.setattr(agent_router, "run_native_tool_agent_chat_async", failed_chat)
 
     response = api_client.post("/api/v1/agent/chat/stream", json={"message": "fail"})
     events = [json.loads(line) for line in response.text.splitlines() if line]

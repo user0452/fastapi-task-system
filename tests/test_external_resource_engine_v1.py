@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -117,6 +117,7 @@ def test_provider_fallback_deduplicates_caches_and_records_interactions(two_user
     assert helpful["interaction"]["helpful"] is True
     restored = list_external_resources(user["id"], course["id"])["items"]
     restored_item = next(item for item in restored if item["id"] == resource["id"])
+    assert restored_item["published_at"].tzinfo == timezone.utc
     assert restored_item["interaction"] == {
         "saved": True,
         "completed": True,
@@ -147,6 +148,28 @@ def test_video_urls_are_canonicalized_without_tracking_parameters():
         "https://bilibili.com/video/BV123"
     )
     assert canonicalize_url("javascript:alert(1)") is None
+    assert canonicalize_url("https://youtube.com.evil.example/watch?v=abcdefghijk") is None
+    assert canonicalize_url("https://bilibili.com@evil.example/video/BV123") is None
+    assert canonicalize_url("https://evil.example/video/BV123?next=bilibili.com") is None
+
+
+def test_invalid_provider_json_becomes_a_controlled_provider_failure(monkeypatch):
+    from app.modules.resources.providers import BilibiliProvider
+
+    class InvalidJsonResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            raise ValueError("invalid json")
+
+    monkeypatch.setattr(
+        "app.modules.resources.providers.requests.get",
+        lambda *_args, **_kwargs: InvalidJsonResponse(),
+    )
+
+    with pytest.raises(RuntimeError, match="returned invalid JSON"):
+        BilibiliProvider().search("数据库", "事务", 3)
 
 
 def test_resource_availability_updates_status_checks_owner_and_audits(two_users, monkeypatch):

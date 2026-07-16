@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import suppress
 from threading import Event
 
 from fastapi import Depends, Query, Request, status
@@ -22,6 +22,7 @@ from app.modules.agent.service import (
     get_course_agent_workspace,
     list_chat_sessions,
     run_native_tool_agent_chat,
+    run_native_tool_agent_chat_async,
     save_course_agent_memory,
 )
 from app.modules.auth.dependencies import get_current_user
@@ -97,23 +98,20 @@ async def chat_stream(request: AgentChatRequest, http_request: Request, user=Dep
     async def stream():
         events: asyncio.Queue[tuple[str, object]] = asyncio.Queue(maxsize=128)
         cancelled = Event()
-        loop = asyncio.get_running_loop()
 
         def publish(event_type: str, payload: object) -> None:
             if cancelled.is_set():
                 return
-            future = asyncio.run_coroutine_threadsafe(events.put((event_type, payload)), loop)
             try:
-                future.result(timeout=2)
-            except FutureTimeoutError:
+                events.put_nowait((event_type, payload))
+            except asyncio.QueueFull:
                 cancelled.set()
-                future.cancel()
 
-        def run() -> None:
+        async def run() -> None:
             try:
                 publish("status", "已收到问题，正在加载课程上下文")
                 publish("status", "Agent 正在选择并执行工具")
-                result = run_native_tool_agent_chat(
+                result = await run_native_tool_agent_chat_async(
                     user["id"],
                     request,
                     on_delta=lambda delta: publish("reply_delta", delta),
@@ -127,7 +125,7 @@ async def chat_stream(request: AgentChatRequest, http_request: Request, user=Dep
                 publish("worker_done", None)
 
         async with _stream_slots:
-            worker = asyncio.create_task(asyncio.to_thread(run))
+            worker = asyncio.create_task(run())
             worker_done = False
             try:
                 async with asyncio.timeout(STREAM_TIMEOUT_SECONDS):
@@ -159,6 +157,8 @@ async def chat_stream(request: AgentChatRequest, http_request: Request, user=Dep
                 cancelled.set()
                 if not worker.done():
                     worker.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker
 
     return StreamingResponse(
         stream(),

@@ -1,12 +1,12 @@
 import hashlib
 import json
 from collections import Counter
-from contextlib import suppress
+from contextlib import contextmanager
 from time import perf_counter
 from typing import Callable
 from uuid import uuid4
 
-from app.core.database import get_cursor
+from app.core.database import get_conn, get_cursor
 from app.core.errors import AppError
 from app.integrations.document_parser import extract_text_from_path
 from app.integrations.embedding.chunking import (
@@ -21,6 +21,7 @@ from app.integrations.embedding.hybrid_search import (
     RETRIEVER_VERSION,
     build_query_variants,
     hybrid_search,
+    rank_knowledge_candidates,
     tokenize_for_search,
 )
 from app.integrations.embedding.persistent_index import (
@@ -32,7 +33,7 @@ from app.integrations.embedding.service import (
     embed_texts,
     serialize_embedding,
 )
-from app.integrations.file_storage import StoredUpload, resolve_upload_path
+from app.integrations.file_storage import StoredUpload, remove_upload, resolve_upload_path
 from app.integrations.llm.knowledge_extractor import extract_knowledge_structure
 from app.modules.audit.service import record_audit
 from app.modules.courses.service import get_user_course
@@ -44,6 +45,30 @@ RAG_SECTION_MAX_TOKENS = 6_000
 RAG_EVIDENCE_BLOCK_MAX_TOKENS = 1_800
 RAG_MAX_ANCHORS = 10
 RAG_MAX_NEIGHBOR_WINDOW = 2
+MATERIAL_DELETION_STATUSES = {"deleting", "delete_failed", "deleted"}
+
+
+class MaterialProcessingCancelled(RuntimeError):
+    pass
+
+
+@contextmanager
+def _course_material_finalize_lock(user_id: int, course_id: int):
+    lock_name = f"a3:material:{int(user_id)}:{int(course_id)}"
+    connection = get_conn()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SELECT GET_LOCK(%s, 30) AS acquired", (lock_name,))
+        acquired = cursor.fetchone()
+        if acquired is None or int(acquired.get("acquired") or 0) != 1:
+            raise RuntimeError("无法获取课程资料写入锁")
+        yield
+    finally:
+        try:
+            cursor.execute("SELECT RELEASE_LOCK(%s)", (lock_name,))
+        finally:
+            cursor.close()
+            connection.close()
 
 
 def get_course_material_chunk(user_id: int, course_id: int, chunk_id: int) -> dict:
@@ -285,14 +310,27 @@ def _search_terms_for_chunk(chunk: dict, material_title: str) -> dict:
 
 
 def _rebuild_vector_index(user_id: int, course_id: int) -> int:
+    lock_name = f"a3:rag:{int(user_id)}:{int(course_id)}"
     with get_cursor() as cursor:
-        rows = repository.list_course_vector_rows(cursor, course_id, user_id)
-    return rebuild_course_vector_index(
-        user_id,
-        course_id,
-        rows,
-        embedding_model=EMBEDDING_MODEL_NAME,
-    )
+        cursor.execute("SELECT GET_LOCK(%s, 30) AS acquired", (lock_name,))
+        acquired = cursor.fetchone()
+        if acquired is None or int(acquired.get("acquired") or 0) != 1:
+            raise RuntimeError("无法获取课程向量索引锁")
+        try:
+            rows = repository.list_course_vector_rows(cursor, course_id, user_id)
+            cursor.execute("SELECT UUID_SHORT() AS generation")
+            generation_row = cursor.fetchone()
+            if generation_row is None:
+                raise RuntimeError("无法生成向量索引版本")
+            return rebuild_course_vector_index(
+                user_id,
+                course_id,
+                rows,
+                embedding_model=EMBEDDING_MODEL_NAME,
+                generation=int(generation_row["generation"]),
+            )
+        finally:
+            cursor.execute("SELECT RELEASE_LOCK(%s)", (lock_name,))
 
 
 def create_text_material(user_id: int, course_id: int, request: TextMaterialCreate) -> dict:
@@ -322,24 +360,31 @@ def create_uploaded_material(
     title: str,
     upload: StoredUpload,
 ) -> dict:
-    course = get_user_course(user_id, course_id)
-    with get_cursor() as cursor:
-        material = repository.create_file_material(cursor, user_id, course, title, upload)
-        record_audit(
-            user_id,
-            "COURSE_MATERIAL_CREATED",
-            "material",
-            material["id"],
-            {"course_id": course_id, "kind": "file", "size": upload.size},
-            cursor=cursor,
-        )
-        return material
+    try:
+        course = get_user_course(user_id, course_id)
+        with get_cursor() as cursor:
+            material = repository.create_file_material(cursor, user_id, course, title, upload)
+            record_audit(
+                user_id,
+                "COURSE_MATERIAL_CREATED",
+                "material",
+                material["id"],
+                {"course_id": course_id, "kind": "file", "size": upload.size},
+                cursor=cursor,
+            )
+            return material
+    except Exception:
+        try:
+            remove_upload(upload.storage_path)
+        except (OSError, ValueError):
+            pass
+        raise
 
 
 def get_user_material(user_id: int, material_id: int) -> dict:
     with get_cursor() as cursor:
         material = repository.get_material(cursor, material_id, user_id)
-        if material is None:
+        if material is None or material.get("processing_status") == "deleted":
             raise AppError("资料不存在或无访问权限", 404, "MATERIAL_NOT_FOUND")
         record_audit(
             user_id,
@@ -358,28 +403,7 @@ def delete_user_material(user_id: int, material_id: int) -> dict:
         if result is None:
             raise AppError("资料不存在或无访问权限", 404, "MATERIAL_NOT_FOUND")
         material = result["material"]
-        record_audit(
-            user_id,
-            "COURSE_MATERIAL_DELETED",
-            "material",
-            material_id,
-            {
-                "course_id": material.get("course_id"),
-                "removed_chunk_count": result["removed_chunk_count"],
-                "removed_knowledge_point_count": len(result["removed_knowledge_point_ids"]),
-                "orphaned_knowledge_point_count": len(result.get("orphaned_knowledge_point_ids", [])),
-            },
-            cursor=cursor,
-        )
-
-    _rebuild_vector_index(user_id, material["course_id"])
-
-    storage_path = material.get("storage_path")
-    if storage_path:
-        with suppress(OSError, ValueError):
-            resolve_upload_path(storage_path).unlink(missing_ok=True)
-
-    return {
+    response = {
         "id": material_id,
         "course_id": material.get("course_id"),
         "title": material.get("title"),
@@ -388,10 +412,75 @@ def delete_user_material(user_id: int, material_id: int) -> dict:
         "removed_knowledge_point_count": len(result["removed_knowledge_point_ids"]),
         "orphaned_knowledge_point_count": len(result.get("orphaned_knowledge_point_ids", [])),
     }
+    if result.get("already_deleted"):
+        response["already_deleted"] = True
+        return response
+
+    try:
+        _rebuild_vector_index(user_id, material["course_id"])
+        storage_path = material.get("storage_path")
+        if storage_path:
+            remove_upload(storage_path)
+        with get_cursor() as cursor:
+            completed = repository.update_material(
+                cursor,
+                material_id,
+                user_id,
+                content="",
+                storage_path=None,
+                file_size=0,
+                processing_status="deleted",
+                parse_status="deleted",
+                index_status="deleted",
+                processing_error=None,
+            )
+            if completed is None:
+                raise RuntimeError("material tombstone disappeared during deletion")
+            record_audit(
+                user_id,
+                "COURSE_MATERIAL_DELETED",
+                "material",
+                material_id,
+                {
+                    "course_id": material.get("course_id"),
+                    "removed_chunk_count": result["removed_chunk_count"],
+                    "removed_knowledge_point_count": len(result["removed_knowledge_point_ids"]),
+                    "orphaned_knowledge_point_count": len(
+                        result.get("orphaned_knowledge_point_ids", [])
+                    ),
+                },
+                cursor=cursor,
+            )
+    except Exception as exc:
+        with get_cursor() as cursor:
+            repository.update_material(
+                cursor,
+                material_id,
+                user_id,
+                processing_status="delete_failed",
+                index_status="failed",
+                processing_error=str(exc)[:2000],
+            )
+            record_audit(
+                user_id,
+                "COURSE_MATERIAL_DELETE_FAILED",
+                "material",
+                material_id,
+                {"course_id": material.get("course_id"), "error": str(exc)[:500]},
+                cursor=cursor,
+            )
+        raise AppError(
+            "资料删除尚未完成，可安全重试",
+            503,
+            "MATERIAL_DELETE_RETRYABLE",
+        ) from exc
+    return response
 
 
 def request_material_retry(user_id: int, material_id: int) -> dict:
     material = get_user_material(user_id, material_id)
+    if material.get("processing_status") in MATERIAL_DELETION_STATUSES:
+        raise AppError("资料正在删除或已删除", 409, "MATERIAL_DELETION_IN_PROGRESS")
     material = _update_material(
         user_id,
         material_id,
@@ -497,6 +586,19 @@ def _hash_file(path) -> str:
     return digest.hexdigest()
 
 
+def _processing_checkpoint(
+    user_id: int,
+    material_id: int,
+    heartbeat: Callable[[], None],
+) -> dict:
+    heartbeat()
+    with get_cursor() as cursor:
+        material = repository.get_material(cursor, material_id, user_id)
+    if material is None or material.get("processing_status") in MATERIAL_DELETION_STATUSES:
+        raise MaterialProcessingCancelled("material processing cancelled by deletion")
+    return material
+
+
 def process_material(
     user_id: int,
     material_id: int,
@@ -504,11 +606,10 @@ def process_material(
     knowledge_provider: Callable = extract_knowledge_structure,
     heartbeat: Callable[[], None] | None = None,
 ) -> dict:
-    material = get_user_material(user_id, material_id)
     renew_lease = heartbeat or (lambda: None)
+    material = _processing_checkpoint(user_id, material_id, renew_lease)
 
     try:
-        renew_lease()
         content = material.get("content") or ""
         if material.get("storage_path"):
             _update_material(
@@ -527,7 +628,7 @@ def process_material(
                 file_hash=_hash_file(source_path),
                 parse_status="parsed",
             )
-            renew_lease()
+            _processing_checkpoint(user_id, material_id, renew_lease)
 
         if not content.strip():
             raise ValueError("资料内容为空，无法构建索引")
@@ -597,15 +698,18 @@ def process_material(
             for (index, _), embedding in zip(pending, embeddings):
                 prepared[index]["embedding_json"] = serialize_embedding(embedding)
                 prepared[index]["embedding_model"] = EMBEDDING_MODEL_NAME
-        renew_lease()
+        _processing_checkpoint(user_id, material_id, renew_lease)
 
         with get_cursor() as cursor:
-            reloaded_material = repository.get_material(cursor, material_id, user_id)
-            if reloaded_material is None:
-                raise AppError("Material no longer exists", 404, "MATERIAL_NOT_FOUND")
+            reloaded_material = repository.get_material_for_update(cursor, material_id, user_id)
+            if (
+                reloaded_material is None
+                or reloaded_material.get("processing_status") in MATERIAL_DELETION_STATUSES
+            ):
+                raise MaterialProcessingCancelled("material processing cancelled by deletion")
             material = reloaded_material
             stored_chunks = repository.replace_chunks(cursor, material, prepared)
-        renew_lease()
+        _processing_checkpoint(user_id, material_id, renew_lease)
 
         extraction = knowledge_provider(
             material["course_name"],
@@ -618,7 +722,7 @@ def process_material(
         else:
             extracted = list(extraction or [])
             extracted_relations = []
-        renew_lease()
+        _processing_checkpoint(user_id, material_id, renew_lease)
         index_to_id = {chunk["chunk_index"]: chunk["id"] for chunk in stored_chunks}
         points = []
         for point in extracted:
@@ -683,59 +787,67 @@ def process_material(
             for (index, _), embedding in zip(point_pending, point_embeddings):
                 points[index]["embedding_json"] = serialize_embedding(embedding)
                 points[index]["embedding_model"] = EMBEDDING_MODEL_NAME
-        renew_lease()
+        _processing_checkpoint(user_id, material_id, renew_lease)
 
-        with get_cursor() as cursor:
-            stored_points = repository.upsert_knowledge_points(
-                cursor,
-                user_id,
-                material["course_id"],
-                points,
-            )
-            repository.upsert_evidence_backed_relations(
-                cursor,
-                user_id,
-                material["course_id"],
-                stored_points,
-                relations,
-            )
-            repository.replace_material_search_terms(
-                cursor,
-                user_id,
-                material["course_id"],
-                material_id,
-                [_search_terms_for_chunk(chunk, material["title"]) for chunk in stored_chunks],
-            )
-            repository.set_course_status(
-                cursor,
-                material["course_id"],
-                user_id,
-                "diagnostic_pending" if len(points) >= 3 else "preparing",
-            )
-            completed = repository.update_material(
-                cursor,
-                material_id,
-                user_id,
-                processing_status="ready",
-                parse_status="parsed",
-                index_status="ready",
-                processing_error=None,
-                chunker_version=CHUNKER_VERSION,
-            )
-            record_audit(
-                user_id,
-                "COURSE_MATERIAL_INDEXED",
-                "material",
-                material_id,
-                {
-                    "course_id": material["course_id"],
-                    "chunk_count": len(stored_chunks),
-                    "reused_chunk_embeddings": reused_chunk_count,
-                    "knowledge_point_count": len(points),
-                    "reused_point_embeddings": reused_point_count,
-                },
-                cursor=cursor,
-            )
+        with _course_material_finalize_lock(user_id, material["course_id"]):
+            with get_cursor() as cursor:
+                current_material = repository.get_material_for_update(cursor, material_id, user_id)
+                if (
+                    current_material is None
+                    or current_material.get("processing_status") in MATERIAL_DELETION_STATUSES
+                ):
+                    raise MaterialProcessingCancelled("material processing cancelled by deletion")
+                material = current_material
+                stored_points = repository.upsert_knowledge_points(
+                    cursor,
+                    user_id,
+                    material["course_id"],
+                    points,
+                )
+                repository.upsert_evidence_backed_relations(
+                    cursor,
+                    user_id,
+                    material["course_id"],
+                    stored_points,
+                    relations,
+                )
+                repository.replace_material_search_terms(
+                    cursor,
+                    user_id,
+                    material["course_id"],
+                    material_id,
+                    [_search_terms_for_chunk(chunk, material["title"]) for chunk in stored_chunks],
+                )
+                repository.set_course_status(
+                    cursor,
+                    material["course_id"],
+                    user_id,
+                    "diagnostic_pending" if len(points) >= 3 else "preparing",
+                )
+                completed = repository.update_material(
+                    cursor,
+                    material_id,
+                    user_id,
+                    processing_status="ready",
+                    parse_status="parsed",
+                    index_status="ready",
+                    processing_error=None,
+                    chunker_version=CHUNKER_VERSION,
+                )
+                record_audit(
+                    user_id,
+                    "COURSE_MATERIAL_INDEXED",
+                    "material",
+                    material_id,
+                    {
+                        "course_id": material["course_id"],
+                        "chunk_count": len(stored_chunks),
+                        "reused_chunk_embeddings": reused_chunk_count,
+                        "knowledge_point_count": len(points),
+                        "reused_point_embeddings": reused_point_count,
+                    },
+                    cursor=cursor,
+                )
 
         vector_index_count = _rebuild_vector_index(user_id, material["course_id"])
 
@@ -747,21 +859,28 @@ def process_material(
             "reused_knowledge_point_embeddings": reused_point_count,
             "vector_index_count": vector_index_count,
         }
+    except MaterialProcessingCancelled:
+        raise
     except Exception as exc:
-        _update_material(
-            user_id,
-            material_id,
-            processing_status="failed",
-            index_status="failed",
-            processing_error=str(exc)[:2000],
-        )
-        record_audit(
-            user_id,
-            "COURSE_MATERIAL_INDEX_FAILED",
-            "material",
-            material_id,
-            {"error": str(exc)[:500]},
-        )
+        with get_cursor() as cursor:
+            current = repository.get_material(cursor, material_id, user_id)
+            if current and current.get("processing_status") not in MATERIAL_DELETION_STATUSES:
+                repository.update_material(
+                    cursor,
+                    material_id,
+                    user_id,
+                    processing_status="failed",
+                    index_status="failed",
+                    processing_error=str(exc)[:2000],
+                )
+                record_audit(
+                    user_id,
+                    "COURSE_MATERIAL_INDEX_FAILED",
+                    "material",
+                    material_id,
+                    {"error": str(exc)[:500]},
+                    cursor=cursor,
+                )
         raise
 
 
@@ -769,10 +888,13 @@ def search_course_materials(user_id: int, course_id: int, query: str, top_k: int
     total_started = perf_counter()
     course = get_user_course(user_id, course_id)
     load_started = perf_counter()
-    candidate_limit = max(60, min(160, int(top_k) * 12))
+    candidate_quota = max(20, min(80, int(top_k) * 8))
+    knowledge_point_quota = max(8, min(40, int(top_k) * 4))
     query_variants = build_query_variants(query) if DEFAULT_ENABLE_MULTI_QUERY else [query.strip()]
     query_variants = [value for value in query_variants if value]
     query_embeddings = embed_texts(query_variants)
+    if len(query_embeddings) != len(query_variants):
+        raise ValueError("query embedding count does not match query variants")
     with get_cursor() as cursor:
         if repository.count_course_search_terms(cursor, user_id, course_id) == 0:
             legacy_rows = repository.get_course_search_rows(cursor, course_id, user_id)
@@ -792,27 +914,51 @@ def search_course_materials(user_id: int, course_id: int, query: str, top_k: int
             user_id,
             course_id,
             [term for variant in query_variants for term in tokenize_for_search(variant)],
-            candidate_limit,
+            candidate_quota,
         )
+        points = repository.list_knowledge_points(cursor, course_id, user_id)
     vector_hits = vector_candidates(
-        user_id, course_id, query_embeddings, candidate_limit
+        user_id, course_id, query_embeddings, candidate_quota
     )
     if not vector_hits:
         _rebuild_vector_index(user_id, course_id)
         vector_hits = vector_candidates(
-            user_id, course_id, query_embeddings, candidate_limit
+            user_id, course_id, query_embeddings, candidate_quota
         )
+    ranked_points = rank_knowledge_candidates(
+        query,
+        points,
+        query_embeddings[0],
+        knowledge_point_quota,
+    )
+    knowledge_ids: list[int] = []
+    for point, _score in ranked_points:
+        for chunk_id in point.get("source_chunk_ids", []):
+            normalized_id = int(chunk_id)
+            if normalized_id not in knowledge_ids:
+                knowledge_ids.append(normalized_id)
+            if len(knowledge_ids) >= candidate_quota:
+                break
+        if len(knowledge_ids) >= candidate_quota:
+            break
     candidate_ids = list(
-        dict.fromkeys([chunk_id for chunk_id, _score in vector_hits] + keyword_ids)
-    )[:candidate_limit]
+        dict.fromkeys(
+            [chunk_id for chunk_id, _score in vector_hits]
+            + keyword_ids
+            + knowledge_ids
+        )
+    )
     with get_cursor() as cursor:
         chunks = repository.get_course_chunks_by_ids(cursor, course_id, user_id, candidate_ids)
-        points = repository.list_knowledge_points_for_chunks(
-            cursor, course_id, user_id, candidate_ids
-        )
     load_ms = (perf_counter() - load_started) * 1000
     ranking_started = perf_counter()
-    results = hybrid_search(query, chunks, points, top_k)
+    results = hybrid_search(
+        query,
+        chunks,
+        points,
+        top_k,
+        precomputed_query_embeddings=query_embeddings,
+    )
     ranking_ms = (perf_counter() - ranking_started) * 1000
     citations = [
         {
@@ -854,7 +1000,10 @@ def search_course_materials(user_id: int, course_id: int, query: str, top_k: int
         "candidate_chunks": len(chunks),
         "vector_candidates": len(vector_hits),
         "keyword_candidates": len(keyword_ids),
-        "candidate_knowledge_points": len(points),
+        "knowledge_candidates": len(knowledge_ids),
+        "candidate_knowledge_points": len(ranked_points),
+        "active_knowledge_points": len(points),
+        "candidate_quota_per_source": candidate_quota,
         "top_k": top_k,
         "query_variants": query_variants,
         "timings_ms": {
@@ -912,7 +1061,8 @@ def backfill_knowledge_point_vectors(
     if course_id is not None:
         clauses.append("course_id = %s")
         params.append(course_id)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    clauses.append("status = 'active'")
+    where = f"WHERE {' AND '.join(clauses)}"
     with get_cursor() as cursor:
         cursor.execute(
             f"""

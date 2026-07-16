@@ -1094,6 +1094,65 @@ def _upgrade_context_and_relation_cleanup(cursor) -> None:
     )
 
 
+def _upgrade_course_current_invariant(cursor) -> None:
+    if not _table_exists(cursor, "courses"):
+        return
+    cursor.execute(
+        "UPDATE courses SET is_current = FALSE WHERE status = 'archived' AND is_current = TRUE"
+    )
+    cursor.execute(
+        """
+        SELECT user_id
+        FROM courses
+        WHERE is_current = TRUE
+        GROUP BY user_id
+        HAVING COUNT(*) > 1
+        """
+    )
+    duplicate_users = [int(row["user_id"]) for row in cursor.fetchall()]
+    for user_id in duplicate_users:
+        cursor.execute(
+            """
+            SELECT id
+            FROM courses
+            WHERE user_id = %s AND is_current = TRUE
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        selected = cursor.fetchone()
+        cursor.execute(
+            """
+            UPDATE courses
+            SET is_current = FALSE
+            WHERE user_id = %s AND is_current = TRUE AND id <> %s
+            """,
+            (user_id, selected["id"]),
+        )
+    _add_column(
+        cursor,
+        "courses",
+        "current_user_id",
+        "INT GENERATED ALWAYS AS (CASE WHEN is_current THEN user_id ELSE NULL END) VIRTUAL",
+    )
+    _add_unique_index(
+        cursor,
+        "courses",
+        "uk_courses_one_current_per_user",
+        "current_user_id",
+    )
+
+
+def _upgrade_user_timezone(cursor) -> None:
+    _add_column(
+        cursor,
+        "users",
+        "timezone",
+        "VARCHAR(64) NOT NULL DEFAULT 'Asia/Shanghai'",
+    )
+
+
 MIGRATIONS = [
     Migration("0001", "non_destructive_baseline", _upgrade_baseline),
     Migration("0002", "course_learning_foundation", _upgrade_course_learning_foundation),
@@ -1112,6 +1171,8 @@ MIGRATIONS = [
     Migration("0015", "durable_agent_checkpoints", _upgrade_durable_agent_checkpoints),
     Migration("0016", "persistent_rag_index", _upgrade_persistent_rag_index),
     Migration("0017", "context_and_relation_cleanup", _upgrade_context_and_relation_cleanup),
+    Migration("0018", "course_current_invariant", _upgrade_course_current_invariant),
+    Migration("0019", "user_timezone", _upgrade_user_timezone),
 ]
 
 
@@ -1127,10 +1188,18 @@ def _ensure_migration_table(cursor) -> None:
     )
 
 
-def run_migrations(connection=None) -> list[str]:
+def run_migrations(connection=None, target_version: str | None = None) -> list[str]:
     owns_connection = connection is None
     if connection is None:
         connection = get_conn()
+    selected_migrations = MIGRATIONS
+    if target_version is not None:
+        target_indexes = [
+            index for index, migration in enumerate(MIGRATIONS) if migration.version == target_version
+        ]
+        if not target_indexes:
+            raise ValueError(f"Unknown migration target: {target_version}")
+        selected_migrations = MIGRATIONS[: target_indexes[0] + 1]
     cursor = connection.cursor()
     applied = []
     try:
@@ -1139,7 +1208,7 @@ def run_migrations(connection=None) -> list[str]:
         cursor.execute("SELECT version FROM schema_migrations")
         completed = {row["version"] for row in cursor.fetchall()}
 
-        for migration in MIGRATIONS:
+        for migration in selected_migrations:
             if migration.version in completed:
                 continue
             migration.upgrade(cursor)

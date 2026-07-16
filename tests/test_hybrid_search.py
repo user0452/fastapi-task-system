@@ -63,3 +63,27 @@ def test_hybrid_search_batches_focused_query_with_original_question():
     assert results[0]["kb_ids"] == ["YQ-DR-002"]
     assert requested == [[query, "backup reports success but restore fails"]]
     assert results[0]["focused_query_matches"] == 2
+
+
+def test_hybrid_search_reuses_precomputed_query_embedding():
+    chunk = {
+        "id": 1,
+        "material_title": "Runbook",
+        "heading_path": "Recovery",
+        "kb_ids": [],
+        "chunk_text": "restore verification",
+        "embedding_json": serialize_embedding(np.array([1.0, 0.0], dtype="float32")),
+    }
+
+    results = hybrid_search(
+        "restore verification",
+        [chunk],
+        [],
+        top_k=1,
+        embedding_provider=lambda _texts: (_ for _ in ()).throw(
+            AssertionError("query embedding must not be recomputed")
+        ),
+        precomputed_query_embeddings=np.array([[1.0, 0.0]], dtype="float32"),
+    )
+
+    assert results[0]["id"] == 1

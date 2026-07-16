@@ -101,6 +101,48 @@ def _dense_score(query_embedding: np.ndarray, embedding_json: str | None) -> flo
         return 0.0
 
 
+def _knowledge_point_text(point: dict) -> str:
+    return " ".join(
+        [
+            str(point.get("name") or ""),
+            str(point.get("description") or ""),
+            str(point.get("summary") or ""),
+            *[str(example) for example in point.get("examples", [])],
+        ]
+    ).strip()
+
+
+def _knowledge_point_score(query: str, query_embedding: np.ndarray, point: dict) -> float:
+    dense = _dense_score(query_embedding, point.get("embedding_json"))
+    keyword = _keyword_score(query, _knowledge_point_text(point))
+    return dense * 0.65 + keyword * 0.35
+
+
+def rank_knowledge_candidates(
+    query: str,
+    knowledge_points: list[dict],
+    query_embedding: np.ndarray,
+    limit: int,
+) -> list[tuple[dict, float]]:
+    embedding = np.asarray(query_embedding, dtype="float32")
+    if embedding.ndim != 1 or limit <= 0:
+        return []
+    ranked = [
+        (point, _knowledge_point_score(query, embedding, point))
+        for point in knowledge_points
+        if point.get("status", "active") == "active"
+    ]
+    ranked.sort(
+        key=lambda item: (
+            item[1],
+            float(item[0].get("extraction_confidence") or 0),
+            -int(item[0]["id"]),
+        ),
+        reverse=True,
+    )
+    return [item for item in ranked[:limit] if item[1] > 0]
+
+
 @lru_cache(maxsize=8)
 def _dense_matrix(serialized: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
     vectors = []
@@ -285,12 +327,18 @@ def hybrid_search(
     embedding_provider=embed_texts,
     enable_multi_query: bool = DEFAULT_ENABLE_MULTI_QUERY,
     enable_coverage_rerank: bool = DEFAULT_ENABLE_COVERAGE_RERANK,
+    precomputed_query_embeddings: np.ndarray | list[list[float]] | None = None,
 ) -> list[dict]:
     if not query.strip() or not chunks:
         return []
 
     queries = build_query_variants(query) if enable_multi_query else [query.strip()]
-    query_embeddings = np.asarray(embedding_provider(queries), dtype="float32")
+    query_embeddings = np.asarray(
+        embedding_provider(queries)
+        if precomputed_query_embeddings is None
+        else precomputed_query_embeddings,
+        dtype="float32",
+    )
     if query_embeddings.ndim != 2 or query_embeddings.shape[0] != len(queries):
         raise ValueError("embedding provider must return one vector per query variant")
     query_embedding = query_embeddings[0]
@@ -298,17 +346,7 @@ def hybrid_search(
     point_by_chunk: dict[int, list[dict]] = {}
 
     for point in knowledge_points:
-        point_text = " ".join(
-            [
-                str(point.get("name") or ""),
-                str(point.get("description") or ""),
-                str(point.get("summary") or ""),
-                *[str(example) for example in point.get("examples", [])],
-            ]
-        ).strip()
-        dense = _dense_score(query_embedding, point.get("embedding_json"))
-        keyword = _keyword_score(query, point_text)
-        point_scores[point["id"]] = dense * 0.65 + keyword * 0.35
+        point_scores[point["id"]] = _knowledge_point_score(query, query_embedding, point)
         public_point = {
             "id": point["id"],
             "name": point.get("name", ""),
