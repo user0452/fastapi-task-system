@@ -1,91 +1,125 @@
-# A3 专科学习 AI 验收报告
+# A3 `feature/a3-competition` 安全合并验证报告
 
-验收日期：2026-07-12
+验收日期：2026-07-16
 
-## 1. 目标验收
+分支：`feature/a3-competition`
 
-| 目标 | 结果 | 可复验证据 |
+目标基线：`main`
+
+## 1. 实现提交
+
+| SHA | 提交 | 主要范围 |
 | --- | --- | --- |
-| 每门课程一个长期助手 | 通过 | `course_agents.course_id` 唯一；三门课程产生三个助手、三个主会话 |
-| 课程数据完全隔离 | 通过 | 100 次三课程交叉检索，错误资料引用为 0；会话、资源和掌握度均校验所有权 |
-| 自动知识索引 | 通过 | 上传后自动分块、生成片段/知识点 embedding 和依赖；未变化重建的 embedding 调用为 0 |
-| 内部引用 | 通过 | 课程回答返回资料、页码、片段、融合分数和知识点，并可从聊天跳到资料面板 |
-| 外部视频资源 | 通过 | Bilibili、YouTube、Tavily Provider 统一归一化；E2E 稳定返回 4 张卡片 |
-| 卡片与交互持久化 | 通过 | URL 去重、缓存、有效性、封面占位、打开、收藏、看完和有用性均有测试 |
-| 六个课程面板 | 通过 | 概览、知识点、计划、练习、错题、资料资源均读取真实后端状态 |
-| 聊天内学习闭环 | 通过 | 讲解/资源 -> 练习 -> 提交 -> 批改 -> 掌握度 -> 错题 -> 计划重排完整通过 |
-| 状态恢复 | 通过 | 切课、开关面板、刷新和重新登录后恢复课程、消息、卡片、练习结果和面板 URL |
-| 并发与事务 | 通过 | 同一课程 10 路聊天完整保存 10 对消息和 10 个唯一完成运行；无透明丢消息 |
-| 审计与安全 | 通过 | 课程、资料、学习、Agent、资源操作记录审计；跨用户访问拒绝；危险动作二次确认 |
-| 响应式可用 | 通过 | 桌面三栏无截断；390x844 下课程栏为抽屉、二级面板 390px 全宽、无横向溢出 |
+| `0c2ff72d7699edbe51a8f5c535cb55b72339c74d` | `fix: harden learning material and agent invariants` | 题目/评估安全、诊断状态机、资料与索引一致性、Agent 生命周期、认证/课程/用户隔离、时区、RAG 和低风险清理 |
+| `3947e9afa582067e9f6d4247e2c22bb94685c6bb` | `fix: isolate user state and streaming requests` | Pinia 账户隔离、课程加载竞态、流式取消、消息存在性检查、生产前端构建 |
+| `593e43d555fc83e56f941c4502b263ec54f44ccf` | `ci: isolate test databases and run cross-platform e2e` | Alembic 统一入口、测试库保护、readiness revision、跨平台 Playwright、CI E2E 与失败产物 |
 
-## 2. 自动化结果
+## 2. 九阶段验收结论
 
-- 后端：`66 passed`。
-- 课程、资料、学习、Agent 四个核心 service 合并覆盖率：`82.58%`，高于 `75%` 门槛。
-- 三课程隔离检索：`100/100` 正确，跨课程引用 `0`。
-- 前端组件：6 个测试文件，`19 passed`。
-- Playwright：6 条场景，连续 3 轮，`18 passed`。
-- 生产构建：Vite 8，1803 个模块转换成功。
-- 数据迁移：`0001-0017` 覆盖空库、旧库、重复执行和记录保留；旧 Agent 消息非破坏性归入历史会话，并增量回填任务、认证、索引、知识来源、层级关系和记忆字段，无 `DROP TABLE`。
+| 阶段 | 结果 | 关键证据 |
+| --- | --- | --- |
+| 1. 题目与评估安全 | 通过 | 公共题目 DTO 不含 `answer`、`reference_answer` 或完整 `quiz_json`；完整提交、重复 ID、越权 ID、LLM 明细完整性和服务端重算均有测试 |
+| 2. 诊断状态机与幂等 | 通过 | `evaluating → evaluated → planning → completed`；评估/计划故障可重试；重复与并发提交不重复更新掌握度或计划 |
+| 3. 资料与索引一致性 | 通过 | 上传前所有权校验、数据库失败回滚磁盘、可恢复删除、后台任务失效、MySQL advisory lock、FAISS generation 防旧任务覆盖 |
+| 4. Agent 生命周期 | 通过 | `client_request_id` 幂等、稳定工具幂等键、断连取消、`resuming` lease 恢复、危险动作幂等、checkpoint 完成清理和延迟 GC |
+| 5. 认证与用户隔离 | 通过 | Argon2id、legacy bcrypt 自动迁移、失败登录限流、可信代理 IP、课程状态命令、单 current 课程唯一约束、跨用户资源/会话/action/checkpoint 拒绝 |
+| 6. 时区、RAG、数据质量 | 通过 | 用户 IANA 时区、DB 会话 UTC、用户本地“今天”、向量/关键词/知识点独立配额、知识点主动召回、查询 embedding 单次计算、orphan 过滤 |
+| 7. 前端状态与流式竞态 | 通过 | 认证失效/退出/换号清空用户状态；请求版本与 AbortController 隔离旧流；reader 取消与释放；刷新并发课程加载合并 |
+| 8. 迁移、CI、E2E | 通过（远端 CI 待触发） | 空库与历史库均只执行 `alembic upgrade head`；测试库随机/显式 test 名；E2E 清理拒绝非测试库；bundled Chromium 7/7 |
+| 9. 低风险清理 | 通过 | 源码乱码扫描 0；公共字符串先 strip、必填空白拒绝；`pyproject.toml`/`uv.lock` 单一依赖真源；精确外链域名；外部时间 UTC；JSON 可控错误；静态绝对路径；embedding 首载锁 |
 
-六条浏览器场景：
+## 3. 数据库迁移
 
-1. 注册、创建课程 AI、上传资料、自动索引并建立知识图谱。
-2. 三门课程的助手、资料和对话历史完全独立。
-3. 内部引用、四张外部视频卡、封面失败占位、交互和刷新恢复。
-4. 聊天内生成三题、提交批改、更新掌握度、错题和后续计划。
-5. 面板开关不丢草稿、旧 URL 重定向、危险动作确认后才执行。
-6. 390x844 下移动课程栏、聊天和全宽课程面板无溢出。
+- 当前 Alembic head：`20260716_02`。
+- 开发库从旧 `20260716_01` 自动升级到 `20260716_02`。
+- 全新临时库：仅运行 `python -m alembic upgrade head`，创建完整历史结构、`schema_migrations` 和 `alembic_version`。
+- 历史临时库：先构造到 legacy `0017` 并 stamp 旧基线，再运行 `alembic upgrade head`，自动补齐 `0018`、`0019` 和新 head。
+- `/health/ready` 在数据库 revision 缺失或过期时返回 503；当前 head 返回 200。
+- pytest 使用随机 `a3_pytest_*` 数据库；CI 和 E2E 分别使用 `a3_ci_test`、`a3_e2e_test`。删除保护明确拒绝 `task_db2`。
 
-## 3. 性能结果
+## 4. 最终自动化结果
 
-本机 MySQL 与 Mock LLM，课程 ID 显式绑定，连续五轮：
-
-- 普通 API 20 路并发 P95：`85.90-137.01ms`，低于 `500ms` 阈值。
-- 课程流式聊天 10 路并发首事件最大：`33.25ms`，低于 `1s` 阈值。
-- 流式请求总耗时最大：`199.00ms`。
-- 每轮 10 个结果全部属于目标课程，并产生 10 个唯一 `agent_run`。
-- 全部流收到 `done`，结束后课程助手工作区和数据库连接池继续可用。
-
-此前资料性能基线仍成立：约 900KB / 3600 chunks 热启动 `56.49s`；短文本 embedding 冷启动 `17.446s`、热启动 `0.015s`。
-
-## 4. 复现命令
+统一命令：
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -q
-.venv\Scripts\python.exe scripts\verify_performance.py `
-  --base-url http://127.0.0.1:8011 `
-  --username course_ai_demo `
-  --password 'A3Demo123!'
-
-Set-Location frontend
-npm run test:run
-npm run build
-npm run test:e2e -- --repeat-each=3 --reporter=line
-```
-
-完整统一验收：
-
-```powershell
+$env:A3_PYTHON = (Resolve-Path .\.venv\Scripts\python.exe).Path
 powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1
 ```
 
-## 5. 人工浏览器验收
+真实结果：
 
-- 桌面 1280x720：课程栏 236px、聊天区 634px、右侧面板 410px，无横向滚动和文字截断。
-- 手机 390x844：面板位于 `x=0, y=52`，尺寸 `390x792`，背景不透出聊天内容。
-- 视频卡桌面双列、手机单列；四张卡片均保持 16:9 封面比例，封面失败不改变布局。
-- 提升导航、聊天、卡片和面板字号后，桌面与移动端生产构建均实测可读。
+- Alembic：成功升级并保持 `20260716_02 (head)`。
+- Python 编译：通过。
+- Ruff：通过。
+- Mypy：`Success: no issues found in 85 source files`。
+- 后端 pytest：`145 passed in 29.82s`。
+- 关键模块覆盖率：`78.33%`，高于 `70%` 门槛。
+- 前端 ESLint：通过。
+- Vitest：`9` 个测试文件、`27 passed`。
+- Vite：`1812 modules transformed`，生产构建成功。
+- Playwright：bundled Chromium，`7 passed (49.1s)`。
+- `git diff --check`：通过。
+- 源码乱码模式扫描：`0`。
 
-## 6. 结论与边界
+阶段 8 迁移专项命令：
 
-当前版本已经达到比赛项目和小规模团队试用所需的 AI-first 学习闭环：课程不是管理条目，而是一组长期专科学习 AI；聊天可以直接调起课程资料、外部资源、练习和学习状态。
+```powershell
+.\.venv\Scripts\python.exe -m pytest `
+  tests/test_fresh_database_migrations.py `
+  tests/test_migrations.py `
+  tests/test_schema_readiness.py `
+  tests/test_ci_configuration.py -q
+```
 
-当前 embedding 的规范数据持久化在 MySQL，课程级 FAISS 和关键词倒排索引负责候选召回，应用层只对候选做混合重排。资料任务已使用数据库 job/lease/heartbeat，日志与运行指标已接入；更大规模生产仍建议迁移到 Qdrant/pgvector、对象存储和集中式遥测，并补充组织级 RBAC 与自动备份演练。
+结果：`12 passed`。其中分别实际创建并删除了全新测试库和历史升级测试库。
 
-## 7. Git 工作区
+阶段 9 清理专项命令：
 
-- 当前分支：`feature/a3-competition`。
-- 工作区在本次 Goal 前已经包含用户修改和未跟踪文件，本次没有回滚这些内容。
-- 未执行 `git add`、commit 或 push。
+```powershell
+.\.venv\Scripts\python.exe -m pytest `
+  tests/test_low_risk_cleanup.py `
+  tests/test_external_resource_engine_v1.py `
+  tests/test_account_settings.py -q
+```
+
+结果：`18 passed`。
+
+## 5. 浏览器 E2E 场景
+
+1. 注册、创建课程、上传资料、后台处理、知识点与依赖图生成，并在刷新后恢复。
+2. 三门课程的资料、助手和聊天历史隔离。
+3. RAG 内部来源与外部网页来源气泡、展开内容和刷新恢复。
+4. 聊天内练习、提交、掌握度、错题和计划重排。
+5. 面板草稿保留、旧地址重定向和危险操作确认。
+6. 390×844 移动端课程导航、聊天和面板可用。
+7. 诊断提交、计划生成、今日学习开始与提交闭环。
+
+Playwright 配置不使用本机 Chrome channel，也不硬编码 Windows `.venv\Scripts\python.exe`。失败时 CI 上传 `test-results`（trace/截图）、HTML 报告和前后端服务日志。
+
+## 6. 启动验证
+
+Playwright 验收实际启动了：
+
+- FastAPI/Uvicorn：`127.0.0.1:8011`；
+- Vite：`127.0.0.1:5176`；
+- `/health/ready`：HTTP 200；
+- 完整 API、后台资料 worker、FAISS、流式聊天与浏览器交互均成功运行。
+
+静态目录由项目根目录绝对路径解析，不再依赖启动进程的当前工作目录。
+
+## 7. 限制与人工事项
+
+1. **远端 CI 尚未实际运行。** 当前分支未在本次验收中 push，也未创建 PR，因此 GitHub Actions 的成功状态不能伪造。工作流已覆盖 `feature/**`，本地已执行等价且更完整的统一验收；push 后仍需确认远端 `verify` job 绿色。
+2. E2E 使用 Mock LLM/Mock Embedding，外部 Bilibili、YouTube、Tavily 的实时可用性会受网络、配额和密钥影响；这些 Provider 失败时已验证为可控降级，不阻断核心学习流程。
+3. 历史数据库中旧时间列曾混用本地时间和 UTC，无法在没有业务语义映射的情况下安全批量改写。本次保证新连接、新写入和新时区计算使用 UTC；上线前建议对真实历史数据抽样审计。
+4. `routers/`、`agents/`、`services/` 的 legacy 入口仍被兼容模式和 E2E 危险操作测试引用，因此未误删；生产继续保持 `ENABLE_LEGACY_ROUTES=false`。
+5. 统一验收启动外层 PowerShell 时，Conda 自动激活在中文用户路径上输出一次 GBK 编码警告；脚本未中止且最终退出码为 0。项目命令均通过显式 `A3_PYTHON` 使用仓库 Python 3.13 环境。
+
+## 8. 合并前检查
+
+- [x] 分支不是 `main`，未修改 `main`。
+- [x] 所有本地代码、迁移、测试、构建和 E2E 门槛通过。
+- [x] 用户原有未跟踪文件未删除、未覆盖、未纳入提交。
+- [x] 实现提交已按后端、前端、CI 三个逻辑范围拆分。
+- [ ] push 当前分支并确认 GitHub Actions 成功。
+- [ ] PR 审核时重点检查真实生产数据库备份、历史时间数据和生产 secrets。

@@ -41,18 +41,17 @@ scripts/verify_all.ps1    完整本地验收
 Copy-Item .env.example .env
 uv sync --dev
 Set-Location frontend
-npm install
+npm ci
 Set-Location ..
-.venv\Scripts\python.exe -m app.core.migrations
-.venv\Scripts\alembic.exe stamp head
+uv run alembic upgrade head
 ```
 
-`app.core.migrations` 负责历史版本和新环境的结构基线；当前版本起，新增字段、索引和表请通过 Alembic 创建迁移。已有数据库在运行历史迁移后执行一次 `alembic stamp head` 即可接管版本记录。
+Alembic 是唯一迁移入口。`alembic upgrade head` 会自动处理空数据库、尚未 stamp 的历史数据库，以及已停留在旧 Alembic 基线的数据库，不需要手工运行历史迁移或 `stamp`。依赖以 `pyproject.toml` 为声明真源、`uv.lock` 为可复现锁文件，不再维护并行的 `requirements.txt`。
 
 后端：
 
 ```powershell
-.venv\Scripts\python.exe -m uvicorn main:app --reload --host 127.0.0.1 --port 8010
+uv run python -m uvicorn main:app --reload --host 127.0.0.1 --port 8010
 ```
 
 前端：
@@ -63,7 +62,7 @@ $env:VITE_API_TARGET='http://127.0.0.1:8010'
 npm run dev -- --host 127.0.0.1 --port 5175
 ```
 
-访问 `http://127.0.0.1:5175/#/today`。健康检查为 `/health/live`、`/health/ready`，Prometheus 指标为 `/metrics`。
+访问 `http://127.0.0.1:5175/#/today`。健康检查为 `/health/live`、`/health/ready`，Prometheus 指标为 `/metrics`。`/health/ready` 只有在数据库可连接且 `alembic_version` 等于当前 Alembic head 时才返回 200。
 
 ## 关键配置
 
@@ -101,6 +100,8 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1
 
 该脚本执行迁移、编译、Ruff、Mypy、关键路径覆盖率、前端 ESLint/Vitest、生产构建和 Playwright。快速验证可加 `-SkipE2E -SkipCoverage`。
 
-CI 定义在 `.github/workflows/ci.yml`，使用 MySQL 8.4 和锁定依赖运行同一组静态检查、测试和构建。
+pytest 默认创建随机 `a3_pytest_*` 数据库并在会话结束后删除；CI 使用显式的 `a3_ci_test`，Playwright 使用 `a3_e2e_test`。删除测试库和 E2E 清理命令都会拒绝不含明确 `test` 标识的数据库名。
+
+CI 定义在 `.github/workflows/ci.yml`，使用 MySQL 8.4、锁定依赖和 Playwright 自带 Chromium，执行后端测试、前端单测、生产构建和 E2E；失败时上传 trace、截图与前后端日志。
 
 更多运行细节见 [docs/operations.md](docs/operations.md)，API 状态见 [docs/api-and-states.md](docs/api-and-states.md)，RAG 评测见 [docs/rag-evaluation.md](docs/rag-evaluation.md)。
