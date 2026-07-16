@@ -72,6 +72,14 @@ def _add_column(cursor, table: str, column: str, definition: str) -> None:
     )
 
 
+def _modify_column(cursor, table: str, column: str, definition: str) -> None:
+    if not _table_exists(cursor, table) or not _column_exists(cursor, table, column):
+        return
+    cursor.execute(
+        f"ALTER TABLE `{_identifier(table)}` MODIFY COLUMN `{_identifier(column)}` {definition}"
+    )
+
+
 def _add_index(cursor, table: str, index_name: str, columns: str) -> None:
     if not _table_exists(cursor, table) or _index_exists(cursor, table, index_name):
         return
@@ -1190,6 +1198,12 @@ def _upgrade_durable_agent_actions(cursor) -> None:
     )
 
 
+def _upgrade_general_agent_run_idempotency(cursor) -> None:
+    """Allow the existing durable run ledger to represent general chat requests."""
+    _modify_column(cursor, "agent_runs", "agent_id", "BIGINT NULL")
+    _modify_column(cursor, "agent_runs", "course_id", "INT NULL")
+
+
 MIGRATIONS = [
     Migration("0001", "non_destructive_baseline", _upgrade_baseline),
     Migration("0002", "course_learning_foundation", _upgrade_course_learning_foundation),
@@ -1211,6 +1225,7 @@ MIGRATIONS = [
     Migration("0018", "course_current_invariant", _upgrade_course_current_invariant),
     Migration("0019", "user_timezone", _upgrade_user_timezone),
     Migration("0020", "durable_agent_actions", _upgrade_durable_agent_actions),
+    Migration("0021", "general_agent_run_idempotency", _upgrade_general_agent_run_idempotency),
 ]
 
 

@@ -75,3 +75,17 @@ def test_development_legacy_routes_remain_configurable(monkeypatch):
     assert "/tasks" not in disabled_paths
     assert "/api/v1/courses" in enabled_paths
     assert "/api/v1/courses" in disabled_paths
+
+
+def test_agent_lease_configuration_requires_a_safe_heartbeat(monkeypatch):
+    monkeypatch.setenv("AGENT_TOOL_LEASE_SECONDS", "0.3")
+    monkeypatch.setenv("AGENT_ACTION_LEASE_SECONDS", "0.6")
+    monkeypatch.setenv("AGENT_LEASE_HEARTBEAT_SECONDS", "0.11")
+    invalid = Settings.from_env()
+
+    with pytest.raises(RuntimeError, match="AGENT_LEASE_HEARTBEAT_SECONDS"):
+        invalid.validate_startup()
+
+    monkeypatch.setenv("AGENT_LEASE_HEARTBEAT_SECONDS", "0.1")
+    valid = Settings.from_env()
+    valid.validate_startup()

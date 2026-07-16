@@ -2,6 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Event as ThreadEvent
+from time import sleep
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -25,6 +26,7 @@ from app.modules.agent.service import (
     get_chat_session,
     list_chat_sessions,
     run_agent_chat,
+    run_native_tool_agent_chat,
     run_native_tool_agent_chat_async,
 )
 from app.modules.courses.schemas import CourseCreate
@@ -290,6 +292,204 @@ def test_client_request_id_rejects_changed_message_without_new_side_effects(agen
     assert after == before
 
 
+def test_agent_input_hash_preserves_internal_whitespace_and_normalizes_safe_variants():
+    base = (7, 11, None, "course_qa", "read")
+
+    indented = agent_service._agent_input_hash(*base[:3], "if ok:\n    run()", *base[3:])
+    less_indented = agent_service._agent_input_hash(*base[:3], "if ok:\n  run()", *base[3:])
+    markdown_line_break = agent_service._agent_input_hash(*base[:3], "- item\n  detail", *base[3:])
+    markdown_space = agent_service._agent_input_hash(*base[:3], "- item  detail", *base[3:])
+    one_space = agent_service._agent_input_hash(*base[:3], "value = 1", *base[3:])
+    two_spaces = agent_service._agent_input_hash(*base[:3], "value  = 1", *base[3:])
+
+    assert indented != less_indented
+    assert markdown_line_break != markdown_space
+    assert one_space != two_spaces
+    assert agent_service._agent_input_hash(*base[:3], "\n if ok:\r\n    run() \r\n", *base[3:]) == indented
+    assert agent_service._agent_input_hash(*base[:3], "Ａ", *base[3:]) == agent_service._agent_input_hash(
+        *base[:3], "A", *base[3:]
+    )
+
+
+def test_client_request_id_rejects_changed_indentation(agent_course):
+    user, _, _ = agent_course
+    client_request_id = uuid4()
+    first = run_agent_chat(
+        user["id"],
+        AgentChatRequest(message="if ok:\n    run()", client_request_id=client_request_id),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+
+    with pytest.raises(AppError) as error:
+        run_agent_chat(
+            user["id"],
+            AgentChatRequest(message="if ok:\n  run()", client_request_id=client_request_id),
+            reply_provider=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("conflicting indentation must not call the model")
+            ),
+            search_provider=_search_provider,
+        )
+
+    assert error.value.error_code == "CLIENT_REQUEST_ID_CONFLICT"
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT COUNT(*) AS total FROM agent_chat_messages WHERE user_id = %s AND session_id = %s",
+            (user["id"], first["session"]["id"]),
+        )
+        assert cursor.fetchone()["total"] == 2
+
+
+def test_general_chat_client_request_id_reuses_run_and_messages(agent_course, monkeypatch):
+    _, general_user, _ = agent_course
+    session = create_chat_session(general_user["id"], ChatSessionCreate(title="General retry"))
+    client_request_id = uuid4()
+    provider_calls = 0
+
+    artifacts = SimpleNamespace(citations=[], cards=[], resources=[], actions=[])
+
+    class GeneralAgent:
+        def invoke(self, *_args, **_kwargs):
+            nonlocal provider_calls
+            provider_calls += 1
+            return {"messages": [AIMessage(content="general response")]}
+
+    request = AgentChatRequest(
+        message="general idempotency request",
+        session_id=session["id"],
+        client_request_id=client_request_id,
+    )
+    monkeypatch.setattr(
+        agent_service,
+        "_build_native_agent",
+        lambda _user_id, _context: (GeneralAgent(), artifacts),
+    )
+    monkeypatch.setattr(
+        agent_service,
+        "get_mysql_checkpointer",
+        lambda: SimpleNamespace(delete_thread=lambda _thread_id: None),
+    )
+    first = run_native_tool_agent_chat(general_user["id"], request)
+    repeated = run_native_tool_agent_chat(general_user["id"], request)
+
+    assert provider_calls == 1
+    assert repeated["idempotent"] is True
+    assert repeated["run_id"] == first["run_id"]
+    assert repeated["message"]["id"] == first["message"]["id"]
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT agent_id, course_id, status FROM agent_runs
+            WHERE id = %s AND user_id = %s
+            """,
+            (first["run_id"], general_user["id"]),
+        )
+        run = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT role, COUNT(*) AS total
+            FROM agent_chat_messages
+            WHERE user_id = %s AND session_id = %s
+            GROUP BY role
+            """,
+            (general_user["id"], session["id"]),
+        )
+        messages = {row["role"]: row["total"] for row in cursor.fetchall()}
+    assert run == {"agent_id": None, "course_id": None, "status": "completed"}
+    assert messages == {"assistant": 1, "user": 1}
+
+
+def test_general_chat_client_request_id_conflicts_across_message_and_session(agent_course):
+    _, general_user, _ = agent_course
+    first_session = create_chat_session(general_user["id"], ChatSessionCreate(title="General first"))
+    second_session = create_chat_session(general_user["id"], ChatSessionCreate(title="General second"))
+    client_request_id = uuid4()
+
+    run_agent_chat(
+        general_user["id"],
+        AgentChatRequest(
+            message="general original",
+            session_id=first_session["id"],
+            client_request_id=client_request_id,
+        ),
+        reply_provider=lambda *_args, **_kwargs: "original response",
+    )
+    for request in (
+        AgentChatRequest(
+            message="general changed",
+            session_id=first_session["id"],
+            client_request_id=client_request_id,
+        ),
+        AgentChatRequest(
+            message="general original",
+            session_id=second_session["id"],
+            client_request_id=client_request_id,
+        ),
+    ):
+        with pytest.raises(AppError) as error:
+            run_agent_chat(
+                general_user["id"],
+                request,
+                reply_provider=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    AssertionError("conflicting general request must not call the model")
+                ),
+            )
+        assert error.value.error_code == "CLIENT_REQUEST_ID_CONFLICT"
+
+
+def test_concurrent_general_chat_client_request_creates_one_run_and_response(agent_course):
+    _, general_user, _ = agent_course
+    session = create_chat_session(general_user["id"], ChatSessionCreate(title="General concurrent"))
+    client_request_id = uuid4()
+    started = ThreadEvent()
+    release = ThreadEvent()
+    provider_calls = 0
+
+    def slow_general_reply(*_args, **_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        started.set()
+        assert release.wait(timeout=10)
+        return "general concurrent response"
+
+    request = AgentChatRequest(
+        message="general concurrent request",
+        session_id=session["id"],
+        client_request_id=client_request_id,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(
+            run_agent_chat,
+            general_user["id"],
+            request,
+            slow_general_reply,
+        )
+        assert started.wait(timeout=10)
+        second_future = executor.submit(
+            run_agent_chat,
+            general_user["id"],
+            request,
+            slow_general_reply,
+        )
+        second = second_future.result(timeout=10)
+        release.set()
+        first = first_future.result(timeout=10)
+
+    assert provider_calls == 1
+    assert second["idempotent"] is True
+    assert second["request_status"] == "running"
+    assert second["run_id"] == first["run_id"]
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS total FROM agent_runs
+            WHERE user_id = %s AND client_request_id = %s
+            """,
+            (general_user["id"], str(client_request_id)),
+        )
+        assert cursor.fetchone()["total"] == 1
+
+
 def test_client_request_id_rejects_changed_session_and_course(agent_course):
     user, _, course = agent_course
     session_request_id = uuid4()
@@ -547,6 +747,14 @@ def test_tool_call_lease_blocks_active_worker_and_fences_stale_owner(agent_cours
     assert reclaimed["lease_owner"] == "worker-b"
 
     with get_cursor() as cursor:
+        stale_renewed = repository.renew_tool_call_lease(
+            cursor,
+            first["id"],
+            user["id"],
+            lease_owner="worker-a",
+            heartbeat_at=now,
+            lease_expires_at=now + timedelta(minutes=3),
+        )
         stale_finished = repository.finish_tool_call(
             cursor,
             first["id"],
@@ -565,6 +773,7 @@ def test_tool_call_lease_blocks_active_worker_and_fences_stale_owner(agent_cours
             result={"worker": "b"},
             completed_at=now,
         )
+    assert stale_renewed is False
     assert stale_finished is False
     assert owner_finished is True
     with get_cursor() as cursor:
@@ -575,6 +784,149 @@ def test_tool_call_lease_blocks_active_worker_and_fences_stale_owner(agent_cours
         stored = cursor.fetchone()
     assert stored["status"] == "completed"
     assert '"worker": "b"' in stored["result_json"]
+
+
+def test_tool_lease_heartbeat_prevents_stale_reclaim_and_stops(agent_course, monkeypatch):
+    user, _, course = agent_course
+    chat = run_agent_chat(
+        user["id"],
+        AgentChatRequest(message="prepare a durable tool run"),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+    with get_cursor() as cursor:
+        run = repository.get_agent_run(cursor, chat["run_id"], user["id"])
+
+    monkeypatch.setattr(agent_service, "_agent_lease_config", lambda: (0.24, 0.24, 0.04))
+    renew_calls = []
+    original_renew = repository.renew_tool_call_lease
+
+    def record_renew(*args, **kwargs):
+        renew_calls.append(1)
+        return original_renew(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "renew_tool_call_lease", record_renew)
+    callback_started = ThreadEvent()
+    release_callback = ThreadEvent()
+    callback_calls = 0
+
+    def slow_callback():
+        nonlocal callback_calls
+        callback_calls += 1
+        callback_started.set()
+        assert release_callback.wait(timeout=10)
+        return {"value": "completed"}
+
+    context = {"run": run, "course": course}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        owner = executor.submit(
+            _execute_tool,
+            user["id"],
+            context,
+            "slow_heartbeat_tool",
+            "write",
+            {"request": 1},
+            slow_callback,
+        )
+        assert callback_started.wait(timeout=10)
+        sleep(0.34)
+        with pytest.raises(AppError) as in_progress:
+            _execute_tool(
+                user["id"],
+                context,
+                "slow_heartbeat_tool",
+                "write",
+                {"request": 1},
+                lambda: (_ for _ in ()).throw(
+                    AssertionError("a live lease must block the second callback")
+                ),
+            )
+        release_callback.set()
+        result = owner.result(timeout=10)
+
+    assert in_progress.value.error_code == "TOOL_CALL_IN_PROGRESS"
+    assert result == {"value": "completed"}
+    assert callback_calls == 1
+    assert renew_calls
+    renew_count_after_completion = len(renew_calls)
+    sleep(0.12)
+    assert len(renew_calls) == renew_count_after_completion
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT status FROM agent_tool_calls
+            WHERE run_id = %s AND tool_name = 'slow_heartbeat_tool'
+            """,
+            (run["id"],),
+        )
+        assert cursor.fetchone()["status"] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("cancelled", "expected_status", "expected_exception"),
+    [
+        (False, "failed", RuntimeError),
+        (True, "cancelled", agent_service.AgentRunCancelled),
+    ],
+)
+def test_tool_heartbeat_stops_after_failure_or_cancellation(
+    agent_course,
+    monkeypatch,
+    cancelled,
+    expected_status,
+    expected_exception,
+):
+    user, _, course = agent_course
+    chat = run_agent_chat(
+        user["id"],
+        AgentChatRequest(message=f"prepare {expected_status} tool run"),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+    with get_cursor() as cursor:
+        run = repository.get_agent_run(cursor, chat["run_id"], user["id"])
+
+    monkeypatch.setattr(agent_service, "_agent_lease_config", lambda: (0.3, 0.3, 0.04))
+    renew_calls = []
+    original_renew = repository.renew_tool_call_lease
+
+    def record_renew(*args, **kwargs):
+        renew_calls.append(1)
+        return original_renew(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "renew_tool_call_lease", record_renew)
+    cancelled_event = ThreadEvent()
+
+    def failing_callback():
+        sleep(0.13)
+        if cancelled:
+            cancelled_event.set()
+            return {"value": "unused"}
+        raise RuntimeError("callback failed")
+
+    with pytest.raises(expected_exception):
+        _execute_tool(
+            user["id"],
+            {"run": run, "course": course, "cancel_event": cancelled_event},
+            f"{expected_status}_heartbeat_tool",
+            "write",
+            {"request": expected_status},
+            failing_callback,
+        )
+
+    assert renew_calls
+    renew_count_after_callback = len(renew_calls)
+    sleep(0.12)
+    assert len(renew_calls) == renew_count_after_callback
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT status FROM agent_tool_calls
+            WHERE run_id = %s AND tool_name = %s
+            """,
+            (run["id"], f"{expected_status}_heartbeat_tool"),
+        )
+        assert cursor.fetchone()["status"] == expected_status
 
 
 def test_delete_tool_recovers_after_side_effect_before_finish(agent_course, monkeypatch):
@@ -891,6 +1243,152 @@ def test_durable_action_retry_reuses_one_final_assistant_message(agent_course, m
     assert stored_action["status"] == "executed"
     assert stored_action["result"] == executed["result"]
     assert message_count == 1
+
+
+def test_action_resume_heartbeat_prevents_takeover_and_stops(agent_course, monkeypatch):
+    user, _, course = agent_course
+    chat = run_agent_chat(
+        user["id"],
+        AgentChatRequest(message="prepare durable action heartbeat"),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+    now = agent_service._utc_now()
+    with get_cursor() as cursor:
+        action = repository.create_action_request(
+            cursor,
+            user["id"],
+            chat["session"]["id"],
+            course["id"],
+            "delete_task",
+            {"task_id": 999999},
+            uuid4().hex,
+            now + timedelta(minutes=10),
+            now,
+            checkpoint={
+                "thread_id": f"heartbeat-resume-{uuid4().hex}",
+                "run_id": chat["run_id"],
+            },
+        )
+
+    started = ThreadEvent()
+    release = ThreadEvent()
+    artifacts = SimpleNamespace(citations=[], cards=[], resources=[], actions=[])
+
+    class BlockingResumeAgent:
+        def invoke(self, *_args, **_kwargs):
+            started.set()
+            assert release.wait(timeout=10)
+            return {"messages": [AIMessage(content="resumed")]}
+
+    monkeypatch.setattr(
+        agent_service,
+        "_build_native_agent",
+        lambda _user_id, _context: (BlockingResumeAgent(), artifacts),
+    )
+    monkeypatch.setattr(agent_service, "_agent_lease_config", lambda: (0.24, 0.24, 0.04))
+    renew_calls = []
+    original_renew = repository.renew_action_resume_lease
+
+    def record_renew(*args, **kwargs):
+        renew_calls.append(1)
+        return original_renew(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "renew_action_resume_lease", record_renew)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        owner = executor.submit(decide_action, user["id"], action["id"], True)
+        assert started.wait(timeout=10)
+        sleep(0.34)
+        with pytest.raises(AppError) as in_progress:
+            decide_action(user["id"], action["id"], True)
+        release.set()
+        result = owner.result(timeout=10)
+
+    assert in_progress.value.error_code == "ACTION_IN_PROGRESS"
+    assert result["status"] == "executed"
+    assert renew_calls
+    renew_count_after_completion = len(renew_calls)
+    sleep(0.12)
+    assert len(renew_calls) == renew_count_after_completion
+    with get_cursor() as cursor:
+        stored = repository.get_action_request(cursor, action["id"], user["id"])
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS total FROM agent_chat_messages
+            WHERE user_id = %s AND idempotency_key = %s
+            """,
+            (user["id"], f"agent-action:{action['id']}:final"),
+        )
+        final_messages = cursor.fetchone()["total"]
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS total FROM operation_logs
+            WHERE user_id = %s AND action = 'AGENT_ACTION_EXECUTED'
+              AND target_id = %s
+            """,
+            (user["id"], action["id"]),
+        )
+        audit_logs = cursor.fetchone()["total"]
+    assert stored["status"] == "executed"
+    assert final_messages == 1
+    assert audit_logs == 1
+
+
+def test_stale_action_owner_cannot_renew_or_finalize_after_takeover(agent_course):
+    user, _, course = agent_course
+    session = create_chat_session(
+        user["id"],
+        ChatSessionCreate(course_id=course["id"], title="Stale action owner"),
+    )
+    now = agent_service._utc_now()
+    with get_cursor() as cursor:
+        action = repository.create_action_request(
+            cursor,
+            user["id"],
+            session["id"],
+            course["id"],
+            "delete_task",
+            {"task_id": 999999},
+            uuid4().hex,
+            now + timedelta(minutes=10),
+            now,
+            checkpoint={"thread_id": f"stale-action-{uuid4().hex}", "run_id": 1},
+        )
+        assert repository.claim_action_resume(
+            cursor,
+            action["id"],
+            owner="owner-a",
+            started_at=now,
+            lease_expires_at=now + timedelta(seconds=1),
+        )
+    takeover_at = now + timedelta(seconds=2)
+    with get_cursor() as cursor:
+        assert repository.claim_action_resume(
+            cursor,
+            action["id"],
+            owner="owner-b",
+            started_at=takeover_at,
+            lease_expires_at=takeover_at + timedelta(minutes=1),
+        )
+        stale_renewed = repository.renew_action_resume_lease(
+            cursor,
+            action["id"],
+            user["id"],
+            resume_owner="owner-a",
+            heartbeat_at=takeover_at,
+            lease_expires_at=takeover_at + timedelta(minutes=1),
+        )
+        stale_finalized = repository.finalize_action_resume(
+            cursor,
+            action["id"],
+            user["id"],
+            resume_owner="owner-a",
+            status="executed",
+            result={"deleted": True},
+            completed_at=takeover_at,
+        )
+    assert stale_renewed is False
+    assert stale_finalized is False
 
 
 def test_checkpoint_gc_keeps_active_actions_and_removes_unreferenced(agent_course):

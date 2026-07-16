@@ -51,9 +51,9 @@ def test_alembic_upgrade_head_builds_a_fresh_database():
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260716_03"
+                assert cursor.fetchone()["version_num"] == "20260717_04"
                 cursor.execute("SELECT COUNT(*) AS total FROM schema_migrations")
-                assert cursor.fetchone()["total"] >= 20
+                assert cursor.fetchone()["total"] >= 21
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total
@@ -87,12 +87,12 @@ def test_alembic_upgrades_a_previously_stamped_historical_database():
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260716_03"
+                assert cursor.fetchone()["version_num"] == "20260717_04"
                 cursor.execute(
                     "SELECT COUNT(*) AS total FROM schema_migrations "
-                    "WHERE version IN ('0018', '0019', '0020')"
+                    "WHERE version IN ('0018', '0019', '0020', '0021')"
                 )
-                assert cursor.fetchone()["total"] == 3
+                assert cursor.fetchone()["total"] == 4
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total
@@ -110,6 +110,18 @@ def test_alembic_upgrades_a_previously_stamped_historical_database():
                     """
                 )
                 assert cursor.fetchone()["total"] == 4
+                cursor.execute(
+                    """
+                    SELECT column_name AS name, is_nullable AS nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = DATABASE() AND table_name = 'agent_runs'
+                      AND column_name IN ('agent_id', 'course_id')
+                    """
+                )
+                nullable_columns = {
+                    row["name"]: row["nullable"] for row in cursor.fetchall()
+                }
+                assert nullable_columns == {"agent_id": "YES", "course_id": "YES"}
         finally:
             connection.close()
     finally:

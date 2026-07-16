@@ -473,9 +473,10 @@ def test_diagnostic_submission_persists_mastery_and_seven_day_plan(learning_cour
     assert all(item["evaluation_id"] == result["evaluation"]["id"] for item in changes.values())
     assert result["plan"]["days"] == 7
     assert len(result["plan"]["sessions"]) == 7
-    assert result["plan"]["sessions"][0]["scheduled_date"] == date.today().isoformat()
+    user_today = account_service.get_user_local_date(user["id"])
+    assert result["plan"]["sessions"][0]["scheduled_date"] == user_today.isoformat()
     assert result["plan"]["sessions"][-1]["scheduled_date"] == (
-        date.today() + timedelta(days=6)
+        user_today + timedelta(days=6)
     ).isoformat()
     assert all(item["estimated_minutes"] == course["daily_minutes"] for item in result["plan"]["sessions"])
 

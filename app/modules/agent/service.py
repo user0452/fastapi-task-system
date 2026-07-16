@@ -4,7 +4,7 @@ import json
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
-from threading import Event
+from threading import Event, Thread
 from time import perf_counter, sleep
 from typing import Callable
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langgraph.types import Command
 from pymysql.err import OperationalError
 
+from app.core.config import get_settings
 from app.core.database import get_cursor
 from app.core.errors import AppError
 from app.core.metrics import inc_counter, observe
@@ -78,12 +79,15 @@ def _stable_idempotency_key(request_id: str, tool_name: str, arguments: dict) ->
 def _agent_input_hash(
     user_id: int,
     session_id: int,
-    course_id: int,
+    course_id: int | None,
     message: str,
     intent: str,
     risk_level: str,
 ) -> str:
-    normalized_message = unicodedata.normalize("NFKC", re.sub(r"\s+", " ", message).strip())
+    normalized_message = unicodedata.normalize(
+        "NFKC",
+        message.replace("\r\n", "\n").replace("\r", "\n"),
+    ).strip()
     payload = json.dumps(
         {
             "version": 1,
@@ -99,6 +103,60 @@ def _agent_input_hash(
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _agent_lease_config() -> tuple[float, float, float]:
+    settings = get_settings()
+    return (
+        settings.agent_tool_lease_seconds,
+        settings.agent_action_lease_seconds,
+        settings.agent_lease_heartbeat_seconds,
+    )
+
+
+class _LeaseHeartbeat:
+    """Run durable lease renewal off the request's execution thread."""
+
+    def __init__(self, interval_seconds: float, renew: Callable[[], bool], name: str):
+        self._interval_seconds = interval_seconds
+        self._renew = renew
+        self._stop_event = Event()
+        self.lost = Event()
+        self._thread = Thread(target=self._run, name=name, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._thread.join()
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self._interval_seconds):
+            try:
+                if self._renew():
+                    continue
+            except Exception:
+                pass
+            self.lost.set()
+            self._stop_event.set()
+            return
+
+
+def _tool_lease_lost() -> AppError:
+    return AppError(
+        "工具调用租约已由其他进程接管",
+        409,
+        "TOOL_CALL_LEASE_LOST",
+    )
+
+
+def _action_lease_lost() -> AppError:
+    return AppError(
+        "确认请求租约已由其他进程接管",
+        409,
+        "ACTION_LEASE_LOST",
+    )
 
 
 def _normalize_native_agent_reply(reply: str) -> str:
@@ -386,9 +444,7 @@ def _prepare_context(
             else str(uuid4())
         )
         run = None
-        if agent is not None:
-            if course is None:
-                raise RuntimeError("course agent exists without an owning course")
+        if agent is not None or request.client_request_id is not None:
             client_request_id = (
                 str(request.client_request_id)
                 if request.client_request_id is not None
@@ -397,7 +453,7 @@ def _prepare_context(
             input_hash = _agent_input_hash(
                 user_id,
                 session["id"],
-                course["id"],
+                course["id"] if course else None,
                 request.message,
                 intent,
                 risk_level,
@@ -407,9 +463,9 @@ def _prepare_context(
                 request_id=request_id,
                 client_request_id=client_request_id,
                 input_hash=input_hash,
-                agent_id=agent["id"],
+                agent_id=agent["id"] if agent else None,
                 user_id=user_id,
-                course_id=course["id"],
+                course_id=course["id"] if course else None,
                 session_id=session["id"],
                 intent=intent,
                 risk_level=risk_level,
@@ -420,7 +476,7 @@ def _prepare_context(
                 if (
                     run.get("input_hash") != input_hash
                     or run["session_id"] != session["id"]
-                    or run["course_id"] != course["id"]
+                    or run["course_id"] != (course["id"] if course else None)
                 ):
                     raise AppError(
                         "客户端请求 ID 已用于不同输入",
@@ -565,6 +621,7 @@ def _execute_tool(
             observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
     started_at = _utc_now()
     started = perf_counter()
+    tool_lease_seconds, _, heartbeat_seconds = _agent_lease_config()
     idempotency_key = _stable_idempotency_key(run["request_id"], tool_name, arguments)
     lease_owner = uuid4().hex
     with get_cursor() as cursor:
@@ -579,18 +636,40 @@ def _execute_tool(
             idempotency_key=idempotency_key,
             lease_owner=lease_owner,
             started_at=started_at,
-            lease_expires_at=started_at + timedelta(minutes=3),
+            lease_expires_at=started_at + timedelta(seconds=tool_lease_seconds),
         )
     tool_call_id = tool_call["id"]
     if not claimed:
         if tool_call["status"] == "completed":
             return tool_call["result"]
         raise AppError("相同工具调用正在执行", 409, "TOOL_CALL_IN_PROGRESS")
+
+    def renew_tool_lease() -> bool:
+        heartbeat_at = _utc_now()
+        with get_cursor() as cursor:
+            return repository.renew_tool_call_lease(
+                cursor,
+                tool_call_id,
+                user_id,
+                lease_owner=lease_owner,
+                heartbeat_at=heartbeat_at,
+                lease_expires_at=heartbeat_at + timedelta(seconds=tool_lease_seconds),
+            )
+
+    heartbeat = _LeaseHeartbeat(
+        heartbeat_seconds,
+        renew_tool_lease,
+        f"agent-tool-lease-{tool_call_id}",
+    )
+    heartbeat.start()
     try:
         _raise_if_cancelled(context)
         result = callback()
         _raise_if_cancelled(context)
     except AgentRunCancelled as exc:
+        heartbeat.stop()
+        if heartbeat.lost.is_set():
+            raise _tool_lease_lost() from exc
         inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="cancelled")
         observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
         with get_cursor() as cursor:
@@ -604,13 +683,12 @@ def _execute_tool(
                 completed_at=_utc_now(),
             )
         if not finished:
-            raise AppError(
-                "工具调用租约已由其他进程接管",
-                409,
-                "TOOL_CALL_LEASE_LOST",
-            ) from exc
+            raise _tool_lease_lost() from exc
         raise
     except Exception as exc:
+        heartbeat.stop()
+        if heartbeat.lost.is_set():
+            raise _tool_lease_lost() from exc
         inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="failed")
         observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
         with get_cursor() as cursor:
@@ -624,12 +702,11 @@ def _execute_tool(
                 completed_at=_utc_now(),
             )
         if not finished:
-            raise AppError(
-                "工具调用租约已由其他进程接管",
-                409,
-                "TOOL_CALL_LEASE_LOST",
-            ) from exc
+            raise _tool_lease_lost() from exc
         raise
+    heartbeat.stop()
+    if heartbeat.lost.is_set():
+        raise _tool_lease_lost()
     if (
         tool_name == "delete_task"
         and tool_call.get("reclaimed")
@@ -648,11 +725,7 @@ def _execute_tool(
             completed_at=_utc_now(),
         )
     if not finished:
-        raise AppError(
-            "工具调用租约已由其他进程接管",
-            409,
-            "TOOL_CALL_LEASE_LOST",
-        )
+        raise _tool_lease_lost()
     inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="completed")
     observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
     return result
@@ -1498,6 +1571,7 @@ def _resume_native_action(user_id: int, action: dict, confirmed: bool) -> dict:
 def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dict:
     now = _utc_now()
     resume_owner = uuid4().hex
+    _, action_lease_seconds, heartbeat_seconds = _agent_lease_config()
     expired = False
     with get_cursor() as cursor:
         action = repository.get_action_request(cursor, action_id, user_id, for_update=True)
@@ -1521,21 +1595,46 @@ def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dic
                 action_id,
                 owner=resume_owner,
                 started_at=now,
-                lease_expires_at=now + timedelta(minutes=3),
+                lease_expires_at=now + timedelta(seconds=action_lease_seconds),
             )
             if not claimed:
                 raise AppError("确认请求正在执行", 409, "ACTION_IN_PROGRESS")
     if expired:
         raise AppError("确认请求已过期", 409, "ACTION_EXPIRED")
 
+    def renew_action_lease() -> bool:
+        heartbeat_at = _utc_now()
+        with get_cursor() as cursor:
+            return repository.renew_action_resume_lease(
+                cursor,
+                action_id,
+                user_id,
+                resume_owner=resume_owner,
+                heartbeat_at=heartbeat_at,
+                lease_expires_at=heartbeat_at + timedelta(seconds=action_lease_seconds),
+            )
+
+    heartbeat = _LeaseHeartbeat(
+        heartbeat_seconds,
+        renew_action_lease,
+        f"agent-action-lease-{action_id}",
+    )
+    heartbeat.start()
     try:
         resumed = _resume_native_action(user_id, action, confirmed)
-    except Exception:
+    except Exception as exc:
+        heartbeat.stop()
+        if heartbeat.lost.is_set():
+            raise _action_lease_lost() from exc
         with get_cursor() as cursor:
             repository.reset_action_pending(cursor, action_id, owner=resume_owner)
         raise
+    heartbeat.stop()
+    if heartbeat.lost.is_set():
+        raise _action_lease_lost()
 
     status = "executed" if confirmed else "cancelled"
+    completed_at = _utc_now()
     with get_cursor() as cursor:
         current = repository.get_action_request(cursor, action_id, user_id, for_update=True)
         if current is None:
@@ -1549,8 +1648,9 @@ def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dic
             }
         if current["status"] != "resuming":
             raise AppError("确认请求状态冲突", 409, "ACTION_STATE_CONFLICT")
-        if (current.get("checkpoint") or {}).get("resume_owner") != resume_owner:
-            raise AppError("确认请求已由其他进程接管", 409, "ACTION_STATE_CONFLICT")
+        checkpoint = current.get("checkpoint") or {}
+        if checkpoint.get("resume_owner") != resume_owner:
+            raise _action_lease_lost()
         message = _persist_assistant_in_transaction(
             cursor,
             user_id,
@@ -1567,7 +1667,16 @@ def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dic
             True,
             f"agent-action:{action_id}:final",
         )
-        repository.set_action_status(cursor, action_id, status, resumed["result"])
+        if not repository.finalize_action_resume(
+            cursor,
+            action_id,
+            user_id,
+            resume_owner=resume_owner,
+            status=status,
+            result=resumed["result"],
+            completed_at=completed_at,
+        ):
+            raise _action_lease_lost()
         repository.add_audit_log(
             cursor,
             user_id,
@@ -1578,8 +1687,8 @@ def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dic
                 "action_request_id": action_id,
                 "tool_name": action["tool_name"],
                 "result": resumed["result"],
-                "graph_thread_id": action["checkpoint"]["thread_id"],
-                "server_time_utc": now.isoformat() + "Z",
+                "graph_thread_id": checkpoint["thread_id"],
+                "server_time_utc": completed_at.isoformat() + "Z",
             },
         )
     return {

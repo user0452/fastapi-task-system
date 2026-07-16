@@ -54,6 +54,9 @@ class Settings:
     auth_rate_limit_enabled: bool
     trusted_proxy_cidrs: tuple[str, ...]
     enable_legacy_routes: bool
+    agent_tool_lease_seconds: float
+    agent_action_lease_seconds: float
+    agent_lease_heartbeat_seconds: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -96,6 +99,9 @@ class Settings:
                 "ENABLE_LEGACY_ROUTES",
                 default=_env("APP_ENV", "development").lower() != "production",
             ),
+            agent_tool_lease_seconds=float(_env("AGENT_TOOL_LEASE_SECONDS", "180")),
+            agent_action_lease_seconds=float(_env("AGENT_ACTION_LEASE_SECONDS", "180")),
+            agent_lease_heartbeat_seconds=float(_env("AGENT_LEASE_HEARTBEAT_SECONDS", "30")),
         )
 
     def validate_startup(self) -> None:
@@ -131,6 +137,26 @@ class Settings:
 
         if self.external_resource_cache_minutes < 1:
             errors.append("EXTERNAL_RESOURCE_CACHE_MINUTES 必须大于 0")
+
+        if self.agent_tool_lease_seconds <= 0:
+            errors.append("AGENT_TOOL_LEASE_SECONDS 必须大于 0")
+
+        if self.agent_action_lease_seconds <= 0:
+            errors.append("AGENT_ACTION_LEASE_SECONDS 必须大于 0")
+
+        if self.agent_lease_heartbeat_seconds <= 0:
+            errors.append("AGENT_LEASE_HEARTBEAT_SECONDS 必须大于 0")
+        elif self.agent_lease_heartbeat_seconds > (
+            min(
+                self.agent_tool_lease_seconds,
+                self.agent_action_lease_seconds,
+            )
+            / 3
+            + 1e-9
+        ):
+            errors.append(
+                "AGENT_LEASE_HEARTBEAT_SECONDS 必须不大于最短 Agent 租约的三分之一"
+            )
 
         for cidr in self.trusted_proxy_cidrs:
             try:

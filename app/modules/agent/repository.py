@@ -61,6 +61,23 @@ def _action_row(entity: Any | None) -> dict | None:
     return row
 
 
+def _resume_lease_is_active(checkpoint: dict, now: datetime) -> bool:
+    lease_expires_at = checkpoint.get("resume_lease_expires_at")
+    if not lease_expires_at:
+        return False
+    try:
+        return datetime.fromisoformat(str(lease_expires_at)) > now
+    except ValueError:
+        return False
+
+
+def _clear_resume_lease(checkpoint: dict) -> None:
+    checkpoint.pop("resume_owner", None)
+    checkpoint.pop("resume_started_at", None)
+    checkpoint.pop("resume_heartbeat_at", None)
+    checkpoint.pop("resume_lease_expires_at", None)
+
+
 def get_course_agent(cursor, course_id: int, user_id: int) -> dict | None:
     CourseAgent = reflected_model("course_agents")
     agent = cursor.session.scalar(
@@ -219,9 +236,9 @@ def claim_agent_run(
     request_id: str,
     client_request_id: str | None,
     input_hash: str,
-    agent_id: int,
+    agent_id: int | None,
     user_id: int,
-    course_id: int,
+    course_id: int | None,
     session_id: int,
     intent: str,
     risk_level: str,
@@ -492,6 +509,7 @@ def finish_tool_call(
             completed_at = %s, heartbeat_at = %s, lease_expires_at = NULL
         WHERE id = %s AND user_id = %s
           AND status = 'running' AND lease_owner = %s
+          AND lease_expires_at > %s
         """,
         (
             status,
@@ -502,6 +520,37 @@ def finish_tool_call(
             tool_call_id,
             user_id,
             lease_owner,
+            completed_at,
+        ),
+    )
+    return cursor.rowcount == 1
+
+
+def renew_tool_call_lease(
+    cursor,
+    tool_call_id: int,
+    user_id: int,
+    *,
+    lease_owner: str,
+    heartbeat_at: datetime,
+    lease_expires_at: datetime,
+) -> bool:
+    """Extend an owned live lease without allowing an expired owner to retake it."""
+    cursor.execute(
+        """
+        UPDATE agent_tool_calls
+        SET heartbeat_at = %s, lease_expires_at = %s
+        WHERE id = %s AND user_id = %s
+          AND status = 'running' AND lease_owner = %s
+          AND lease_expires_at > %s
+        """,
+        (
+            heartbeat_at,
+            lease_expires_at,
+            tool_call_id,
+            user_id,
+            lease_owner,
+            heartbeat_at,
         ),
     )
     return cursor.rowcount == 1
@@ -819,9 +868,7 @@ def set_action_status(
         action.result_json = _json_dumps(result) if result is not None else None
         checkpoint = _json_loads(action.checkpoint_json, {})
         if isinstance(checkpoint, dict) and status != "resuming":
-            checkpoint.pop("resume_owner", None)
-            checkpoint.pop("resume_started_at", None)
-            checkpoint.pop("resume_lease_expires_at", None)
+            _clear_resume_lease(checkpoint)
             action.checkpoint_json = _json_dumps(checkpoint) if checkpoint else None
         if status == "executed":
             now = utc_now_naive()
@@ -844,13 +891,7 @@ def claim_action_resume(
     checkpoint = _json_loads(action.checkpoint_json, {})
     if not isinstance(checkpoint, dict):
         checkpoint = {}
-    previous_lease = checkpoint.get("resume_lease_expires_at")
-    lease_expired = action.status == "resuming" and not previous_lease
-    if action.status == "resuming" and previous_lease:
-        try:
-            lease_expired = datetime.fromisoformat(str(previous_lease)) <= started_at
-        except ValueError:
-            lease_expired = True
+    lease_expired = action.status == "resuming" and not _resume_lease_is_active(checkpoint, started_at)
     if action.status == "pending" or (action.status == "resuming" and lease_expired):
         action.status = "resuming"
         action.confirmed_at = started_at
@@ -858,6 +899,7 @@ def claim_action_resume(
             {
                 "resume_owner": owner,
                 "resume_started_at": started_at.isoformat(),
+                "resume_heartbeat_at": started_at.isoformat(),
                 "resume_lease_expires_at": lease_expires_at.isoformat(),
             }
         )
@@ -866,7 +908,76 @@ def claim_action_resume(
     return False
 
 
-def reset_action_pending(cursor, action_id: int, *, owner: str) -> None:
+def renew_action_resume_lease(
+    cursor,
+    action_id: int,
+    user_id: int,
+    *,
+    resume_owner: str,
+    heartbeat_at: datetime,
+    lease_expires_at: datetime,
+) -> bool:
+    """Renew only the currently owned, still-live durable action lease."""
+    ActionRequest = reflected_model("agent_action_requests")
+    action = cursor.session.scalar(
+        select(ActionRequest)
+        .where(ActionRequest.id == action_id, ActionRequest.user_id == user_id)
+        .with_for_update()
+    )
+    if action is None or action.status != "resuming":
+        return False
+    checkpoint = _json_loads(action.checkpoint_json, {})
+    if (
+        not isinstance(checkpoint, dict)
+        or checkpoint.get("resume_owner") != resume_owner
+        or not _resume_lease_is_active(checkpoint, heartbeat_at)
+    ):
+        return False
+    checkpoint["resume_heartbeat_at"] = heartbeat_at.isoformat()
+    checkpoint["resume_lease_expires_at"] = lease_expires_at.isoformat()
+    action.checkpoint_json = _json_dumps(checkpoint)
+    cursor.session.flush()
+    return True
+
+
+def finalize_action_resume(
+    cursor,
+    action_id: int,
+    user_id: int,
+    *,
+    resume_owner: str,
+    status: str,
+    result: dict | None,
+    completed_at: datetime,
+) -> bool:
+    """Fence an action's terminal state by the current, unexpired resume lease."""
+    ActionRequest = reflected_model("agent_action_requests")
+    action = cursor.session.scalar(
+        select(ActionRequest)
+        .where(ActionRequest.id == action_id, ActionRequest.user_id == user_id)
+        .with_for_update()
+    )
+    if action is None or action.status != "resuming":
+        return False
+    checkpoint = _json_loads(action.checkpoint_json, {})
+    if (
+        not isinstance(checkpoint, dict)
+        or checkpoint.get("resume_owner") != resume_owner
+        or not _resume_lease_is_active(checkpoint, completed_at)
+    ):
+        return False
+    action.status = status
+    action.result_json = _json_dumps(result) if result is not None else None
+    _clear_resume_lease(checkpoint)
+    action.checkpoint_json = _json_dumps(checkpoint) if checkpoint else None
+    if status == "executed":
+        action.confirmed_at = completed_at
+        action.executed_at = completed_at
+    cursor.session.flush()
+    return True
+
+
+def reset_action_pending(cursor, action_id: int, *, owner: str) -> bool:
     ActionRequest = reflected_model("agent_action_requests")
     action = cursor.session.get(ActionRequest, action_id)
     checkpoint = _json_loads(action.checkpoint_json, {}) if action is not None else {}
@@ -875,13 +986,14 @@ def reset_action_pending(cursor, action_id: int, *, owner: str) -> None:
         and action.status == "resuming"
         and isinstance(checkpoint, dict)
         and checkpoint.get("resume_owner") == owner
+        and _resume_lease_is_active(checkpoint, utc_now_naive())
     ):
         action.status = "pending"
         action.confirmed_at = None
-        checkpoint.pop("resume_owner", None)
-        checkpoint.pop("resume_started_at", None)
-        checkpoint.pop("resume_lease_expires_at", None)
+        _clear_resume_lease(checkpoint)
         action.checkpoint_json = _json_dumps(checkpoint) if checkpoint else None
+        return True
+    return False
 
 
 def get_task(cursor, task_id: int, user_id: int) -> dict | None:
