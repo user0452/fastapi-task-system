@@ -1,5 +1,7 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import Event as ThreadEvent
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -222,6 +224,221 @@ def test_client_request_id_reuses_existing_message_and_run(agent_course):
         assert cursor.fetchone()["total"] == 1
 
 
+def test_client_request_id_rejects_changed_message_without_new_side_effects(agent_course):
+    user, _, _ = agent_course
+    client_request_id = uuid4()
+    first = run_agent_chat(
+        user["id"],
+        AgentChatRequest(
+            message="解释一下边界值分析",
+            client_request_id=client_request_id,
+        ),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM agent_runs WHERE user_id = %s) AS runs,
+                (SELECT COUNT(*) FROM agent_chat_messages WHERE user_id = %s) AS messages,
+                (SELECT COUNT(*) FROM agent_tool_calls WHERE user_id = %s) AS tools
+            """,
+            (user["id"], user["id"], user["id"]),
+        )
+        before = cursor.fetchone()
+
+    with pytest.raises(AppError) as error:
+        run_agent_chat(
+            user["id"],
+            AgentChatRequest(
+                message="改成另一个问题",
+                client_request_id=client_request_id,
+            ),
+            reply_provider=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("conflicting request must not call the model")
+            ),
+            search_provider=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("conflicting request must not call tools")
+            ),
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.error_code == "CLIENT_REQUEST_ID_CONFLICT"
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT input_hash, client_request_id
+            FROM agent_runs
+            WHERE id = %s
+            """,
+            (first["run_id"],),
+        )
+        stored_run = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM agent_runs WHERE user_id = %s) AS runs,
+                (SELECT COUNT(*) FROM agent_chat_messages WHERE user_id = %s) AS messages,
+                (SELECT COUNT(*) FROM agent_tool_calls WHERE user_id = %s) AS tools
+            """,
+            (user["id"], user["id"], user["id"]),
+        )
+        after = cursor.fetchone()
+    assert stored_run["input_hash"]
+    assert stored_run["client_request_id"] == str(client_request_id)
+    assert after == before
+
+
+def test_client_request_id_rejects_changed_session_and_course(agent_course):
+    user, _, course = agent_course
+    session_request_id = uuid4()
+    first = run_agent_chat(
+        user["id"],
+        AgentChatRequest(
+            message="同一个问题",
+            course_id=course["id"],
+            client_request_id=session_request_id,
+        ),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+    with get_cursor() as cursor:
+        other_session = repository.create_session(
+            cursor,
+            user["id"],
+            course["id"],
+            "另一个会话",
+        )
+
+    with pytest.raises(AppError) as session_error:
+        run_agent_chat(
+            user["id"],
+            AgentChatRequest(
+                message="同一个问题",
+                session_id=other_session["id"],
+                course_id=course["id"],
+                client_request_id=session_request_id,
+            ),
+            reply_provider=_reply_provider,
+            search_provider=_search_provider,
+        )
+    assert session_error.value.error_code == "CLIENT_REQUEST_ID_CONFLICT"
+
+    other_course = create_user_course(
+        user["id"],
+        CourseCreate(name="另一门 Agent 课程"),
+    )
+    course_request_id = uuid4()
+    run_agent_chat(
+        user["id"],
+        AgentChatRequest(
+            message="课程范围不能改变",
+            course_id=course["id"],
+            client_request_id=course_request_id,
+        ),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+    with pytest.raises(AppError) as course_error:
+        run_agent_chat(
+            user["id"],
+            AgentChatRequest(
+                message="课程范围不能改变",
+                course_id=other_course["id"],
+                client_request_id=course_request_id,
+            ),
+            reply_provider=_reply_provider,
+            search_provider=_search_provider,
+        )
+    assert course_error.value.error_code == "CLIENT_REQUEST_ID_CONFLICT"
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM agent_chat_messages
+            WHERE user_id = %s AND content = '同一个问题'
+            """,
+            (user["id"],),
+        )
+        assert cursor.fetchone()["total"] == 1
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM agent_runs
+            WHERE user_id = %s
+              AND client_request_id IN (%s, %s)
+            """,
+            (user["id"], str(session_request_id), str(course_request_id)),
+        )
+        assert cursor.fetchone()["total"] == 2
+    assert first["session"]["id"] != other_session["id"]
+
+
+def test_concurrent_identical_client_requests_share_one_run(agent_course):
+    user, _, _ = agent_course
+    client_request_id = uuid4()
+    provider_started = ThreadEvent()
+    release_provider = ThreadEvent()
+    provider_calls = []
+
+    def slow_reply(*args, **kwargs):
+        provider_calls.append((args, kwargs))
+        provider_started.set()
+        assert release_provider.wait(timeout=15)
+        return "并发请求已完成"
+
+    request = AgentChatRequest(
+        message="并发幂等请求",
+        client_request_id=client_request_id,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(
+            run_agent_chat,
+            user["id"],
+            request,
+            slow_reply,
+            _search_provider,
+        )
+        assert provider_started.wait(timeout=15)
+        second_future = executor.submit(
+            run_agent_chat,
+            user["id"],
+            request,
+            slow_reply,
+            _search_provider,
+        )
+        second = second_future.result(timeout=15)
+        release_provider.set()
+        first = first_future.result(timeout=15)
+
+    assert second["idempotent"] is True
+    assert second["run_id"] == first["run_id"]
+    assert second["request_status"] == "running"
+    assert len(provider_calls) == 1
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM agent_runs
+                 WHERE user_id = %s AND client_request_id = %s) AS runs,
+                (SELECT COUNT(*) FROM agent_chat_messages
+                 WHERE user_id = %s AND content = %s) AS user_messages,
+                (SELECT COUNT(*) FROM agent_tool_calls
+                 WHERE run_id = %s) AS tools
+            """,
+            (
+                user["id"],
+                str(client_request_id),
+                user["id"],
+                request.message,
+                first["run_id"],
+            ),
+        )
+        counts = cursor.fetchone()
+    assert counts == {"runs": 1, "user_messages": 1, "tools": 1}
+
+
 def test_tool_call_idempotency_reuses_completed_result(agent_course):
     user, _, course = agent_course
     chat = run_agent_chat(
@@ -254,6 +471,197 @@ def test_tool_call_idempotency_reuses_completed_result(agent_course):
             (chat["run_id"],),
         )
         assert cursor.fetchone()["total"] == 1
+
+
+def test_tool_call_lease_blocks_active_worker_and_fences_stale_owner(agent_course):
+    user, _, course = agent_course
+    chat = run_agent_chat(
+        user["id"],
+        AgentChatRequest(message="建立工具租约测试运行"),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+    with get_cursor() as cursor:
+        run = repository.get_agent_run(cursor, chat["run_id"], user["id"])
+    now = agent_service._utc_now()
+    arguments = {"x": 1}
+    idempotency_key = agent_service._stable_idempotency_key(
+        run["request_id"],
+        "busy_tool",
+        arguments,
+    )
+    with get_cursor() as cursor:
+        first, claimed = repository.claim_tool_call(
+            cursor,
+            run_id=run["id"],
+            user_id=user["id"],
+            course_id=course["id"],
+            tool_name="busy_tool",
+            risk_level="write",
+            arguments=arguments,
+            idempotency_key=idempotency_key,
+            lease_owner="worker-a",
+            started_at=now,
+            lease_expires_at=now + timedelta(minutes=3),
+        )
+    assert claimed is True
+
+    with pytest.raises(AppError) as in_progress:
+        _execute_tool(
+            user["id"],
+            {"run": run, "course": course},
+            "busy_tool",
+            "write",
+            arguments,
+            lambda: (_ for _ in ()).throw(
+                AssertionError("unexpired lease must not execute the callback")
+            ),
+        )
+    assert in_progress.value.status_code == 409
+    assert in_progress.value.error_code == "TOOL_CALL_IN_PROGRESS"
+
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE agent_tool_calls
+            SET lease_expires_at = %s
+            WHERE id = %s
+            """,
+            (now - timedelta(seconds=1), first["id"]),
+        )
+        reclaimed, claimed = repository.claim_tool_call(
+            cursor,
+            run_id=run["id"],
+            user_id=user["id"],
+            course_id=course["id"],
+            tool_name="busy_tool",
+            risk_level="write",
+            arguments=arguments,
+            idempotency_key=idempotency_key,
+            lease_owner="worker-b",
+            started_at=now,
+            lease_expires_at=now + timedelta(minutes=3),
+        )
+    assert claimed is True
+    assert reclaimed["reclaimed"] is True
+    assert reclaimed["lease_owner"] == "worker-b"
+
+    with get_cursor() as cursor:
+        stale_finished = repository.finish_tool_call(
+            cursor,
+            first["id"],
+            user["id"],
+            lease_owner="worker-a",
+            status="completed",
+            result={"worker": "a"},
+            completed_at=now,
+        )
+        owner_finished = repository.finish_tool_call(
+            cursor,
+            first["id"],
+            user["id"],
+            lease_owner="worker-b",
+            status="completed",
+            result={"worker": "b"},
+            completed_at=now,
+        )
+    assert stale_finished is False
+    assert owner_finished is True
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT status, result_json FROM agent_tool_calls WHERE id = %s",
+            (first["id"],),
+        )
+        stored = cursor.fetchone()
+    assert stored["status"] == "completed"
+    assert '"worker": "b"' in stored["result_json"]
+
+
+def test_delete_tool_recovers_after_side_effect_before_finish(agent_course, monkeypatch):
+    user, _, course = agent_course
+    chat = run_agent_chat(
+        user["id"],
+        AgentChatRequest(message="建立删除故障恢复运行"),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+    with get_cursor() as cursor:
+        run = repository.get_agent_run(cursor, chat["run_id"], user["id"])
+        cursor.execute(
+            """
+            INSERT INTO tasks
+                (user_id, course_id, title, description, status, priority)
+            VALUES (%s, %s, '故障注入删除任务', '', 'todo', 'medium')
+            """,
+            (user["id"], course["id"]),
+        )
+        task_id = cursor.lastrowid
+    successful_deletions = 0
+
+    def delete_once():
+        nonlocal successful_deletions
+        with get_cursor() as cursor:
+            deleted = repository.delete_task(cursor, task_id, user["id"])
+        successful_deletions += int(deleted)
+        return {"task_id": task_id, "deleted": deleted}
+
+    original_finish = repository.finish_tool_call
+
+    class SimulatedWorkerCrash(RuntimeError):
+        pass
+
+    monkeypatch.setattr(
+        repository,
+        "finish_tool_call",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            SimulatedWorkerCrash("side effect committed before tool finish")
+        ),
+    )
+    with pytest.raises(SimulatedWorkerCrash):
+        _execute_tool(
+            user["id"],
+            {"run": run, "course": course},
+            "delete_task",
+            "destructive",
+            {"task_id": task_id},
+            delete_once,
+        )
+
+    monkeypatch.setattr(repository, "finish_tool_call", original_finish)
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE agent_tool_calls
+            SET lease_expires_at = %s
+            WHERE run_id = %s AND tool_name = 'delete_task'
+            """,
+            (agent_service._utc_now() - timedelta(seconds=1), run["id"]),
+        )
+    recovered = _execute_tool(
+        user["id"],
+        {"run": run, "course": course},
+        "delete_task",
+        "destructive",
+        {"task_id": task_id},
+        delete_once,
+    )
+
+    assert recovered == {"task_id": task_id, "deleted": True}
+    assert successful_deletions == 1
+    with get_cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) AS total FROM tasks WHERE id = %s", (task_id,))
+        assert cursor.fetchone()["total"] == 0
+        cursor.execute(
+            """
+            SELECT status, lease_expires_at
+            FROM agent_tool_calls
+            WHERE run_id = %s AND tool_name = 'delete_task'
+            """,
+            (run["id"],),
+        )
+        stored = cursor.fetchone()
+    assert stored["status"] == "completed"
+    assert stored["lease_expires_at"] is None
 
 
 def test_async_agent_cancellation_marks_run_cancelled(agent_course, monkeypatch):
@@ -380,9 +788,18 @@ def test_expired_resuming_action_can_be_reclaimed(agent_course, monkeypatch):
         "_resume_native_action",
         lambda _user_id, _action, _confirmed: {
             "reply": "恢复完成",
-            "message": {"id": 1},
             "result": {"task_id": 999999, "deleted": False},
+            "context": {},
+            "citations": [],
+            "cards": [],
+            "resources": [],
+            "actions": [],
         },
+    )
+    monkeypatch.setattr(
+        agent_service,
+        "_persist_assistant_in_transaction",
+        lambda *_args, **_kwargs: {"id": 1, "content": "恢复完成"},
     )
     result = decide_action(user["id"], action["id"], confirmed=True)
 
@@ -391,6 +808,89 @@ def test_expired_resuming_action_can_be_reclaimed(agent_course, monkeypatch):
         stored = repository.get_action_request(cursor, action["id"], user["id"])
     assert stored["status"] == "executed"
     assert "resume_owner" not in (stored.get("checkpoint") or {})
+
+
+def test_durable_action_retry_reuses_one_final_assistant_message(agent_course, monkeypatch):
+    user, _, course = agent_course
+    chat = run_agent_chat(
+        user["id"],
+        AgentChatRequest(message="建立动作恢复上下文"),
+        reply_provider=_reply_provider,
+        search_provider=_search_provider,
+    )
+    now = agent_service._utc_now()
+    with get_cursor() as cursor:
+        action = repository.create_action_request(
+            cursor,
+            user["id"],
+            chat["session"]["id"],
+            course["id"],
+            "delete_task",
+            {"task_id": 999999},
+            uuid4().hex,
+            now + timedelta(minutes=10),
+            now,
+            checkpoint={
+                "thread_id": f"resume-message-{uuid4().hex}",
+                "run_id": chat["run_id"],
+            },
+        )
+    context = agent_service._load_native_resume_context(user["id"], action)
+    message_key = f"agent-action:{action['id']}:final"
+    with get_cursor() as cursor:
+        preexisting = agent_service._persist_assistant_in_transaction(
+            cursor,
+            user["id"],
+            context,
+            "恢复动作已完成",
+            "native_tool_agent_resume",
+            "destructive",
+            [],
+            [],
+            [],
+            [],
+            None,
+            context.get("context_report"),
+            True,
+            message_key,
+        )
+
+    monkeypatch.setattr(
+        agent_service,
+        "_resume_native_action",
+        lambda _user_id, _action, _confirmed: {
+            "reply": "恢复动作已完成",
+            "result": {"task_id": 999999, "deleted": True},
+            "context": context,
+            "citations": [],
+            "cards": [],
+            "resources": [],
+            "actions": [],
+        },
+    )
+    executed = decide_action(user["id"], action["id"], confirmed=True)
+
+    assert executed["status"] == "executed"
+    assert executed["result"] == {"task_id": 999999, "deleted": True}
+    assert executed["message"]["id"] == preexisting["id"]
+    with get_cursor() as cursor:
+        stored_action = repository.get_action_request(
+            cursor,
+            action["id"],
+            user["id"],
+        )
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM agent_chat_messages
+            WHERE user_id = %s AND idempotency_key = %s
+            """,
+            (user["id"], message_key),
+        )
+        message_count = cursor.fetchone()["total"]
+    assert stored_action["status"] == "executed"
+    assert stored_action["result"] == executed["result"]
+    assert message_count == 1
 
 
 def test_checkpoint_gc_keeps_active_actions_and_removes_unreferenced(agent_course):

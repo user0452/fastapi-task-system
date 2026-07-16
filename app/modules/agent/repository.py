@@ -213,37 +213,86 @@ def upsert_course_memory(
     return _memory_row(memory) or {}
 
 
-def create_agent_run(
+def claim_agent_run(
     cursor,
     *,
     request_id: str,
+    client_request_id: str | None,
+    input_hash: str,
     agent_id: int,
     user_id: int,
     course_id: int,
     session_id: int,
-    user_message_id: int,
     intent: str,
     risk_level: str,
     input_summary: str,
     started_at: datetime,
-) -> dict:
-    AgentRun = reflected_model("agent_runs")
-    run = AgentRun(
-        request_id=request_id,
-        agent_id=agent_id,
-        user_id=user_id,
-        course_id=course_id,
-        session_id=session_id,
-        user_message_id=user_message_id,
-        intent=intent,
-        risk_level=risk_level,
-        status="running",
-        input_summary=input_summary[:500],
-        started_at=started_at,
+) -> tuple[dict, bool]:
+    cursor.execute(
+        """
+        INSERT IGNORE INTO agent_runs
+            (request_id, client_request_id, input_hash, agent_id, user_id,
+             course_id, session_id, intent, risk_level, status, input_summary,
+             started_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'running', %s, %s)
+        """,
+        (
+            request_id,
+            client_request_id,
+            input_hash,
+            agent_id,
+            user_id,
+            course_id,
+            session_id,
+            intent,
+            risk_level,
+            input_summary[:500],
+            started_at,
+        ),
     )
-    cursor.session.add(run)
-    cursor.session.flush()
-    return {"id": run.id, "request_id": request_id, "status": "running"}
+    created = cursor.rowcount == 1
+    if client_request_id is not None:
+        cursor.execute(
+            """
+            SELECT *
+            FROM agent_runs
+            WHERE user_id = %s AND client_request_id = %s
+            FOR UPDATE
+            """,
+            (user_id, client_request_id),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT *
+            FROM agent_runs
+            WHERE user_id = %s AND request_id = %s
+            FOR UPDATE
+            """,
+            (user_id, request_id),
+        )
+    run = cursor.fetchone()
+    if run is None:
+        raise RuntimeError("agent run disappeared after idempotency claim")
+    return run, created
+
+
+def set_agent_run_user_message(
+    cursor,
+    run_id: int,
+    user_id: int,
+    user_message_id: int,
+) -> None:
+    cursor.execute(
+        """
+        UPDATE agent_runs
+        SET user_message_id = %s
+        WHERE id = %s AND user_id = %s AND user_message_id IS NULL
+        """,
+        (user_message_id, run_id, user_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError("agent run already has a user message")
 
 
 def finish_agent_run(
@@ -340,14 +389,17 @@ def claim_tool_call(
     risk_level: str,
     arguments: dict,
     idempotency_key: str,
+    lease_owner: str,
     started_at: datetime,
+    lease_expires_at: datetime,
 ) -> tuple[dict, bool]:
     cursor.execute(
         """
         INSERT IGNORE INTO agent_tool_calls
             (run_id, user_id, course_id, tool_name, risk_level, arguments_json,
-             status, idempotency_key, started_at)
-        VALUES (%s, %s, %s, %s, %s, %s, 'running', %s, %s)
+             status, idempotency_key, lease_owner, lease_expires_at,
+             heartbeat_at, started_at)
+        VALUES (%s, %s, %s, %s, %s, %s, 'running', %s, %s, %s, %s, %s)
         """,
         (
             run_id,
@@ -357,6 +409,9 @@ def claim_tool_call(
             risk_level,
             _json_dumps(arguments),
             idempotency_key,
+            lease_owner,
+            lease_expires_at,
+            started_at,
             started_at,
         ),
     )
@@ -365,7 +420,8 @@ def claim_tool_call(
         """
         SELECT id, run_id, user_id, course_id, tool_name, risk_level,
                arguments_json, result_json, status, error_message,
-               idempotency_key, started_at, completed_at
+               idempotency_key, lease_owner, lease_expires_at, heartbeat_at,
+               started_at, completed_at, updated_at
         FROM agent_tool_calls
         WHERE idempotency_key = %s
         FOR UPDATE
@@ -377,19 +433,44 @@ def claim_tool_call(
         raise RuntimeError("tool call disappeared after idempotency claim")
     tool_call["arguments"] = _json_loads(tool_call.pop("arguments_json"), {})
     tool_call["result"] = _json_loads(tool_call.pop("result_json"), None)
-    if not created and tool_call["status"] in {"failed", "cancelled"}:
+    lease_expired = (
+        tool_call["status"] == "running"
+        and (
+            tool_call.get("lease_expires_at") is None
+            or tool_call["lease_expires_at"] <= started_at
+        )
+    )
+    reclaimed = (
+        not created
+        and (
+            tool_call["status"] in {"failed", "cancelled"}
+            or lease_expired
+        )
+    )
+    if reclaimed:
         cursor.execute(
             """
             UPDATE agent_tool_calls
             SET status = 'running', result_json = NULL, error_message = NULL,
+                lease_owner = %s, lease_expires_at = %s, heartbeat_at = %s,
                 started_at = %s, completed_at = NULL
             WHERE id = %s
             """,
-            (started_at, tool_call["id"]),
+            (
+                lease_owner,
+                lease_expires_at,
+                started_at,
+                started_at,
+                tool_call["id"],
+            ),
         )
         tool_call["status"] = "running"
         tool_call["result"] = None
+        tool_call["lease_owner"] = lease_owner
+        tool_call["lease_expires_at"] = lease_expires_at
+        tool_call["heartbeat_at"] = started_at
         created = True
+    tool_call["reclaimed"] = reclaimed
     return tool_call, created
 
 
@@ -398,20 +479,32 @@ def finish_tool_call(
     tool_call_id: int,
     user_id: int,
     *,
+    lease_owner: str,
     status: str,
     result: dict | list | None = None,
     error_message: str | None = None,
     completed_at: datetime,
-) -> None:
-    ToolCall = reflected_model("agent_tool_calls")
-    tool_call = cursor.session.scalar(
-        select(ToolCall).where(ToolCall.id == tool_call_id, ToolCall.user_id == user_id)
+) -> bool:
+    cursor.execute(
+        """
+        UPDATE agent_tool_calls
+        SET status = %s, result_json = %s, error_message = %s,
+            completed_at = %s, heartbeat_at = %s, lease_expires_at = NULL
+        WHERE id = %s AND user_id = %s
+          AND status = 'running' AND lease_owner = %s
+        """,
+        (
+            status,
+            _json_dumps(result) if result is not None else None,
+            error_message[:2000] if error_message else None,
+            completed_at,
+            completed_at,
+            tool_call_id,
+            user_id,
+            lease_owner,
+        ),
     )
-    if tool_call is not None:
-        tool_call.status = status
-        tool_call.result_json = _json_dumps(result) if result is not None else None
-        tool_call.error_message = error_message[:2000] if error_message else None
-        tool_call.completed_at = completed_at
+    return cursor.rowcount == 1
 
 
 def create_session(cursor, user_id: int, course_id: int | None, title: str) -> dict:
@@ -548,6 +641,59 @@ def add_message(
     cursor.session.flush()
     touch_session(cursor, session_id, user_id)
     return _message_row(message) or {}
+
+
+def add_message_idempotent(
+    cursor,
+    user_id: int,
+    session_id: int,
+    course_id: int | None,
+    role: str,
+    content: str,
+    *,
+    idempotency_key: str,
+    tool_calls: dict | None = None,
+    sources: list[dict] | None = None,
+    client_time_hint: str | None = None,
+) -> tuple[dict, bool]:
+    cursor.execute(
+        """
+        INSERT IGNORE INTO agent_chat_messages
+            (user_id, session_id, course_id, role, content, tool_calls,
+             sources_json, client_time_hint, idempotency_key)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            user_id,
+            session_id,
+            course_id,
+            role,
+            content,
+            _json_dumps(tool_calls) if tool_calls is not None else None,
+            _json_dumps(sources) if sources is not None else None,
+            client_time_hint,
+            idempotency_key,
+        ),
+    )
+    created = cursor.rowcount == 1
+    cursor.execute(
+        """
+        SELECT *
+        FROM agent_chat_messages
+        WHERE user_id = %s AND idempotency_key = %s
+        FOR UPDATE
+        """,
+        (user_id, idempotency_key),
+    )
+    message = cursor.fetchone()
+    if message is None:
+        raise RuntimeError("assistant message disappeared after idempotency claim")
+    if message["session_id"] != session_id or message["role"] != role:
+        raise RuntimeError("assistant message idempotency key was reused for another purpose")
+    message["tool_calls"] = _json_loads(message.get("tool_calls"), None)
+    message["sources"] = _json_loads(message.pop("sources_json", None), [])
+    touch_session(cursor, session_id, user_id)
+    return message, created
 
 
 def get_message(cursor, message_id: int, user_id: int) -> dict | None:

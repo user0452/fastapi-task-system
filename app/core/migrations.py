@@ -1153,6 +1153,43 @@ def _upgrade_user_timezone(cursor) -> None:
     )
 
 
+def _upgrade_durable_agent_actions(cursor) -> None:
+    """Add durable request, tool-lease, and assistant-message coordination."""
+    _add_column(cursor, "agent_runs", "client_request_id", "CHAR(36) NULL")
+    _add_column(cursor, "agent_runs", "input_hash", "CHAR(64) NULL")
+    _add_unique_index(
+        cursor,
+        "agent_runs",
+        "uk_agent_runs_client_request",
+        "user_id, client_request_id",
+    )
+
+    _add_column(cursor, "agent_tool_calls", "lease_owner", "VARCHAR(64) NULL")
+    _add_column(cursor, "agent_tool_calls", "lease_expires_at", "DATETIME(6) NULL")
+    _add_column(cursor, "agent_tool_calls", "heartbeat_at", "DATETIME(6) NULL")
+    _add_column(
+        cursor,
+        "agent_tool_calls",
+        "updated_at",
+        "DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) "
+        "ON UPDATE CURRENT_TIMESTAMP(6)",
+    )
+    _add_index(
+        cursor,
+        "agent_tool_calls",
+        "idx_agent_tool_calls_lease",
+        "status, lease_expires_at",
+    )
+
+    _add_column(cursor, "agent_chat_messages", "idempotency_key", "VARCHAR(160) NULL")
+    _add_unique_index(
+        cursor,
+        "agent_chat_messages",
+        "uk_agent_chat_message_idempotency",
+        "user_id, idempotency_key",
+    )
+
+
 MIGRATIONS = [
     Migration("0001", "non_destructive_baseline", _upgrade_baseline),
     Migration("0002", "course_learning_foundation", _upgrade_course_learning_foundation),
@@ -1173,6 +1210,7 @@ MIGRATIONS = [
     Migration("0017", "context_and_relation_cleanup", _upgrade_context_and_relation_cleanup),
     Migration("0018", "course_current_invariant", _upgrade_course_current_invariant),
     Migration("0019", "user_timezone", _upgrade_user_timezone),
+    Migration("0020", "durable_agent_actions", _upgrade_durable_agent_actions),
 ]
 
 

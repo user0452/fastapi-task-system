@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from threading import Event
 from time import perf_counter, sleep
@@ -72,6 +73,32 @@ def _raise_if_cancelled(context: dict) -> None:
 def _stable_idempotency_key(request_id: str, tool_name: str, arguments: dict) -> str:
     payload = json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(f"{request_id}\0{tool_name}\0{payload}".encode("utf-8")).hexdigest()
+
+
+def _agent_input_hash(
+    user_id: int,
+    session_id: int,
+    course_id: int,
+    message: str,
+    intent: str,
+    risk_level: str,
+) -> str:
+    normalized_message = unicodedata.normalize("NFKC", re.sub(r"\s+", " ", message).strip())
+    payload = json.dumps(
+        {
+            "version": 1,
+            "user_id": user_id,
+            "session_id": session_id,
+            "course_id": course_id,
+            "message": normalized_message,
+            "intent": intent,
+            "risk_level": risk_level,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _normalize_native_agent_reply(reply: str) -> str:
@@ -358,39 +385,68 @@ def _prepare_context(
             if request.client_request_id is not None
             else str(uuid4())
         )
-        existing_run = (
-            repository.get_agent_run_by_request_id(cursor, request_id, user_id)
-            if agent is not None
-            else None
-        )
-        if existing_run is not None:
+        run = None
+        if agent is not None:
             if course is None:
-                raise RuntimeError("agent run exists without an owning course")
-            if (
-                existing_run["session_id"] != session["id"]
-                or existing_run["course_id"] != course["id"]
-            ):
-                raise AppError("客户端请求 ID 已用于其他会话", 409, "CLIENT_REQUEST_ID_CONFLICT")
-            user_message = (
-                repository.get_message(cursor, existing_run["user_message_id"], user_id)
-                if existing_run.get("user_message_id")
+                raise RuntimeError("course agent exists without an owning course")
+            client_request_id = (
+                str(request.client_request_id)
+                if request.client_request_id is not None
                 else None
             )
-            assistant_message = (
-                repository.get_message(cursor, existing_run["assistant_message_id"], user_id)
-                if existing_run.get("assistant_message_id")
-                else None
+            input_hash = _agent_input_hash(
+                user_id,
+                session["id"],
+                course["id"],
+                request.message,
+                intent,
+                risk_level,
             )
-            return {
-                "session": session,
-                "course": course,
-                "user_message": user_message,
-                "agent": agent,
-                "run": existing_run,
-                "existing_assistant_message": assistant_message,
-                "server_time": server_time,
-                "duplicate_request": True,
-            }
+            run, run_created = repository.claim_agent_run(
+                cursor,
+                request_id=request_id,
+                client_request_id=client_request_id,
+                input_hash=input_hash,
+                agent_id=agent["id"],
+                user_id=user_id,
+                course_id=course["id"],
+                session_id=session["id"],
+                intent=intent,
+                risk_level=risk_level,
+                input_summary=request.message,
+                started_at=_utc_now(),
+            )
+            if not run_created:
+                if (
+                    run.get("input_hash") != input_hash
+                    or run["session_id"] != session["id"]
+                    or run["course_id"] != course["id"]
+                ):
+                    raise AppError(
+                        "客户端请求 ID 已用于不同输入",
+                        409,
+                        "CLIENT_REQUEST_ID_CONFLICT",
+                    )
+                user_message = (
+                    repository.get_message(cursor, run["user_message_id"], user_id)
+                    if run.get("user_message_id")
+                    else None
+                )
+                assistant_message = (
+                    repository.get_message(cursor, run["assistant_message_id"], user_id)
+                    if run.get("assistant_message_id")
+                    else None
+                )
+                return {
+                    "session": session,
+                    "course": course,
+                    "user_message": user_message,
+                    "agent": agent,
+                    "run": run,
+                    "existing_assistant_message": assistant_message,
+                    "server_time": server_time,
+                    "duplicate_request": True,
+                }
 
         user_message = repository.add_message(
             cursor,
@@ -401,6 +457,14 @@ def _prepare_context(
             request.message,
             client_time_hint=request.current_time,
         )
+        if run is not None:
+            repository.set_agent_run_user_message(
+                cursor,
+                run["id"],
+                user_id,
+                user_message["id"],
+            )
+            run["user_message_id"] = user_message["id"]
         repository.update_session_title_if_default(
             cursor,
             session["id"],
@@ -432,23 +496,7 @@ def _prepare_context(
             user_message["id"],
             12,
         )
-        run = None
         if agent is not None:
-            if course is None:
-                raise RuntimeError("course agent exists without an owning course")
-            run = repository.create_agent_run(
-                cursor,
-                request_id=request_id,
-                agent_id=agent["id"],
-                user_id=user_id,
-                course_id=course["id"],
-                session_id=session["id"],
-                user_message_id=user_message["id"],
-                intent=intent,
-                risk_level=risk_level,
-                input_summary=request.message,
-                started_at=_utc_now(),
-            )
             repository.touch_course_agent(cursor, agent["id"], user_id)
 
     if memories:
@@ -518,6 +566,7 @@ def _execute_tool(
     started_at = _utc_now()
     started = perf_counter()
     idempotency_key = _stable_idempotency_key(run["request_id"], tool_name, arguments)
+    lease_owner = uuid4().hex
     with get_cursor() as cursor:
         tool_call, claimed = repository.claim_tool_call(
             cursor,
@@ -528,7 +577,9 @@ def _execute_tool(
             risk_level=risk_level,
             arguments=arguments,
             idempotency_key=idempotency_key,
+            lease_owner=lease_owner,
             started_at=started_at,
+            lease_expires_at=started_at + timedelta(minutes=3),
         )
     tool_call_id = tool_call["id"]
     if not claimed:
@@ -543,36 +594,64 @@ def _execute_tool(
         inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="cancelled")
         observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
         with get_cursor() as cursor:
-            repository.finish_tool_call(
+            finished = repository.finish_tool_call(
                 cursor,
                 tool_call_id,
                 user_id,
+                lease_owner=lease_owner,
                 status="cancelled",
                 error_message=str(exc),
                 completed_at=_utc_now(),
             )
+        if not finished:
+            raise AppError(
+                "工具调用租约已由其他进程接管",
+                409,
+                "TOOL_CALL_LEASE_LOST",
+            ) from exc
         raise
     except Exception as exc:
         inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="failed")
         observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
         with get_cursor() as cursor:
-            repository.finish_tool_call(
+            finished = repository.finish_tool_call(
                 cursor,
                 tool_call_id,
                 user_id,
+                lease_owner=lease_owner,
                 status="failed",
                 error_message=str(exc),
                 completed_at=_utc_now(),
             )
+        if not finished:
+            raise AppError(
+                "工具调用租约已由其他进程接管",
+                409,
+                "TOOL_CALL_LEASE_LOST",
+            ) from exc
         raise
+    if (
+        tool_name == "delete_task"
+        and tool_call.get("reclaimed")
+        and isinstance(result, dict)
+        and result.get("deleted") is False
+    ):
+        result = {**result, "deleted": True}
     with get_cursor() as cursor:
-        repository.finish_tool_call(
+        finished = repository.finish_tool_call(
             cursor,
             tool_call_id,
             user_id,
+            lease_owner=lease_owner,
             status="completed",
             result=result,
             completed_at=_utc_now(),
+        )
+    if not finished:
+        raise AppError(
+            "工具调用租约已由其他进程接管",
+            409,
+            "TOOL_CALL_LEASE_LOST",
         )
     inc_counter("a3_agent_tool_calls_total", tool=tool_name, status="completed")
     observe("a3_agent_tool_duration_seconds", perf_counter() - started, tool=tool_name)
@@ -631,7 +710,8 @@ def _match_knowledge_point_id(message: str, mastery: list[dict]) -> int | None:
     return mastery[0]["id"] if mastery else None
 
 
-def _persist_assistant(
+def _persist_assistant_in_transaction(
+    cursor,
     user_id: int,
     context: dict,
     reply: str,
@@ -644,6 +724,7 @@ def _persist_assistant(
     confirmation: dict | None,
     context_report: dict | None = None,
     complete_run: bool = True,
+    message_idempotency_key: str | None = None,
 ) -> dict:
     course = context["course"]
     tool_calls = {
@@ -656,10 +737,10 @@ def _persist_assistant(
         "context": context_report,
     }
     server_time_utc = _utc_now().isoformat(timespec="milliseconds") + "Z"
-    with get_cursor() as cursor:
-        # Keep the same lock order as _prepare_context: agent before session.
-        if context.get("agent"):
-            repository.touch_course_agent(cursor, context["agent"]["id"], user_id)
+    # Keep the same lock order as _prepare_context: agent before session.
+    if context.get("agent"):
+        repository.touch_course_agent(cursor, context["agent"]["id"], user_id)
+    if message_idempotency_key is None:
         message = repository.add_message(
             cursor,
             user_id,
@@ -670,6 +751,20 @@ def _persist_assistant(
             tool_calls=tool_calls,
             sources=citations,
         )
+        message_created = True
+    else:
+        message, message_created = repository.add_message_idempotent(
+            cursor,
+            user_id,
+            context["session"]["id"],
+            course["id"] if course else None,
+            "assistant",
+            reply,
+            idempotency_key=message_idempotency_key,
+            tool_calls=tool_calls,
+            sources=citations,
+        )
+    if message_created:
         repository.add_audit_log(
             cursor,
             user_id,
@@ -688,48 +783,82 @@ def _persist_assistant(
                 "server_time_utc": server_time_utc,
             },
         )
-        if context.get("run"):
-            if complete_run:
-                repository.finish_agent_run(
-                    cursor,
-                    context["run"]["id"],
-                    user_id,
-                    status="completed",
-                    assistant_message_id=message["id"],
-                    output_summary=reply,
-                    completed_at=_utc_now(),
-                )
-            else:
-                repository.pause_agent_run(
-                    cursor,
-                    context["run"]["id"],
-                    user_id,
-                    assistant_message_id=message["id"],
-                    output_summary=reply,
-                )
-        if context.get("agent"):
-            current_agent = repository.get_course_agent(
-                cursor, context["course"]["id"], user_id
-            )
-            unsummarized = repository.list_messages_after(
+    if context.get("run"):
+        if complete_run:
+            repository.finish_agent_run(
                 cursor,
+                context["run"]["id"],
                 user_id,
-                context["session"]["id"],
-                current_agent.get("last_summarized_message_id") if current_agent else None,
+                status="completed",
+                assistant_message_id=message["id"],
+                output_summary=message["content"],
+                completed_at=_utc_now(),
             )
-            summarizable = unsummarized[:-RECENT_TURNS]
-            if summarizable:
-                repository.update_conversation_summary(
-                    cursor,
-                    context["agent"]["id"],
-                    user_id,
-                    build_rolling_summary(
-                        current_agent.get("conversation_summary") if current_agent else None,
-                        summarizable,
-                    ),
-                    int(summarizable[-1]["id"]),
-                )
+        else:
+            repository.pause_agent_run(
+                cursor,
+                context["run"]["id"],
+                user_id,
+                assistant_message_id=message["id"],
+                output_summary=message["content"],
+            )
+    if context.get("agent"):
+        current_agent = repository.get_course_agent(
+            cursor, context["course"]["id"], user_id
+        )
+        unsummarized = repository.list_messages_after(
+            cursor,
+            user_id,
+            context["session"]["id"],
+            current_agent.get("last_summarized_message_id") if current_agent else None,
+        )
+        summarizable = unsummarized[:-RECENT_TURNS]
+        if summarizable:
+            repository.update_conversation_summary(
+                cursor,
+                context["agent"]["id"],
+                user_id,
+                build_rolling_summary(
+                    current_agent.get("conversation_summary") if current_agent else None,
+                    summarizable,
+                ),
+                int(summarizable[-1]["id"]),
+            )
     return message
+
+
+def _persist_assistant(
+    user_id: int,
+    context: dict,
+    reply: str,
+    intent: str,
+    risk_level: str,
+    citations: list[dict],
+    cards: list[dict],
+    resources: list[dict],
+    actions: list[dict],
+    confirmation: dict | None,
+    context_report: dict | None = None,
+    complete_run: bool = True,
+    message_idempotency_key: str | None = None,
+) -> dict:
+    with get_cursor() as cursor:
+        return _persist_assistant_in_transaction(
+            cursor,
+            user_id,
+            context,
+            reply,
+            intent,
+            risk_level,
+            citations,
+            cards,
+            resources,
+            actions,
+            confirmation,
+            context_report,
+            complete_run,
+            message_idempotency_key,
+        )
 
 
 def _request_task_deletion(user_id: int, context: dict, message: str) -> tuple[str, dict | None]:
@@ -1347,19 +1476,6 @@ def _resume_native_action(user_id: int, action: dict, confirmed: bool) -> dict:
         "操作已执行。" if confirmed else "已取消该操作。",
     )
     reply = _normalize_native_agent_reply(reply)
-    message = _persist_assistant(
-        user_id,
-        context,
-        reply,
-        "native_tool_agent_resume",
-        "destructive",
-        artifacts.citations,
-        artifacts.cards,
-        artifacts.resources,
-        artifacts.actions,
-        None,
-        context.get("context_report"),
-    )
     result = None
     if confirmed and action["tool_name"] == "delete_task":
         task_id = int(action["payload"]["task_id"])
@@ -1368,7 +1484,15 @@ def _resume_native_action(user_id: int, action: dict, confirmed: bool) -> dict:
                 "task_id": task_id,
                 "deleted": repository.get_task(cursor, task_id, user_id) is None,
             }
-    return {"reply": reply, "message": message, "result": result}
+    return {
+        "reply": reply,
+        "result": result,
+        "context": context,
+        "citations": artifacts.citations,
+        "cards": artifacts.cards,
+        "resources": artifacts.resources,
+        "actions": artifacts.actions,
+    }
 
 
 def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dict:
@@ -1427,6 +1551,22 @@ def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dic
             raise AppError("确认请求状态冲突", 409, "ACTION_STATE_CONFLICT")
         if (current.get("checkpoint") or {}).get("resume_owner") != resume_owner:
             raise AppError("确认请求已由其他进程接管", 409, "ACTION_STATE_CONFLICT")
+        message = _persist_assistant_in_transaction(
+            cursor,
+            user_id,
+            resumed["context"],
+            resumed["reply"],
+            "native_tool_agent_resume",
+            "destructive",
+            resumed["citations"],
+            resumed["cards"],
+            resumed["resources"],
+            resumed["actions"],
+            None,
+            resumed["context"].get("context_report"),
+            True,
+            f"agent-action:{action_id}:final",
+        )
         repository.set_action_status(cursor, action_id, status, resumed["result"])
         repository.add_audit_log(
             cursor,
@@ -1446,8 +1586,8 @@ def _decide_durable_action(user_id: int, action_id: int, confirmed: bool) -> dic
         "action_id": action_id,
         "status": status,
         "result": resumed["result"],
-        "reply": resumed["reply"],
-        "message": resumed["message"],
+        "reply": message["content"],
+        "message": message,
     }
 
 

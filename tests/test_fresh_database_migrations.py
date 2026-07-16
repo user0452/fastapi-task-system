@@ -46,13 +46,14 @@ def test_alembic_upgrade_head_builds_a_fresh_database():
     create_test_database(database_name)
     try:
         _run_alembic(database_name, "upgrade", "head")
+        _run_alembic(database_name, "upgrade", "head")
         connection = _connection(database_name)
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260716_02"
+                assert cursor.fetchone()["version_num"] == "20260716_03"
                 cursor.execute("SELECT COUNT(*) AS total FROM schema_migrations")
-                assert cursor.fetchone()["total"] >= 19
+                assert cursor.fetchone()["total"] >= 20
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total
@@ -80,27 +81,35 @@ def test_alembic_upgrades_a_previously_stamped_historical_database():
 
         _run_alembic(database_name, "stamp", "20260716_01")
         _run_alembic(database_name, "upgrade", "head")
+        _run_alembic(database_name, "upgrade", "head")
 
         connection = _connection(database_name)
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260716_02"
+                assert cursor.fetchone()["version_num"] == "20260716_03"
                 cursor.execute(
                     "SELECT COUNT(*) AS total FROM schema_migrations "
-                    "WHERE version IN ('0018', '0019')"
+                    "WHERE version IN ('0018', '0019', '0020')"
                 )
-                assert cursor.fetchone()["total"] == 2
+                assert cursor.fetchone()["total"] == 3
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total
                     FROM information_schema.columns
                     WHERE table_schema = DATABASE()
-                      AND table_name = 'users'
-                      AND column_name = 'timezone'
+                      AND (
+                        (table_name = 'users' AND column_name = 'timezone')
+                        OR (table_name = 'agent_runs' AND column_name = 'input_hash')
+                        OR (table_name = 'agent_tool_calls' AND column_name = 'lease_owner')
+                        OR (
+                            table_name = 'agent_chat_messages'
+                            AND column_name = 'idempotency_key'
+                        )
+                      )
                     """
                 )
-                assert cursor.fetchone()["total"] == 1
+                assert cursor.fetchone()["total"] == 4
         finally:
             connection.close()
     finally:
