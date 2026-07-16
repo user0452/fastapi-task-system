@@ -19,7 +19,12 @@ from app.integrations.file_storage import StoredUpload
 from app.integrations.llm import knowledge_extractor
 from app.jobs.material_index_job import enqueue_material_processing_job
 from app.modules.courses.schemas import CourseCreate
-from app.modules.courses.service import create_user_course, get_user_course
+from app.modules.courses.service import (
+    archive_user_course,
+    create_user_course,
+    get_user_course,
+    reconcile_course_after_material_processing,
+)
 from app.modules.materials import service as materials_service
 from app.modules.materials.schemas import TextMaterialCreate
 from app.modules.materials.service import (
@@ -28,6 +33,7 @@ from app.modules.materials.service import (
     get_user_material,
     list_course_knowledge_points,
     process_material,
+    request_material_retry,
 )
 
 
@@ -50,6 +56,153 @@ def _fake_knowledge_points(_course_name: str, title: str, chunks: list[dict]) ->
         }
         for index in range(3)
     ]
+
+
+@pytest.mark.parametrize(
+    ("initial_status", "has_enough_knowledge", "expected_status"),
+    [
+        ("draft", False, "preparing"),
+        ("draft", True, "diagnostic_pending"),
+        ("preparing", False, "preparing"),
+        ("preparing", True, "diagnostic_pending"),
+        ("diagnostic_pending", False, "diagnostic_pending"),
+        ("diagnostic_pending", True, "diagnostic_pending"),
+        ("active", False, "active"),
+        ("active", True, "active"),
+        ("completed", False, "completed"),
+        ("completed", True, "completed"),
+        ("archived", False, None),
+        ("archived", True, None),
+    ],
+)
+def test_material_processing_course_status_matrix(
+    two_users,
+    initial_status,
+    has_enough_knowledge,
+    expected_status,
+):
+    user, _ = two_users
+    course = create_user_course(
+        user["id"],
+        CourseCreate(name=f"资料状态矩阵-{initial_status}-{has_enough_knowledge}"),
+    )
+    with get_cursor() as cursor:
+        cursor.execute(
+            "UPDATE courses SET status = %s WHERE id = %s AND user_id = %s",
+            (initial_status, course["id"], user["id"]),
+        )
+
+    if expected_status is None:
+        with pytest.raises(AppError) as error:
+            with get_cursor() as cursor:
+                reconcile_course_after_material_processing(
+                    cursor,
+                    user["id"],
+                    course["id"],
+                    has_enough_knowledge=has_enough_knowledge,
+                )
+        assert error.value.error_code == "ARCHIVED_COURSE_MATERIALS_FORBIDDEN"
+    else:
+        with get_cursor() as cursor:
+            reconciled = reconcile_course_after_material_processing(
+                cursor,
+                user["id"],
+                course["id"],
+                has_enough_knowledge=has_enough_knowledge,
+            )
+        assert reconciled["status"] == expected_status
+
+    assert get_user_course(user["id"], course["id"])["status"] == (
+        initial_status if expected_status is None else expected_status
+    )
+
+
+@pytest.mark.parametrize("stable_status", ["active", "completed"])
+def test_material_upload_processing_rebuild_and_delete_do_not_regress_course(
+    two_users,
+    stable_status,
+):
+    user, _ = two_users
+    course = create_user_course(
+        user["id"],
+        CourseCreate(name=f"不回退课程-{stable_status}"),
+    )
+    with get_cursor() as cursor:
+        cursor.execute(
+            "UPDATE courses SET status = %s WHERE id = %s AND user_id = %s",
+            (stable_status, course["id"], user["id"]),
+        )
+
+    material = create_text_material(
+        user["id"],
+        course["id"],
+        TextMaterialCreate(title="不回退资料", content="用于验证资料操作不会回退课程状态。"),
+    )
+    assert get_user_course(user["id"], course["id"])["status"] == stable_status
+
+    process_material(
+        user["id"],
+        material["id"],
+        embedding_provider=_fake_embeddings,
+        knowledge_provider=_fake_knowledge_points,
+    )
+    assert get_user_course(user["id"], course["id"])["status"] == stable_status
+
+    delete_user_material(user["id"], material["id"])
+    assert get_user_course(user["id"], course["id"])["status"] == stable_status
+
+
+def test_archived_course_rejects_upload_retry_and_processing(
+    api_client,
+    two_users,
+    monkeypatch,
+):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="归档资料禁用课程"))
+    material = create_text_material(
+        user["id"],
+        course["id"],
+        TextMaterialCreate(title="归档前资料", content="归档后不得继续处理。"),
+    )
+    archive_user_course(user["id"], course["id"])
+
+    with pytest.raises(AppError) as text_error:
+        create_text_material(
+            user["id"],
+            course["id"],
+            TextMaterialCreate(title="归档后资料", content="不应创建"),
+        )
+    assert text_error.value.error_code == "ARCHIVED_COURSE_MATERIALS_FORBIDDEN"
+
+    with pytest.raises(AppError) as retry_error:
+        request_material_retry(user["id"], material["id"])
+    assert retry_error.value.error_code == "ARCHIVED_COURSE_MATERIALS_FORBIDDEN"
+
+    with pytest.raises(AppError) as process_error:
+        process_material(
+            user["id"],
+            material["id"],
+            embedding_provider=_fake_embeddings,
+            knowledge_provider=_fake_knowledge_points,
+        )
+    assert process_error.value.error_code == "ARCHIVED_COURSE_MATERIALS_FORBIDDEN"
+
+    saved = False
+
+    async def save_must_not_run(*_args, **_kwargs):
+        nonlocal saved
+        saved = True
+        raise AssertionError("archived course must be rejected before file persistence")
+
+    monkeypatch.setattr("app.modules.materials.router.save_upload", save_must_not_run)
+    response = api_client.post(
+        f"/api/v1/courses/{course['id']}/materials/upload",
+        data={"title": "归档后上传"},
+        files={"file": ("material.txt", b"content", "text/plain")},
+    )
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "ARCHIVED_COURSE_MATERIALS_FORBIDDEN"
+    assert saved is False
 
 
 def test_text_material_is_automatically_indexed_with_sources(two_users):

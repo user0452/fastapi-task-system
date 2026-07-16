@@ -5,7 +5,7 @@ from app.core.responses import V1APIRouter, success
 from app.integrations.file_storage import save_upload
 from app.jobs.material_index_job import enqueue_material_processing_job, run_material_processing_job
 from app.modules.auth.dependencies import get_current_user
-from app.modules.courses.service import get_user_course
+from app.modules.courses.service import get_material_writable_course
 from app.modules.materials.schemas import MaterialSearchRequest, TextMaterialCreate
 from app.modules.materials.service import (
     create_text_material,
@@ -57,7 +57,7 @@ async def upload_material(
     file: UploadFile = File(...),
     user=Depends(get_current_user),
 ):
-    get_user_course(user["id"], course_id)
+    get_material_writable_course(user["id"], course_id)
     try:
         upload = await save_upload(file, user["id"])
     except ValueError as exc:

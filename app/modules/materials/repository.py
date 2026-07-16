@@ -849,7 +849,6 @@ def get_material_chunks(cursor, material_id: int, user_id: int) -> list[dict]:
         chunk["kb_ids"] = json.loads(chunk.pop("kb_ids_json") or "[]")
     return chunks
 
-
 def get_course_chunk(cursor, course_id: int, chunk_id: int, user_id: int) -> dict | None:
     cursor.execute(
         """
@@ -891,10 +890,3 @@ def get_course_chunks(cursor, course_id: int, user_id: int) -> list[dict]:
     for chunk in chunks:
         chunk["kb_ids"] = json.loads(chunk.pop("kb_ids_json") or "[]")
     return chunks
-
-
-def set_course_status(cursor, course_id: int, user_id: int, status: str) -> None:
-    cursor.execute(
-        "UPDATE courses SET status = %s WHERE id = %s AND user_id = %s",
-        (status, course_id, user_id),
-    )

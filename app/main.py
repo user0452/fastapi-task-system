@@ -47,6 +47,7 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    settings.validate_route_policy()
     application = FastAPI(
         title=settings.app_name,
         version=settings.app_version,

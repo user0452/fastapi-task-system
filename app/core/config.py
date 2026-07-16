@@ -14,6 +14,9 @@ _PLACEHOLDER_VALUES = {
     "your_secret_key",
     "your_api_key",
 }
+PRODUCTION_LEGACY_ROUTES_ERROR = (
+    "生产环境禁止启用旧版路由，请设置 ENABLE_LEGACY_ROUTES=false"
+)
 
 
 def _env(name: str, default: str = "") -> str:
@@ -111,6 +114,9 @@ class Settings:
         if self.environment == "production" and len(self.secret_key) < 32:
             errors.append("生产环境 SECRET_KEY 长度必须至少为 32")
 
+        if self.environment == "production" and self.enable_legacy_routes:
+            errors.append(PRODUCTION_LEGACY_ROUTES_ERROR)
+
         if self.access_token_expire_hours < 1:
             errors.append("ACCESS_TOKEN_EXPIRE_HOURS 必须大于 0")
 
@@ -134,6 +140,10 @@ class Settings:
 
         if errors:
             raise RuntimeError("启动配置无效：" + "；".join(errors))
+
+    def validate_route_policy(self) -> None:
+        if self.environment == "production" and self.enable_legacy_routes:
+            raise RuntimeError("启动配置无效：" + PRODUCTION_LEGACY_ROUTES_ERROR)
 
 
 @lru_cache(maxsize=1)

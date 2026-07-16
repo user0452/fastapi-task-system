@@ -36,7 +36,12 @@ from app.integrations.embedding.service import (
 from app.integrations.file_storage import StoredUpload, remove_upload, resolve_upload_path
 from app.integrations.llm.knowledge_extractor import extract_knowledge_structure
 from app.modules.audit.service import record_audit
-from app.modules.courses.service import get_user_course
+from app.modules.courses.service import (
+    get_material_writable_course,
+    get_user_course,
+    lock_course_for_material_processing,
+    reconcile_course_after_material_processing,
+)
 from app.modules.materials import repository
 from app.modules.materials.schemas import TextMaterialCreate
 
@@ -334,8 +339,8 @@ def _rebuild_vector_index(user_id: int, course_id: int) -> int:
 
 
 def create_text_material(user_id: int, course_id: int, request: TextMaterialCreate) -> dict:
-    course = get_user_course(user_id, course_id)
     with get_cursor() as cursor:
+        course = lock_course_for_material_processing(cursor, user_id, course_id)
         material = repository.create_text_material(
             cursor,
             user_id,
@@ -361,8 +366,8 @@ def create_uploaded_material(
     upload: StoredUpload,
 ) -> dict:
     try:
-        course = get_user_course(user_id, course_id)
         with get_cursor() as cursor:
+            course = lock_course_for_material_processing(cursor, user_id, course_id)
             material = repository.create_file_material(cursor, user_id, course, title, upload)
             record_audit(
                 user_id,
@@ -481,6 +486,7 @@ def request_material_retry(user_id: int, material_id: int) -> dict:
     material = get_user_material(user_id, material_id)
     if material.get("processing_status") in MATERIAL_DELETION_STATUSES:
         raise AppError("资料正在删除或已删除", 409, "MATERIAL_DELETION_IN_PROGRESS")
+    get_material_writable_course(user_id, material["course_id"])
     material = _update_material(
         user_id,
         material_id,
@@ -572,6 +578,14 @@ def get_course_knowledge_graph(user_id: int, course_id: int) -> dict:
 
 def _update_material(user_id: int, material_id: int, **changes) -> dict:
     with get_cursor() as cursor:
+        current = repository.get_material_for_update(cursor, material_id, user_id)
+        if current is None:
+            raise AppError("资料不存在或无访问权限", 404, "MATERIAL_NOT_FOUND")
+        lock_course_for_material_processing(
+            cursor,
+            user_id,
+            current["course_id"],
+        )
         material = repository.update_material(cursor, material_id, user_id, **changes)
         if material is None:
             raise AppError("资料不存在或无访问权限", 404, "MATERIAL_NOT_FOUND")
@@ -593,10 +607,15 @@ def _processing_checkpoint(
 ) -> dict:
     heartbeat()
     with get_cursor() as cursor:
-        material = repository.get_material(cursor, material_id, user_id)
-    if material is None or material.get("processing_status") in MATERIAL_DELETION_STATUSES:
-        raise MaterialProcessingCancelled("material processing cancelled by deletion")
-    return material
+        material = repository.get_material_for_update(cursor, material_id, user_id)
+        if material is None or material.get("processing_status") in MATERIAL_DELETION_STATUSES:
+            raise MaterialProcessingCancelled("material processing cancelled by deletion")
+        lock_course_for_material_processing(
+            cursor,
+            user_id,
+            material["course_id"],
+        )
+        return material
 
 
 def process_material(
@@ -707,6 +726,11 @@ def process_material(
                 or reloaded_material.get("processing_status") in MATERIAL_DELETION_STATUSES
             ):
                 raise MaterialProcessingCancelled("material processing cancelled by deletion")
+            lock_course_for_material_processing(
+                cursor,
+                user_id,
+                reloaded_material["course_id"],
+            )
             material = reloaded_material
             stored_chunks = repository.replace_chunks(cursor, material, prepared)
         _processing_checkpoint(user_id, material_id, renew_lease)
@@ -818,11 +842,11 @@ def process_material(
                     material_id,
                     [_search_terms_for_chunk(chunk, material["title"]) for chunk in stored_chunks],
                 )
-                repository.set_course_status(
+                reconcile_course_after_material_processing(
                     cursor,
-                    material["course_id"],
                     user_id,
-                    "diagnostic_pending" if len(points) >= 3 else "preparing",
+                    material["course_id"],
+                    has_enough_knowledge=len(points) >= 3,
                 )
                 completed = repository.update_material(
                     cursor,

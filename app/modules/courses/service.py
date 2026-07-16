@@ -19,6 +19,70 @@ COURSE_STATUS_TRANSITIONS = {
     "archived": set(),
 }
 
+MATERIAL_PROCESSING_STATUS = {
+    "draft": {False: "preparing", True: "diagnostic_pending"},
+    "preparing": {False: "preparing", True: "diagnostic_pending"},
+    "diagnostic_pending": {False: "diagnostic_pending", True: "diagnostic_pending"},
+    "active": {False: "active", True: "active"},
+    "completed": {False: "completed", True: "completed"},
+}
+
+
+def _ensure_course_accepts_material_processing(course: dict) -> dict:
+    if course.get("status") == "archived":
+        raise AppError(
+            "归档课程禁止上传或处理资料",
+            409,
+            "ARCHIVED_COURSE_MATERIALS_FORBIDDEN",
+        )
+    return course
+
+
+def get_material_writable_course(user_id: int, course_id: int) -> dict:
+    with get_cursor() as cursor:
+        course = repository.get_course(cursor, course_id, user_id)
+        if course is None:
+            raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        return _ensure_course_accepts_material_processing(course)
+
+
+def lock_course_for_material_processing(cursor, user_id: int, course_id: int) -> dict:
+    course = repository.get_course_for_update(cursor, course_id, user_id)
+    if course is None:
+        raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+    return _ensure_course_accepts_material_processing(course)
+
+
+def reconcile_course_after_material_processing(
+    cursor,
+    user_id: int,
+    course_id: int,
+    *,
+    has_enough_knowledge: bool,
+) -> dict:
+    course = lock_course_for_material_processing(cursor, user_id, course_id)
+    current_status = str(course["status"])
+    target_status = MATERIAL_PROCESSING_STATUS[current_status][bool(has_enough_knowledge)]
+    if target_status == current_status:
+        return course
+    updated = repository.transition_course_status(
+        cursor,
+        course_id,
+        user_id,
+        target_status,
+    )
+    if updated is None:
+        raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+    record_audit(
+        user_id,
+        "COURSE_MATERIAL_READINESS_CHANGED",
+        "course",
+        course_id,
+        {"from": current_status, "to": target_status},
+        cursor=cursor,
+    )
+    return updated
+
 
 def list_user_courses(user_id: int, include_archived: bool = False) -> list[dict]:
     with get_cursor() as cursor:
