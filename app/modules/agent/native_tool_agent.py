@@ -249,6 +249,15 @@ def build_course_tool_agent(
             lambda: get_diagnostic(user_id, existing_id) if existing_id else generate_diagnostic(user_id, active["id"]),
         )
         artifacts.cards.append({"type": "diagnostic", "data": result})
+        target_panel = "today" if result.get("submitted") else "diagnostic"
+        artifacts.actions.append(
+            {
+                "type": "open_panel",
+                "panel": target_panel,
+                "label": "查看今日学习" if target_panel == "today" else "开始诊断",
+                "to": f"/learn/{active['id']}?panel={target_panel}",
+            }
+        )
         return json.dumps(result, ensure_ascii=False, default=str)
 
     @tool

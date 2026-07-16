@@ -226,7 +226,7 @@ test('mobile course workspace keeps navigation, chat and inspector usable', asyn
   const inspectorBox = await inspector.boundingBox()
   expect(inspectorBox?.x).toBeLessThan(1)
   expect(inspectorBox?.width).toBeGreaterThanOrEqual(389)
-  await expect(page.locator('.inspector-tabs button')).toHaveCount(6)
+  await expect(page.locator('.inspector-tabs button')).toHaveCount(8)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
 
   await page.locator('.inspector-header button').click()
@@ -239,4 +239,33 @@ test('mobile course workspace keeps navigation, chat and inspector usable', asyn
   const railBox = await page.locator('.mobile-rail .course-rail').boundingBox()
   expect(railBox?.width).toBeLessThanOrEqual(328)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+})
+
+test('新版工作台可完成诊断并提交今日学习', async ({ page }, testInfo) => {
+  test.setTimeout(90_000)
+  await login(page, testInfo)
+  await openSeedCourse(page)
+  await page.getByRole('button', { name: '打开课程面板', exact: true }).click()
+  await page.getByRole('tab', { name: '诊断', exact: true }).click()
+
+  const diagnostic = page.locator('.diagnostic-workspace')
+  const diagnosticAnswers = diagnostic.locator('textarea')
+  await expect(diagnosticAnswers).toHaveCount(6)
+  for (let index = 0; index < await diagnosticAnswers.count(); index += 1) {
+    await diagnosticAnswers.nth(index).fill(`诊断作答 ${index + 1}`)
+  }
+  await diagnostic.locator('.diagnostic-actions button').click()
+  await expect(diagnostic.locator('.diagnostic-complete')).toBeVisible()
+  await diagnostic.locator('.diagnostic-complete button').click()
+
+  await expect(page).toHaveURL(/#\/learn\/\d+\?panel=today/)
+  const today = page.locator('.today-page')
+  await expect(today).toBeVisible()
+  await today.locator('.study-actions button').click()
+  const practiceAnswers = today.locator('.practice-block textarea')
+  for (let index = 0; index < await practiceAnswers.count(); index += 1) {
+    await practiceAnswers.nth(index).fill(`今日学习作答 ${index + 1}`)
+  }
+  await today.locator('.study-actions button').click()
+  await expect(today.locator('.completion-view')).toBeVisible()
 })

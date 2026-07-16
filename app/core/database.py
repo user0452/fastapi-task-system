@@ -1,86 +1,43 @@
+"""Database entry points.
+
+Runtime code obtains a SQLAlchemy-backed cursor transaction from this module.
+``get_conn`` remains only for the schema-migration runner, whose DDL is
+intentionally expressed as raw SQL.
+"""
+
+from __future__ import annotations
+
 from contextlib import contextmanager
-from time import perf_counter
+from typing import Iterator
 
 import pymysql
 
-from app.core.config import get_settings
-from app.core.metrics import add_gauge, inc_counter, observe, set_gauge
-
-_pool = None
+from app.core.orm import SqlAlchemyCursor, get_engine, get_session
 
 
-def _database_config() -> dict:
-    settings = get_settings()
-    return {
-        "host": settings.database_host,
-        "port": settings.database_port,
-        "user": settings.database_user,
-        "password": settings.database_password,
-        "database": settings.database_name,
-        "charset": "utf8mb4",
-        "cursorclass": pymysql.cursors.DictCursor,
-        "autocommit": False,
-    }
+class _MigrationConnection:
+    """Expose the historic dictionary cursor only to the DDL migration runner."""
 
+    def __init__(self, connection):
+        self._connection = connection
 
-def _get_pool():
-    global _pool
-    if _pool is None:
-        try:
-            from dbutils.pooled_db import PooledDB
+    def cursor(self):
+        return self._connection.cursor(pymysql.cursors.DictCursor)
 
-            _pool = PooledDB(
-                creator=pymysql,
-                maxconnections=20,
-                mincached=2,
-                maxcached=5,
-                blocking=True,
-                ping=1,
-                **_database_config(),
-            )
-            set_gauge("a3_db_pool_capacity", 20)
-        except ImportError:
-            _pool = "fallback"
-    return _pool
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
 
 
 def get_conn():
-    """Return a pooled database connection when DBUtils is available."""
-    pool = _get_pool()
-    if pool == "fallback":
-        return pymysql.connect(**_database_config())
-    return pool.connection()
+    """Return a pooled DB-API connection for schema migrations only."""
+    return _MigrationConnection(get_engine().raw_connection())
 
 
 @contextmanager
-def get_cursor():
-    """Provide a short transaction boundary and always release resources."""
-    started = perf_counter()
-    add_gauge("a3_db_pool_in_use", 1)
-    connection = None
-    cursor = None
-    try:
-        connection = get_conn()
-        # DBUtils only disables transparent reconnects after an explicit begin().
-        # Without it, a reconnect can silently discard writes made with autocommit off.
-        connection.begin()
-        cursor = connection.cursor()
-        yield cursor
-        connection.commit()
-    except Exception:
-        inc_counter("a3_db_transactions_total", status="failed")
-        if connection is not None:
-            connection.rollback()
-        raise
-    else:
-        inc_counter("a3_db_transactions_total", status="committed")
-    finally:
-        if cursor is not None:
-            cursor.close()
-        if connection is not None:
-            connection.close()
-        add_gauge("a3_db_pool_in_use", -1)
-        observe("a3_db_transaction_duration_seconds", perf_counter() - started)
+def get_cursor() -> Iterator[SqlAlchemyCursor]:
+    """Compatibility boundary for repositories during the ORM migration."""
+    with get_session() as session:
+        yield SqlAlchemyCursor(session)
 
 
 __all__ = ["get_conn", "get_cursor"]

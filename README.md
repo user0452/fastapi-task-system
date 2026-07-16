@@ -44,7 +44,10 @@ Set-Location frontend
 npm install
 Set-Location ..
 .venv\Scripts\python.exe -m app.core.migrations
+.venv\Scripts\alembic.exe stamp head
 ```
+
+`app.core.migrations` 负责历史版本和新环境的结构基线；当前版本起，新增字段、索引和表请通过 Alembic 创建迁移。已有数据库在运行历史迁移后执行一次 `alembic stamp head` 即可接管版本记录。
 
 后端：
 

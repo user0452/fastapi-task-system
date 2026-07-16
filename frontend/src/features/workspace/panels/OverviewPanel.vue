@@ -50,11 +50,11 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
           <span>{{ nextSession.scheduled_date }}</span>
           <strong>{{ nextSession.items?.[0]?.title || '课程学习单元' }}</strong>
           <p>{{ nextSession.adaptation_reason || '按照当前计划继续学习。' }}</p>
-          <button type="button" @click="$emit('prompt', '今天学什么？')">在对话中开始 <ArrowRight :size="14" /></button>
+          <button type="button" @click="$emit('change-panel', 'today')">进入今日学习 <ArrowRight :size="14" /></button>
         </template>
         <template v-else>
           <p>当前没有待完成单元。</p>
-          <button type="button" @click="$emit('prompt', '生成入门诊断题')">建立学习计划 <ArrowRight :size="14" /></button>
+          <button type="button" @click="$emit('change-panel', 'diagnostic')">开始入门诊断 <ArrowRight :size="14" /></button>
         </template>
       </section>
 

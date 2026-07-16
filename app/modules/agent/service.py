@@ -809,16 +809,21 @@ def run_agent_chat(
                 if diagnostic.get("submitted"):
                     reply = "这门课程已经完成诊断，可以直接开始今日学习。"
                     actions.append(
-                        {"type": "open_panel", "panel": "plan", "label": "查看今日学习", "to": "/today"}
+                        {
+                            "type": "open_panel",
+                            "panel": "today",
+                            "label": "查看今日学习",
+                            "to": f"/learn/{course['id']}?panel=today",
+                        }
                     )
                 else:
                     reply = "已找到现有诊断题，可以继续作答。" if quiz_id else "已生成课程诊断题。"
                     actions.append(
                         {
                             "type": "open_panel",
-                            "panel": "practice",
+                            "panel": "diagnostic",
                             "label": "开始诊断",
-                            "to": "/courses?tab=diagnostic",
+                            "to": f"/learn/{course['id']}?panel=diagnostic",
                         }
                     )
         elif intent == "search_external_resources":

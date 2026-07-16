@@ -6,7 +6,7 @@ import { showToast } from '../../../components/common/toast'
 
 
 const props = defineProps({ courseId: { type: Number, required: true }, refreshKey: { type: Number, default: 0 } })
-const emit = defineEmits(['prompt', 'data-changed'])
+const emit = defineEmits(['change-panel', 'prompt', 'data-changed'])
 const loading = ref(true)
 const plan = ref(null)
 const editingId = ref(null)
@@ -50,7 +50,7 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
     <div v-if="loading" class="panel-state">正在读取学习计划</div>
     <div v-else-if="!plan" class="panel-empty">
       <CalendarDays :size="28" /><strong>还没有学习计划</strong><p>完成课程诊断后会生成按天执行的计划。</p>
-      <button type="button" @click="$emit('prompt', '生成入门诊断题')">在对话中生成诊断</button>
+      <button type="button" @click="$emit('change-panel', 'diagnostic')">开始入门诊断</button>
     </div>
     <template v-else>
       <header class="plan-summary">
@@ -73,7 +73,7 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
           </div>
           <div v-else-if="!['completed', 'evaluated'].includes(session.status)" class="session-actions">
             <button type="button" @click="edit(session)">调整日期</button>
-            <button type="button" title="在对话中学习" aria-label="在对话中学习" @click="$emit('prompt', `开始学习“${session.items?.[0]?.title || '当前单元'}”`)"><MessageSquareText :size="14" /></button>
+            <button type="button" title="开始今日学习" aria-label="开始今日学习" @click="$emit('change-panel', 'today')"><MessageSquareText :size="14" /></button>
           </div>
         </article>
       </section>

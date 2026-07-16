@@ -18,7 +18,7 @@ class DiagnosticSubmitRequest(BaseModel):
 
 
 class SessionSubmitRequest(BaseModel):
-    answers: list[LearningAnswer] = Field(..., min_length=1)
+    answers: list[LearningAnswer] = Field(default_factory=list)
     actual_minutes: int | None = Field(default=None, ge=1, le=1440)
 
 

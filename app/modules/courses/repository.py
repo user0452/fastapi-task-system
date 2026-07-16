@@ -1,106 +1,108 @@
+"""Course persistence implemented with SQLAlchemy ORM expressions."""
+
+from __future__ import annotations
+
 from typing import Any
 
-COURSE_COLUMNS = """
-    id, user_id, name, goal, exam_at, daily_minutes,
-    status, is_current, created_at, updated_at
-"""
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
+
+from app.models import Course, model_as_dict
+
+
+def _session(cursor: Any) -> Session:
+    return cursor.session
+
+
+def _course_dict(course: Course | None) -> dict | None:
+    return model_as_dict(course) if course is not None else None
 
 
 def list_courses(cursor, user_id: int, include_archived: bool = False) -> list[dict]:
-    sql = f"SELECT {COURSE_COLUMNS} FROM courses WHERE user_id = %s"
-    params: list[Any] = [user_id]
+    statement = select(Course).where(Course.user_id == user_id)
     if not include_archived:
-        sql += " AND status <> %s"
-        params.append("archived")
-    sql += " ORDER BY is_current DESC, updated_at DESC, id DESC"
-    cursor.execute(sql, params)
-    return list(cursor.fetchall())
+        statement = statement.where(Course.status != "archived")
+    statement = statement.order_by(Course.is_current.desc(), Course.updated_at.desc(), Course.id.desc())
+    return [model_as_dict(course) for course in _session(cursor).scalars(statement)]
 
 
 def get_course(cursor, course_id: int, user_id: int) -> dict | None:
-    cursor.execute(
-        f"SELECT {COURSE_COLUMNS} FROM courses WHERE id = %s AND user_id = %s",
-        (course_id, user_id),
+    course = _session(cursor).scalar(
+        select(Course).where(Course.id == course_id, Course.user_id == user_id)
     )
-    return cursor.fetchone()
+    return _course_dict(course)
 
 
 def get_current_course(cursor, user_id: int) -> dict | None:
-    cursor.execute(
-        f"""
-        SELECT {COURSE_COLUMNS}
-        FROM courses
-        WHERE user_id = %s AND is_current = TRUE AND status <> 'archived'
-        ORDER BY updated_at DESC
-        LIMIT 1
-        """,
-        (user_id,),
+    course = _session(cursor).scalar(
+        select(Course)
+        .where(
+            Course.user_id == user_id,
+            Course.is_current.is_(True),
+            Course.status != "archived",
+        )
+        .order_by(Course.updated_at.desc())
+        .limit(1)
     )
-    return cursor.fetchone()
+    return _course_dict(course)
 
 
 def create_course(cursor, user_id: int, data: dict, is_current: bool) -> dict:
-    cursor.execute(
-        """
-        INSERT INTO courses
-            (user_id, name, goal, exam_at, daily_minutes, status, is_current)
-        VALUES (%s, %s, %s, %s, %s, 'draft', %s)
-        """,
-        (
-            user_id,
-            data["name"],
-            data.get("goal", ""),
-            data.get("exam_at"),
-            data.get("daily_minutes", 30),
-            is_current,
-        ),
+    session = _session(cursor)
+    course = Course(
+        user_id=user_id,
+        name=data["name"],
+        goal=data.get("goal", ""),
+        exam_at=data.get("exam_at"),
+        daily_minutes=data.get("daily_minutes", 30),
+        status="draft",
+        is_current=is_current,
     )
-    course = get_course(cursor, cursor.lastrowid, user_id)
-    if course is None:
-        raise RuntimeError("course insert succeeded but the row could not be reloaded")
-    return course
+    session.add(course)
+    session.flush()
+    session.refresh(course)
+    return model_as_dict(course)
 
 
 def update_course(cursor, course_id: int, user_id: int, changes: dict) -> dict | None:
-    allowed = {"name", "goal", "exam_at", "daily_minutes", "status"}
-    updates = []
-    values = []
-    for field, value in changes.items():
-        if field in allowed:
-            updates.append(f"{field} = %s")
-            values.append(value)
-    if not updates:
-        return get_course(cursor, course_id, user_id)
-    values.extend([course_id, user_id])
-    cursor.execute(
-        f"UPDATE courses SET {', '.join(updates)} WHERE id = %s AND user_id = %s",
-        values,
+    session = _session(cursor)
+    course = session.scalar(
+        select(Course).where(Course.id == course_id, Course.user_id == user_id)
     )
-    return get_course(cursor, course_id, user_id)
+    if course is None:
+        return None
+    for field, value in changes.items():
+        if field in {"name", "goal", "exam_at", "daily_minutes", "status"}:
+            setattr(course, field, value)
+    session.flush()
+    session.refresh(course)
+    return model_as_dict(course)
 
 
 def set_current_course(cursor, course_id: int, user_id: int) -> dict | None:
-    cursor.execute("UPDATE courses SET is_current = FALSE WHERE user_id = %s", (user_id,))
-    cursor.execute(
-        """
-        UPDATE courses
-        SET is_current = TRUE
-        WHERE id = %s AND user_id = %s AND status <> 'archived'
-        """,
-        (course_id, user_id),
+    session = _session(cursor)
+    course = session.scalar(
+        select(Course)
+        .where(Course.id == course_id, Course.user_id == user_id, Course.status != "archived")
+        .with_for_update()
     )
-    if cursor.rowcount == 0:
+    if course is None:
         return None
-    return get_course(cursor, course_id, user_id)
+    session.execute(update(Course).where(Course.user_id == user_id).values(is_current=False))
+    course.is_current = True
+    session.flush()
+    session.refresh(course)
+    return model_as_dict(course)
 
 
 def archive_course(cursor, course_id: int, user_id: int) -> bool:
-    cursor.execute(
-        """
-        UPDATE courses
-        SET status = 'archived', is_current = FALSE
-        WHERE id = %s AND user_id = %s
-        """,
-        (course_id, user_id),
+    session = _session(cursor)
+    course = session.scalar(
+        select(Course).where(Course.id == course_id, Course.user_id == user_id).with_for_update()
     )
-    return cursor.rowcount > 0
+    if course is None:
+        return False
+    course.status = "archived"
+    course.is_current = False
+    session.flush()
+    return True

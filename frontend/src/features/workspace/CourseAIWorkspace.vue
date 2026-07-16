@@ -11,7 +11,9 @@ const router = useRouter()
 const courses = useCourseStore()
 const chat = ref(null)
 const refreshKey = ref(0)
-const validPanels = new Set(['overview', 'knowledge', 'plan', 'practice', 'wrong', 'materials'])
+const validPanels = new Set([
+  'overview', 'today', 'diagnostic', 'knowledge', 'plan', 'practice', 'wrong', 'materials'
+])
 
 const courseId = computed(() => Number(route.params.courseId))
 const course = computed(() => courses.courses.find(item => Number(item.id) === courseId.value) || courses.current)

@@ -4,7 +4,8 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-dotenv
 pymysql
-DBUtils>=3.0
+SQLAlchemy>=2.0.51,<2.1
+alembic>=1.18.5,<2
 pydantic
 langchain-openai
 langchain-core

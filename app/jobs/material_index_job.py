@@ -56,6 +56,8 @@ def enqueue_material_processing_job(user_id: int, course_id: int, material_id: i
             (material_id,),
         )
         current = cursor.fetchone()
+        if current is None:
+            raise RuntimeError("material processing job disappeared after enqueue")
         actively_running = bool(current.get("actively_running"))
         if not actively_running:
             cursor.execute(
@@ -78,7 +80,10 @@ def enqueue_material_processing_job(user_id: int, course_id: int, material_id: i
             """,
             (material_id,),
         )
-        return cursor.fetchone()
+        job = cursor.fetchone()
+        if job is None:
+            raise RuntimeError("material processing job could not be reloaded")
+        return job
 
 
 def _claim_job(material_id: int | None, worker_id: str) -> dict | None:

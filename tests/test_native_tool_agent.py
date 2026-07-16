@@ -141,6 +141,12 @@ def test_native_agent_registers_tools_human_approval_and_checkpointer(monkeypatc
     assert practice["count"] == 10
     diagnostic = json.loads(tools["generate_diagnostic_questions"].invoke({}))
     assert diagnostic == {"id": 91, "created": False}
+    assert artifacts.actions[-1] == {
+        "type": "open_panel",
+        "panel": "diagnostic",
+        "label": "开始诊断",
+        "to": "/learn/13?panel=diagnostic",
+    }
     deleted = json.loads(tools["delete_task"].invoke({"task_id": 33}))
     assert deleted == {"task_id": 33, "deleted": True}
 
@@ -171,7 +177,7 @@ def test_native_agent_rejects_course_tools_without_active_course(monkeypatch):
 
 
 def test_diagnostic_tool_generates_when_no_existing_quiz(monkeypatch):
-    _agent, _artifacts, _captured, _calls, tools = _build_agent(
+    _agent, artifacts, _captured, _calls, tools = _build_agent(
         monkeypatch, latest_diagnostic_id=None
     )
 
@@ -179,3 +185,4 @@ def test_diagnostic_tool_generates_when_no_existing_quiz(monkeypatch):
         "id": 92,
         "created": True,
     }
+    assert artifacts.actions[-1]["panel"] == "diagnostic"

@@ -5,9 +5,9 @@ description = "A3 course sprint coach with an adaptive learning loop and control
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.18.5,<2",
     "bcrypt==4.0.1",
     "cryptography>=46.0.7",
-    "dbutils>=3.0",
     "faiss-cpu>=1.14.3",
     "fastapi>=0.135.3",
     "langchain>=1.3.1",
@@ -22,6 +22,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "requests>=2.33.1",
     "sentence-transformers>=5.5.1",
+    "sqlalchemy>=2.0.51,<2.1",
     "uvicorn>=0.44.0",
 ]
 

@@ -32,8 +32,9 @@ async function load() {
   }
 }
 
-function openCourse(row, prompt = '') {
+function openCourse(row, prompt = '', panel = '') {
   const query = prompt ? { prompt } : {}
+  if (panel) query.panel = panel
   router.push({ path: `/learn/${row.course.id}`, query })
 }
 
@@ -87,7 +88,7 @@ onMounted(load)
           </div>
           <CheckCircle2 v-if="['completed', 'evaluated'].includes(row.session?.status)" class="done-icon" :size="19" />
           <div v-else class="day-actions">
-            <button type="button" title="进入课程助手" aria-label="进入课程助手" @click="openCourse(row)"><ArrowRight :size="16" /></button>
+            <button type="button" title="开始今日学习" aria-label="开始今日学习" @click="openCourse(row, '', 'today')"><ArrowRight :size="16" /></button>
             <button v-if="row.session" type="button" title="在对话中开始" aria-label="在对话中开始" @click="openCourse(row, '今天学什么？')"><MessageSquareText :size="16" /></button>
           </div>
         </article>

@@ -1,10 +1,12 @@
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import get_cursor
 from app.core.errors import AppError
+from app.models import model_as_dict, reflected_model
 from app.modules.auth.tokens import COOKIE_NAME
 
 _bearer = HTTPBearer(auto_error=False)
@@ -25,14 +27,9 @@ def get_current_user(
     except (JWTError, TypeError, ValueError):
         raise AppError("登录状态无效，请重新登录", 401, "AUTH_INVALID") from None
     with get_cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT id, username, is_active, token_version
-            FROM users WHERE id = %s
-            """,
-            (user_id,),
-        )
-        user = cursor.fetchone()
+        User = reflected_model("users")
+        user_model = cursor.session.scalar(select(User).where(User.id == user_id))
+        user = model_as_dict(user_model) if user_model is not None else None
     if (
         user is None
         or not bool(user.get("is_active"))

@@ -21,6 +21,7 @@ import { showToast } from '../../components/common/toast'
 
 const router = useRouter()
 const courses = useCourseStore()
+const props = defineProps({ courseId: { type: Number, required: true } })
 const session = ref(null)
 const loading = ref(true)
 const starting = ref(false)
@@ -38,7 +39,7 @@ const practiceItems = computed(() => (session.value?.items || []).filter(item =>
 const answeredCount = computed(() => practiceItems.value.filter(item =>
   String(answers.value[item.question.id] || '').trim()
 ).length)
-const canSubmit = computed(() => practiceItems.value.length > 0 && answeredCount.value === practiceItems.value.length)
+const canSubmit = computed(() => !practiceItems.value.length || answeredCount.value === practiceItems.value.length)
 
 function itemLabel(type) {
   return {
@@ -51,7 +52,7 @@ function itemLabel(type) {
 }
 
 async function loadToday() {
-  if (!courses.current?.id) {
+  if (!props.courseId) {
     session.value = null
     loading.value = false
     return
@@ -59,7 +60,7 @@ async function loadToday() {
   loading.value = true
   error.value = ''
   result.value = null
-  const response = await getTodayLearning(courses.current.id)
+  const response = await getTodayLearning(props.courseId)
   loading.value = false
   if (response.code === 200) {
     session.value = response.data
@@ -107,7 +108,10 @@ async function submitSession() {
 
 function askCoach(item) {
   const point = item.knowledge_point_name || item.title
-  router.push({ path: '/agent', query: { prompt: `请讲解${point}，并给我一个容易理解的例子。` } })
+  router.push({
+    path: `/learn/${props.courseId}`,
+    query: { prompt: `请讲解${point}，并给我一个容易理解的例子。` }
+  })
 }
 
 onMounted(async () => {
@@ -115,7 +119,7 @@ onMounted(async () => {
   await loadToday()
 })
 
-watch(() => courses.current?.id, (next, previous) => {
+watch(() => props.courseId, (next, previous) => {
   if (previous && next !== previous) loadToday()
 })
 </script>
@@ -157,7 +161,7 @@ watch(() => courses.current?.id, (next, previous) => {
         <CheckCircle2 :size="32" />
         <div>
           <h2>今天的学习已完成</h2>
-          <p>掌握度已经更新，明日任务已根据本次表现调整。</p>
+          <p>{{ result.evaluation ? '掌握度已经更新，明日任务已根据本次表现调整。' : '已记录本次学习完成，后续计划保持不变。' }}</p>
         </div>
       </div>
 
@@ -276,12 +280,13 @@ watch(() => courses.current?.id, (next, previous) => {
 
         <footer class="study-actions">
           <span v-if="isStarted && practiceItems.length">已完成 {{ answeredCount }} / {{ practiceItems.length }} 道练习</span>
+          <span v-else-if="isStarted">当前单元无需作答，确认完成即可更新进度</span>
           <span v-else>开始后即可填写练习并提交评估</span>
           <button v-if="!isStarted" class="primary-button" type="button" :disabled="starting" @click="startSession">
             <Play :size="17" fill="currentColor" /> {{ starting ? '正在开始' : '开始今日学习' }}
           </button>
           <button v-else class="primary-button" type="button" :disabled="!canSubmit || submitting" @click="submitSession">
-            {{ submitting ? '正在评估' : '提交今日练习' }}
+            {{ submitting ? '正在提交' : practiceItems.length ? '提交今日练习' : '完成今日学习' }}
           </button>
         </footer>
       </section>

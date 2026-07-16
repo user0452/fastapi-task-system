@@ -8,6 +8,7 @@ import pymysql
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
@@ -85,8 +86,7 @@ def create_app() -> FastAPI:
             )
             reset_request_id(token)
 
-    @application.exception_handler(pymysql.MySQLError)
-    async def mysql_exception_handler(_: Request, __: pymysql.MySQLError):
+    async def database_exception_handler(_: Request, __: Exception):
         return JSONResponse(
             status_code=500,
             content=error_payload(
@@ -94,6 +94,9 @@ def create_app() -> FastAPI:
                 500,
             ),
         )
+
+    application.add_exception_handler(pymysql.MySQLError, database_exception_handler)
+    application.add_exception_handler(SQLAlchemyError, database_exception_handler)
 
     if settings.enable_legacy_routes:
         from routers import (

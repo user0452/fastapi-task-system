@@ -1,15 +1,14 @@
+"""External-resource persistence implemented with SQLAlchemy ORM."""
+
+from __future__ import annotations
+
 import json
 from datetime import datetime
 from typing import Any
 
-RESOURCE_COLUMNS = """
-    id, user_id, course_id, knowledge_point_id, provider,
-    provider_resource_id, resource_type, canonical_url, url_hash,
-    title, author, summary, thumbnail_url, duration_seconds,
-    published_at, language, relevance_score, quality_score,
-    search_query, metadata_json, status, last_checked_at,
-    created_at, updated_at
-"""
+from sqlalchemy import select
+
+from app.models import model_as_dict, reflected_model
 
 
 def _loads(value: Any, default):
@@ -23,117 +22,113 @@ def _loads(value: Any, default):
         return default
 
 
-def _resource(row: dict | None) -> dict | None:
-    if row:
-        row["metadata"] = _loads(row.pop("metadata_json", None), {})
+def _resource(resource: Any | None) -> dict | None:
+    if resource is None:
+        return None
+    row = model_as_dict(resource)
+    row["metadata"] = _loads(row.pop("metadata_json", None), {})
     return row
 
 
-def get_resource(cursor, resource_id: int, user_id: int, course_id: int) -> dict | None:
-    cursor.execute(
-        f"""
-        SELECT {RESOURCE_COLUMNS}
-        FROM external_resources
-        WHERE id = %s AND user_id = %s AND course_id = %s
-        """,
-        (resource_id, user_id, course_id),
+def _resource_models():
+    return (
+        reflected_model("external_resources"),
+        reflected_model("resource_interactions"),
+        reflected_model("external_resource_search_cache"),
     )
-    return _resource(cursor.fetchone())
+
+
+def get_resource(cursor, resource_id: int, user_id: int, course_id: int) -> dict | None:
+    ExternalResource, _, _ = _resource_models()
+    resource = cursor.session.scalar(
+        select(ExternalResource).where(
+            ExternalResource.id == resource_id,
+            ExternalResource.user_id == user_id,
+            ExternalResource.course_id == course_id,
+        )
+    )
+    return _resource(resource)
 
 
 def upsert_resource(cursor, user_id: int, course_id: int, item: dict) -> dict:
-    cursor.execute(
-        """
-        INSERT INTO external_resources
-            (user_id, course_id, knowledge_point_id, provider,
-             provider_resource_id, resource_type, canonical_url, url_hash,
-             title, author, summary, thumbnail_url, duration_seconds,
-             published_at, language, relevance_score, quality_score,
-             search_query, metadata_json, status, last_checked_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP)
-        ON DUPLICATE KEY UPDATE
-            knowledge_point_id = COALESCE(VALUES(knowledge_point_id), knowledge_point_id),
-            provider = VALUES(provider),
-            provider_resource_id = VALUES(provider_resource_id),
-            title = VALUES(title),
-            author = COALESCE(VALUES(author), author),
-            summary = COALESCE(VALUES(summary), summary),
-            thumbnail_url = COALESCE(VALUES(thumbnail_url), thumbnail_url),
-            duration_seconds = COALESCE(VALUES(duration_seconds), duration_seconds),
-            published_at = COALESCE(VALUES(published_at), published_at),
-            relevance_score = GREATEST(relevance_score, VALUES(relevance_score)),
-            quality_score = GREATEST(quality_score, VALUES(quality_score)),
-            search_query = VALUES(search_query),
-            metadata_json = VALUES(metadata_json),
-            status = 'active',
-            last_checked_at = CURRENT_TIMESTAMP,
-            updated_at = CURRENT_TIMESTAMP
-        """,
-        (
-            user_id,
-            course_id,
-            item.get("knowledge_point_id"),
-            item["provider"],
-            item.get("provider_resource_id"),
-            item.get("resource_type", "video"),
-            item["canonical_url"],
-            item["url_hash"],
-            item["title"][:500],
-            (item.get("author") or "")[:255] or None,
-            item.get("summary"),
-            item.get("thumbnail_url"),
-            item.get("duration_seconds"),
-            item.get("published_at"),
-            item.get("language", "zh-CN"),
-            item.get("relevance_score", 0),
-            item.get("quality_score", 0),
-            item.get("search_query", "")[:500],
-            json.dumps(item.get("metadata") or {}, ensure_ascii=False, default=str),
-        ),
+    ExternalResource, _, _ = _resource_models()
+    session = cursor.session
+    resource = session.scalar(
+        select(ExternalResource)
+        .where(
+            ExternalResource.user_id == user_id,
+            ExternalResource.course_id == course_id,
+            ExternalResource.url_hash == item["url_hash"],
+        )
+        .with_for_update()
     )
-    cursor.execute(
-        f"""
-        SELECT {RESOURCE_COLUMNS}
-        FROM external_resources
-        WHERE user_id = %s AND course_id = %s AND url_hash = %s
-        """,
-        (user_id, course_id, item["url_hash"]),
-    )
-    resource = _resource(cursor.fetchone())
     if resource is None:
-        raise RuntimeError("resource upsert succeeded but the row could not be reloaded")
-    return resource
+        resource = ExternalResource(
+            user_id=user_id,
+            course_id=course_id,
+            knowledge_point_id=item.get("knowledge_point_id"),
+            provider=item["provider"],
+            provider_resource_id=item.get("provider_resource_id"),
+            resource_type=item.get("resource_type", "video"),
+            canonical_url=item["canonical_url"],
+            url_hash=item["url_hash"],
+            title=item["title"][:500],
+            author=(item.get("author") or "")[:255] or None,
+            summary=item.get("summary"),
+            thumbnail_url=item.get("thumbnail_url"),
+            duration_seconds=item.get("duration_seconds"),
+            published_at=item.get("published_at"),
+            language=item.get("language", "zh-CN"),
+            relevance_score=item.get("relevance_score", 0),
+            quality_score=item.get("quality_score", 0),
+            search_query=item.get("search_query", "")[:500],
+            metadata_json=json.dumps(item.get("metadata") or {}, ensure_ascii=False, default=str),
+            status="active",
+        )
+        session.add(resource)
+    else:
+        if item.get("knowledge_point_id") is not None:
+            resource.knowledge_point_id = item["knowledge_point_id"]
+        resource.provider = item["provider"]
+        resource.provider_resource_id = item.get("provider_resource_id")
+        resource.title = item["title"][:500]
+        resource.author = (item.get("author") or "")[:255] or resource.author
+        resource.summary = item.get("summary") or resource.summary
+        resource.thumbnail_url = item.get("thumbnail_url") or resource.thumbnail_url
+        resource.duration_seconds = item.get("duration_seconds") or resource.duration_seconds
+        resource.published_at = item.get("published_at") or resource.published_at
+        resource.relevance_score = max(float(resource.relevance_score or 0), item.get("relevance_score", 0))
+        resource.quality_score = max(float(resource.quality_score or 0), item.get("quality_score", 0))
+        resource.search_query = item.get("search_query", "")[:500]
+        resource.metadata_json = json.dumps(item.get("metadata") or {}, ensure_ascii=False, default=str)
+        resource.status = "active"
+    session.flush()
+    session.refresh(resource)
+    return _resource(resource) or {}
 
 
 def _interaction_states(
     cursor, user_id: int, course_id: int, resource_ids: list[int]
 ) -> dict[int, dict[str, Any]]:
     states = {
-        resource_id: {
-            "saved": False,
-            "completed": False,
-            "helpful": None,
-            "opened_count": 0,
-        }
+        resource_id: {"saved": False, "completed": False, "helpful": None, "opened_count": 0}
         for resource_id in resource_ids
     }
     if not resource_ids:
         return states
-    placeholders = ",".join(["%s"] * len(resource_ids))
-    cursor.execute(
-        f"""
-        SELECT resource_id, interaction_type, value_json, created_at
-        FROM resource_interactions
-        WHERE user_id = %s AND course_id = %s
-          AND resource_id IN ({placeholders})
-        ORDER BY id
-        """,
-        (user_id, course_id, *resource_ids),
+    _, ResourceInteraction, _ = _resource_models()
+    interactions = cursor.session.scalars(
+        select(ResourceInteraction)
+        .where(
+            ResourceInteraction.user_id == user_id,
+            ResourceInteraction.course_id == course_id,
+            ResourceInteraction.resource_id.in_(resource_ids),
+        )
+        .order_by(ResourceInteraction.id)
     )
-    for row in cursor.fetchall():
-        state = states[row["resource_id"]]
-        kind = row["interaction_type"]
+    for interaction in interactions:
+        state = states[interaction.resource_id]
+        kind = interaction.interaction_type
         if kind == "opened":
             state["opened_count"] = int(state["opened_count"] or 0) + 1
         elif kind == "saved":
@@ -159,16 +154,15 @@ def list_resources_by_ids(
 ) -> list[dict]:
     if not resource_ids:
         return []
-    placeholders = ",".join(["%s"] * len(resource_ids))
-    cursor.execute(
-        f"""
-        SELECT {RESOURCE_COLUMNS}
-        FROM external_resources
-        WHERE user_id = %s AND course_id = %s AND id IN ({placeholders})
-        """,
-        (user_id, course_id, *resource_ids),
+    ExternalResource, _, _ = _resource_models()
+    resources = cursor.session.scalars(
+        select(ExternalResource).where(
+            ExternalResource.user_id == user_id,
+            ExternalResource.course_id == course_id,
+            ExternalResource.id.in_(resource_ids),
+        )
     )
-    by_id = {row["id"]: _resource(row) for row in cursor.fetchall()}
+    by_id = {resource.id: _resource(resource) for resource in resources}
     states = _interaction_states(cursor, user_id, course_id, resource_ids)
     items = []
     for resource_id in resource_ids:
@@ -180,17 +174,18 @@ def list_resources_by_ids(
 
 
 def list_course_resources(cursor, user_id: int, course_id: int, limit: int = 100) -> list[dict]:
-    cursor.execute(
-        f"""
-        SELECT {RESOURCE_COLUMNS}
-        FROM external_resources
-        WHERE user_id = %s AND course_id = %s AND status = 'active'
-        ORDER BY updated_at DESC, id DESC
-        LIMIT %s
-        """,
-        (user_id, course_id, limit),
+    ExternalResource, _, _ = _resource_models()
+    resources = cursor.session.scalars(
+        select(ExternalResource)
+        .where(
+            ExternalResource.user_id == user_id,
+            ExternalResource.course_id == course_id,
+            ExternalResource.status == "active",
+        )
+        .order_by(ExternalResource.updated_at.desc(), ExternalResource.id.desc())
+        .limit(limit)
     )
-    items = [item for row in cursor.fetchall() if (item := _resource(row)) is not None]
+    items = [item for resource in resources if (item := _resource(resource)) is not None]
     states = _interaction_states(cursor, user_id, course_id, [item["id"] for item in items])
     for item in items:
         item["interaction"] = states[item["id"]]
@@ -205,34 +200,34 @@ def add_interaction(
     interaction_type: str,
     value: dict,
 ) -> None:
-    cursor.execute(
-        """
-        INSERT INTO resource_interactions
-            (resource_id, user_id, course_id, interaction_type, value_json)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (
-            resource_id,
-            user_id,
-            course_id,
-            interaction_type,
-            json.dumps(value or {}, ensure_ascii=False, default=str),
-        ),
+    _, ResourceInteraction, _ = _resource_models()
+    cursor.session.add(
+        ResourceInteraction(
+            resource_id=resource_id,
+            user_id=user_id,
+            course_id=course_id,
+            interaction_type=interaction_type,
+            value_json=json.dumps(value or {}, ensure_ascii=False, default=str),
+        )
     )
+    # The caller reads the current interaction state in the same transaction.
+    cursor.session.flush()
 
 
 def get_cache(cursor, user_id: int, course_id: int, query_hash: str, now: datetime) -> dict | None:
-    cursor.execute(
-        """
-        SELECT result_ids_json, degraded, warning, expires_at
-        FROM external_resource_search_cache
-        WHERE user_id = %s AND course_id = %s AND query_hash = %s AND expires_at > %s
-        """,
-        (user_id, course_id, query_hash, now),
+    _, _, SearchCache = _resource_models()
+    cache = cursor.session.scalar(
+        select(SearchCache).where(
+            SearchCache.user_id == user_id,
+            SearchCache.course_id == course_id,
+            SearchCache.query_hash == query_hash,
+            SearchCache.expires_at > now,
+        )
     )
-    row = cursor.fetchone()
-    if row:
-        row["result_ids"] = _loads(row.pop("result_ids_json"), [])
+    if cache is None:
+        return None
+    row = model_as_dict(cache)
+    row["result_ids"] = _loads(row.pop("result_ids_json"), [])
     return row
 
 
@@ -247,31 +242,29 @@ def save_cache(
     warning: str | None,
     expires_at: datetime,
 ) -> None:
-    cursor.execute(
-        """
-        INSERT INTO external_resource_search_cache
-            (user_id, course_id, query_hash, query_text, result_ids_json,
-             degraded, warning, expires_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            query_text = VALUES(query_text),
-            result_ids_json = VALUES(result_ids_json),
-            degraded = VALUES(degraded),
-            warning = VALUES(warning),
-            expires_at = VALUES(expires_at),
-            updated_at = CURRENT_TIMESTAMP
-        """,
-        (
-            user_id,
-            course_id,
-            query_hash,
-            query_text[:500],
-            json.dumps(resource_ids),
-            degraded,
-            warning,
-            expires_at,
-        ),
+    _, _, SearchCache = _resource_models()
+    session = cursor.session
+    cache = session.scalar(
+        select(SearchCache)
+        .where(
+            SearchCache.user_id == user_id,
+            SearchCache.course_id == course_id,
+            SearchCache.query_hash == query_hash,
+        )
+        .with_for_update()
     )
+    values = {
+        "query_text": query_text[:500],
+        "result_ids_json": json.dumps(resource_ids),
+        "degraded": degraded,
+        "warning": warning,
+        "expires_at": expires_at,
+    }
+    if cache is None:
+        session.add(SearchCache(user_id=user_id, course_id=course_id, query_hash=query_hash, **values))
+    else:
+        for field, value in values.items():
+            setattr(cache, field, value)
 
 
 def update_resource_status(
@@ -281,11 +274,13 @@ def update_resource_status(
     course_id: int,
     status: str,
 ) -> None:
-    cursor.execute(
-        """
-        UPDATE external_resources
-        SET status = %s, last_checked_at = CURRENT_TIMESTAMP
-        WHERE id = %s AND user_id = %s AND course_id = %s
-        """,
-        (status, resource_id, user_id, course_id),
+    ExternalResource, _, _ = _resource_models()
+    resource = cursor.session.scalar(
+        select(ExternalResource).where(
+            ExternalResource.id == resource_id,
+            ExternalResource.user_id == user_id,
+            ExternalResource.course_id == course_id,
+        )
     )
+    if resource is not None:
+        resource.status = status

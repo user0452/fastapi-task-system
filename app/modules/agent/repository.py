@@ -1,16 +1,14 @@
+"""Agent persistence implemented with SQLAlchemy ORM entities."""
+
+from __future__ import annotations
+
 import json
 from datetime import datetime
 from typing import Any
 
-SESSION_COLUMNS = """
-    id, user_id, course_id, title, archived_at, created_at, updated_at
-"""
+from sqlalchemy import func, select
 
-COURSE_AGENT_COLUMNS = """
-    id, user_id, course_id, name, status, system_prompt,
-    conversation_summary, primary_session_id, last_summarized_message_id, last_active_at,
-    created_at, updated_at
-"""
+from app.models import model_as_dict, reflected_model
 
 
 def _json_loads(value: Any, default=None):
@@ -28,74 +26,96 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+def _row(entity: Any | None) -> dict | None:
+    return model_as_dict(entity) if entity is not None else None
+
+
+def _memory_row(entity: Any | None) -> dict | None:
+    row = _row(entity)
+    if row is not None:
+        row["content"] = _json_loads(row.pop("content_json", None), {})
+    return row
+
+
+def _message_row(entity: Any | None) -> dict | None:
+    row = _row(entity)
+    if row is not None:
+        row["tool_calls"] = _json_loads(row.get("tool_calls"), None)
+        row["sources"] = _json_loads(row.pop("sources_json", None), [])
+    return row
+
+
+def _action_row(entity: Any | None) -> dict | None:
+    row = _row(entity)
+    if row is not None:
+        row["payload"] = _json_loads(row.pop("payload_json"), {})
+        row["result"] = _json_loads(row.pop("result_json"), None)
+        row["checkpoint"] = _json_loads(row.pop("checkpoint_json"), None)
+    return row
+
+
 def get_course_agent(cursor, course_id: int, user_id: int) -> dict | None:
-    cursor.execute(
-        f"""
-        SELECT {COURSE_AGENT_COLUMNS}
-        FROM course_agents
-        WHERE course_id = %s AND user_id = %s
-        """,
-        (course_id, user_id),
+    CourseAgent = reflected_model("course_agents")
+    agent = cursor.session.scalar(
+        select(CourseAgent).where(CourseAgent.course_id == course_id, CourseAgent.user_id == user_id)
     )
-    return cursor.fetchone()
+    return _row(agent)
 
 
 def ensure_course_agent(cursor, user_id: int, course: dict) -> dict:
-    cursor.execute(
-        """
-        INSERT INTO course_agents (user_id, course_id, name, status)
-        VALUES (%s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            name = VALUES(name),
-            status = VALUES(status),
-            updated_at = CURRENT_TIMESTAMP
-        """,
-        (
-            user_id,
-            course["id"],
-            f"{course['name']} 学习助手",
-            "archived" if course.get("status") == "archived" else "active",
-        ),
+    CourseAgent = reflected_model("course_agents")
+    ChatSession = reflected_model("chat_sessions")
+    session = cursor.session
+    agent = session.scalar(
+        select(CourseAgent)
+        .where(CourseAgent.course_id == course["id"], CourseAgent.user_id == user_id)
+        .with_for_update()
     )
-    agent = get_course_agent(cursor, course["id"], user_id)
+    name = f"{course['name']} 学习助手"
+    status = "archived" if course.get("status") == "archived" else "active"
     if agent is None:
-        raise RuntimeError("course agent upsert succeeded but the row could not be reloaded")
+        agent = CourseAgent(user_id=user_id, course_id=course["id"], name=name, status=status)
+        session.add(agent)
+    else:
+        agent.name = name
+        agent.status = status
+    session.flush()
+
     primary = None
-    if agent.get("primary_session_id"):
-        primary = get_session(cursor, agent["primary_session_id"], user_id)
-        if primary and primary.get("archived_at") is not None:
-            primary = None
+    if agent.primary_session_id:
+        primary_model = session.scalar(
+            select(ChatSession).where(
+                ChatSession.id == agent.primary_session_id,
+                ChatSession.user_id == user_id,
+            )
+        )
+        if primary_model is not None and primary_model.archived_at is None:
+            primary = _row(primary_model)
     if primary is None:
-        cursor.execute(
-            """
-            SELECT id FROM chat_sessions
-            WHERE user_id = %s AND course_id = %s AND archived_at IS NULL
-            ORDER BY updated_at DESC, id DESC
-            LIMIT 1
-            """,
-            (user_id, course["id"]),
+        primary_model = session.scalar(
+            select(ChatSession)
+            .where(
+                ChatSession.user_id == user_id,
+                ChatSession.course_id == course["id"],
+                ChatSession.archived_at.is_(None),
+            )
+            .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
+            .limit(1)
         )
-        selected = cursor.fetchone()
-        primary = (
-            get_session(cursor, selected["id"], user_id)
-            if selected
-            else create_session(cursor, user_id, course["id"], f"{course['name']} 学习对话")
-        )
+        if primary_model is None:
+            primary = create_session(cursor, user_id, course["id"], f"{course['name']} 学习对话")
+        else:
+            primary = _row(primary_model)
         if primary is None:
             raise RuntimeError("primary session could not be created or loaded")
-        cursor.execute(
-            """
-            UPDATE course_agents
-            SET primary_session_id = %s, last_active_at = CURRENT_TIMESTAMP
-            WHERE id = %s AND user_id = %s
-            """,
-            (primary["id"], agent["id"], user_id),
-        )
-        agent = get_course_agent(cursor, course["id"], user_id)
-        if agent is None:
-            raise RuntimeError("course agent disappeared while assigning its primary session")
-    agent["primary_session"] = primary
-    return agent
+        agent.primary_session_id = primary["id"]
+        agent.last_active_at = datetime.now()
+        session.flush()
+    agent_row = _row(agent)
+    if agent_row is None:
+        raise RuntimeError("course agent could not be reloaded")
+    agent_row["primary_session"] = primary
+    return agent_row
 
 
 def update_conversation_summary(
@@ -105,47 +125,36 @@ def update_conversation_summary(
     summary: str,
     last_summarized_message_id: int,
 ) -> None:
-    cursor.execute(
-        """
-        UPDATE course_agents
-        SET conversation_summary = %s,
-            last_summarized_message_id = GREATEST(
-                COALESCE(last_summarized_message_id, 0), %s
-            ),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = %s AND user_id = %s
-        """,
-        (summary[:3500], last_summarized_message_id, agent_id, user_id),
+    CourseAgent = reflected_model("course_agents")
+    agent = cursor.session.scalar(
+        select(CourseAgent).where(CourseAgent.id == agent_id, CourseAgent.user_id == user_id)
     )
+    if agent is not None:
+        agent.conversation_summary = summary[:3500]
+        agent.last_summarized_message_id = max(agent.last_summarized_message_id or 0, last_summarized_message_id)
 
 
 def touch_course_agent(cursor, agent_id: int, user_id: int) -> None:
-    cursor.execute(
-        """
-        UPDATE course_agents
-        SET last_active_at = CURRENT_TIMESTAMP
-        WHERE id = %s AND user_id = %s
-        """,
-        (agent_id, user_id),
+    CourseAgent = reflected_model("course_agents")
+    agent = cursor.session.scalar(
+        select(CourseAgent).where(CourseAgent.id == agent_id, CourseAgent.user_id == user_id)
     )
+    if agent is not None:
+        agent.last_active_at = datetime.now()
 
 
 def list_course_memories(cursor, agent_id: int, user_id: int) -> list[dict]:
-    cursor.execute(
-        """
-        SELECT id, agent_id, course_id, memory_key, memory_type,
-               content_json, source_message_id, status, embedding_json,
-               embedding_model, embedding_hash, created_at, updated_at
-        FROM course_agent_memories
-        WHERE agent_id = %s AND user_id = %s AND status = 'active'
-        ORDER BY updated_at DESC, id DESC
-        """,
-        (agent_id, user_id),
+    CourseMemory = reflected_model("course_agent_memories")
+    memories = cursor.session.scalars(
+        select(CourseMemory)
+        .where(
+            CourseMemory.agent_id == agent_id,
+            CourseMemory.user_id == user_id,
+            CourseMemory.status == "active",
+        )
+        .order_by(CourseMemory.updated_at.desc(), CourseMemory.id.desc())
     )
-    rows = list(cursor.fetchall())
-    for row in rows:
-        row["content"] = _json_loads(row.pop("content_json", None), {})
-    return rows
+    return [row for memory in memories if (row := _memory_row(memory)) is not None]
 
 
 def upsert_course_memory(
@@ -161,49 +170,40 @@ def upsert_course_memory(
     embedding_model: str | None = None,
     embedding_hash: str | None = None,
 ) -> dict:
-    cursor.execute(
-        """
-        INSERT INTO course_agent_memories
-            (agent_id, user_id, course_id, memory_key, memory_type,
-             content_json, source_message_id, embedding_json, embedding_model,
-             embedding_hash)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            memory_type = VALUES(memory_type),
-            content_json = VALUES(content_json),
-            source_message_id = VALUES(source_message_id),
-            embedding_json = VALUES(embedding_json),
-            embedding_model = VALUES(embedding_model),
-            embedding_hash = VALUES(embedding_hash),
-            status = 'active',
-            updated_at = CURRENT_TIMESTAMP
-        """,
-        (
-            agent_id,
-            user_id,
-            course_id,
-            memory_key,
-            memory_type,
-            _json_dumps(content),
-            source_message_id,
-            embedding_json,
-            embedding_model,
-            embedding_hash,
-        ),
+    CourseMemory = reflected_model("course_agent_memories")
+    session = cursor.session
+    memory = session.scalar(
+        select(CourseMemory)
+        .where(
+            CourseMemory.agent_id == agent_id,
+            CourseMemory.memory_key == memory_key,
+            CourseMemory.user_id == user_id,
+        )
+        .with_for_update()
     )
-    cursor.execute(
-        """
-        SELECT id, agent_id, course_id, memory_key, memory_type,
-               content_json, source_message_id, status, embedding_json,
-               embedding_model, embedding_hash, created_at, updated_at
-        FROM course_agent_memories
-        WHERE agent_id = %s AND memory_key = %s AND user_id = %s
-        """,
-        (agent_id, memory_key, user_id),
-    )
-    row = cursor.fetchone()
-    row["content"] = _json_loads(row.pop("content_json", None), {})
-    return row
+    values = {
+        "memory_type": memory_type,
+        "content_json": _json_dumps(content),
+        "source_message_id": source_message_id,
+        "embedding_json": embedding_json,
+        "embedding_model": embedding_model,
+        "embedding_hash": embedding_hash,
+        "status": "active",
+    }
+    if memory is None:
+        memory = CourseMemory(
+            agent_id=agent_id,
+            user_id=user_id,
+            course_id=course_id,
+            memory_key=memory_key,
+            **values,
+        )
+        session.add(memory)
+    else:
+        for field, value in values.items():
+            setattr(memory, field, value)
+    session.flush()
+    return _memory_row(memory) or {}
 
 
 def create_agent_run(
@@ -220,27 +220,23 @@ def create_agent_run(
     input_summary: str,
     started_at: datetime,
 ) -> dict:
-    cursor.execute(
-        """
-        INSERT INTO agent_runs
-            (request_id, agent_id, user_id, course_id, session_id,
-             user_message_id, intent, risk_level, status, input_summary, started_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running', %s, %s)
-        """,
-        (
-            request_id,
-            agent_id,
-            user_id,
-            course_id,
-            session_id,
-            user_message_id,
-            intent,
-            risk_level,
-            input_summary[:500],
-            started_at,
-        ),
+    AgentRun = reflected_model("agent_runs")
+    run = AgentRun(
+        request_id=request_id,
+        agent_id=agent_id,
+        user_id=user_id,
+        course_id=course_id,
+        session_id=session_id,
+        user_message_id=user_message_id,
+        intent=intent,
+        risk_level=risk_level,
+        status="running",
+        input_summary=input_summary[:500],
+        started_at=started_at,
     )
-    return {"id": cursor.lastrowid, "request_id": request_id, "status": "running"}
+    cursor.session.add(run)
+    cursor.session.flush()
+    return {"id": run.id, "request_id": request_id, "status": "running"}
 
 
 def finish_agent_run(
@@ -254,26 +250,14 @@ def finish_agent_run(
     error_message: str | None = None,
     completed_at: datetime,
 ) -> None:
-    cursor.execute(
-        """
-        UPDATE agent_runs
-        SET status = %s,
-            assistant_message_id = %s,
-            output_summary = %s,
-            error_message = %s,
-            completed_at = %s
-        WHERE id = %s AND user_id = %s
-        """,
-        (
-            status,
-            assistant_message_id,
-            output_summary[:500] if output_summary else None,
-            error_message[:2000] if error_message else None,
-            completed_at,
-            run_id,
-            user_id,
-        ),
-    )
+    AgentRun = reflected_model("agent_runs")
+    run = cursor.session.scalar(select(AgentRun).where(AgentRun.id == run_id, AgentRun.user_id == user_id))
+    if run is not None:
+        run.status = status
+        run.assistant_message_id = assistant_message_id
+        run.output_summary = output_summary[:500] if output_summary else None
+        run.error_message = error_message[:2000] if error_message else None
+        run.completed_at = completed_at
 
 
 def pause_agent_run(
@@ -284,32 +268,19 @@ def pause_agent_run(
     assistant_message_id: int,
     output_summary: str,
 ) -> None:
-    cursor.execute(
-        """
-        UPDATE agent_runs
-        SET status = 'waiting_confirmation',
-            assistant_message_id = %s,
-            output_summary = %s,
-            completed_at = NULL
-        WHERE id = %s AND user_id = %s
-        """,
-        (assistant_message_id, output_summary[:500], run_id, user_id),
-    )
+    AgentRun = reflected_model("agent_runs")
+    run = cursor.session.scalar(select(AgentRun).where(AgentRun.id == run_id, AgentRun.user_id == user_id))
+    if run is not None:
+        run.status = "waiting_confirmation"
+        run.assistant_message_id = assistant_message_id
+        run.output_summary = output_summary[:500]
+        run.completed_at = None
 
 
 def get_agent_run(cursor, run_id: int, user_id: int) -> dict | None:
-    cursor.execute(
-        """
-        SELECT id, request_id, agent_id, user_id, course_id, session_id,
-               user_message_id, assistant_message_id, intent, risk_level,
-               status, input_summary, output_summary, error_message,
-               started_at, completed_at, created_at
-        FROM agent_runs
-        WHERE id = %s AND user_id = %s
-        """,
-        (run_id, user_id),
-    )
-    return cursor.fetchone()
+    AgentRun = reflected_model("agent_runs")
+    run = cursor.session.scalar(select(AgentRun).where(AgentRun.id == run_id, AgentRun.user_id == user_id))
+    return _row(run)
 
 
 def create_tool_call(
@@ -324,25 +295,21 @@ def create_tool_call(
     idempotency_key: str,
     started_at: datetime,
 ) -> int:
-    cursor.execute(
-        """
-        INSERT INTO agent_tool_calls
-            (run_id, user_id, course_id, tool_name, risk_level,
-             arguments_json, status, idempotency_key, started_at)
-        VALUES (%s, %s, %s, %s, %s, %s, 'running', %s, %s)
-        """,
-        (
-            run_id,
-            user_id,
-            course_id,
-            tool_name,
-            risk_level,
-            _json_dumps(arguments),
-            idempotency_key,
-            started_at,
-        ),
+    ToolCall = reflected_model("agent_tool_calls")
+    tool_call = ToolCall(
+        run_id=run_id,
+        user_id=user_id,
+        course_id=course_id,
+        tool_name=tool_name,
+        risk_level=risk_level,
+        arguments_json=_json_dumps(arguments),
+        status="running",
+        idempotency_key=idempotency_key,
+        started_at=started_at,
     )
-    return cursor.lastrowid
+    cursor.session.add(tool_call)
+    cursor.session.flush()
+    return tool_call.id
 
 
 def finish_tool_call(
@@ -355,115 +322,123 @@ def finish_tool_call(
     error_message: str | None = None,
     completed_at: datetime,
 ) -> None:
-    cursor.execute(
-        """
-        UPDATE agent_tool_calls
-        SET status = %s, result_json = %s, error_message = %s, completed_at = %s
-        WHERE id = %s AND user_id = %s
-        """,
-        (
-            status,
-            _json_dumps(result) if result is not None else None,
-            error_message[:2000] if error_message else None,
-            completed_at,
-            tool_call_id,
-            user_id,
-        ),
+    ToolCall = reflected_model("agent_tool_calls")
+    tool_call = cursor.session.scalar(
+        select(ToolCall).where(ToolCall.id == tool_call_id, ToolCall.user_id == user_id)
     )
+    if tool_call is not None:
+        tool_call.status = status
+        tool_call.result_json = _json_dumps(result) if result is not None else None
+        tool_call.error_message = error_message[:2000] if error_message else None
+        tool_call.completed_at = completed_at
 
 
 def create_session(cursor, user_id: int, course_id: int | None, title: str) -> dict:
-    cursor.execute(
-        """
-        INSERT INTO chat_sessions (user_id, course_id, title)
-        VALUES (%s, %s, %s)
-        """,
-        (user_id, course_id, title),
-    )
-    session = get_session(cursor, cursor.lastrowid, user_id)
-    if session is None:
-        raise RuntimeError("session insert succeeded but the row could not be reloaded")
-    return session
+    ChatSession = reflected_model("chat_sessions")
+    session_model = ChatSession(user_id=user_id, course_id=course_id, title=title)
+    cursor.session.add(session_model)
+    cursor.session.flush()
+    return _row(session_model) or {}
 
 
 def get_session(cursor, session_id: int, user_id: int) -> dict | None:
-    cursor.execute(
-        f"SELECT {SESSION_COLUMNS} FROM chat_sessions WHERE id = %s AND user_id = %s",
-        (session_id, user_id),
+    ChatSession = reflected_model("chat_sessions")
+    session_model = cursor.session.scalar(
+        select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
     )
-    return cursor.fetchone()
+    return _row(session_model)
 
 
 def list_sessions(cursor, user_id: int, page: int, size: int) -> dict:
-    offset = (page - 1) * size
-    cursor.execute(
-        "SELECT COUNT(*) AS total FROM chat_sessions WHERE user_id = %s AND archived_at IS NULL",
-        (user_id,),
-    )
-    total = cursor.fetchone()["total"]
-    cursor.execute(
-        """
-        SELECT session.id, session.user_id, session.course_id, session.title,
-               session.archived_at, session.created_at, session.updated_at,
-               course.name AS course_name,
-               latest.content AS last_message
-        FROM chat_sessions session
-        LEFT JOIN courses course ON course.id = session.course_id
-        LEFT JOIN agent_chat_messages latest ON latest.id = (
-            SELECT MAX(message.id)
-            FROM agent_chat_messages message
-            WHERE message.session_id = session.id
+    ChatSession = reflected_model("chat_sessions")
+    Course = reflected_model("courses")
+    Message = reflected_model("agent_chat_messages")
+    session = cursor.session
+    total = session.scalar(
+        select(func.count()).select_from(ChatSession).where(
+            ChatSession.user_id == user_id,
+            ChatSession.archived_at.is_(None),
         )
-        WHERE session.user_id = %s AND session.archived_at IS NULL
-        ORDER BY session.updated_at DESC, session.id DESC
-        LIMIT %s OFFSET %s
-        """,
-        (user_id, size, offset),
-    )
-    return {"items": list(cursor.fetchall()), "total": total, "page": page, "size": size}
+    ) or 0
+    session_models = session.scalars(
+        select(ChatSession)
+        .where(ChatSession.user_id == user_id, ChatSession.archived_at.is_(None))
+        .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
+        .limit(size)
+        .offset((page - 1) * size)
+    ).all()
+    course_ids = {item.course_id for item in session_models if item.course_id is not None}
+    course_names = {
+        course.id: course.name
+        for course in session.scalars(select(Course).where(Course.id.in_(course_ids)))
+    } if course_ids else {}
+    session_ids = [item.id for item in session_models]
+    latest_ids = session.scalars(
+        select(func.max(Message.id)).where(Message.session_id.in_(session_ids)).group_by(Message.session_id)
+    ).all() if session_ids else []
+    latest_messages = {
+        message.session_id: message.content
+        for message in session.scalars(select(Message).where(Message.id.in_(latest_ids)))
+    } if latest_ids else {}
+    items = []
+    for session_model in session_models:
+        row = _row(session_model) or {}
+        row["course_name"] = course_names.get(session_model.course_id)
+        row["last_message"] = latest_messages.get(session_model.id)
+        items.append(row)
+    return {"items": items, "total": total, "page": page, "size": size}
 
 
 def update_session_course(cursor, session_id: int, user_id: int, course_id: int | None) -> None:
-    cursor.execute(
-        "UPDATE chat_sessions SET course_id = %s WHERE id = %s AND user_id = %s",
-        (course_id, session_id, user_id),
+    ChatSession = reflected_model("chat_sessions")
+    session_model = cursor.session.scalar(
+        select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
     )
+    if session_model is not None:
+        session_model.course_id = course_id
 
 
 def update_session_title_if_default(cursor, session_id: int, user_id: int, title: str) -> None:
-    cursor.execute(
-        """
-        UPDATE chat_sessions
-        SET title = %s
-        WHERE id = %s AND user_id = %s AND title = '新对话'
-        """,
-        (title[:255], session_id, user_id),
+    ChatSession = reflected_model("chat_sessions")
+    session_model = cursor.session.scalar(
+        select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
     )
+    if session_model is not None and session_model.title == "新对话":
+        session_model.title = title[:255]
 
 
 def update_session_title(cursor, session_id: int, user_id: int, title: str) -> None:
-    cursor.execute(
-        "UPDATE chat_sessions SET title = %s WHERE id = %s AND user_id = %s",
-        (title[:255], session_id, user_id),
+    ChatSession = reflected_model("chat_sessions")
+    session_model = cursor.session.scalar(
+        select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
     )
+    if session_model is not None:
+        session_model.title = title[:255]
 
 
 def touch_session(cursor, session_id: int, user_id: int) -> None:
-    cursor.execute(
-        "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s",
-        (session_id, user_id),
+    ChatSession = reflected_model("chat_sessions")
+    session_model = cursor.session.scalar(
+        select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
     )
+    if session_model is not None:
+        session_model.updated_at = datetime.now()
 
 
 def archive_session(cursor, session_id: int, user_id: int) -> bool:
-    cursor.execute(
-        """
-        UPDATE chat_sessions SET archived_at = CURRENT_TIMESTAMP
-        WHERE id = %s AND user_id = %s AND archived_at IS NULL
-        """,
-        (session_id, user_id),
+    ChatSession = reflected_model("chat_sessions")
+    session_model = cursor.session.scalar(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user_id,
+            ChatSession.archived_at.is_(None),
+        )
     )
-    return cursor.rowcount > 0
+    if session_model is None:
+        return False
+    session_model.archived_at = datetime.now()
+    cursor.session.flush()
+    return True
 
 
 def add_message(
@@ -477,47 +452,27 @@ def add_message(
     sources: list[dict] | None = None,
     client_time_hint: str | None = None,
 ) -> dict:
-    cursor.execute(
-        """
-        INSERT INTO agent_chat_messages
-            (user_id, session_id, course_id, role, content, tool_calls,
-             sources_json, client_time_hint)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            user_id,
-            session_id,
-            course_id,
-            role,
-            content,
-            _json_dumps(tool_calls) if tool_calls is not None else None,
-            _json_dumps(sources) if sources is not None else None,
-            client_time_hint,
-        ),
+    Message = reflected_model("agent_chat_messages")
+    message = Message(
+        user_id=user_id,
+        session_id=session_id,
+        course_id=course_id,
+        role=role,
+        content=content,
+        tool_calls=_json_dumps(tool_calls) if tool_calls is not None else None,
+        sources_json=_json_dumps(sources) if sources is not None else None,
+        client_time_hint=client_time_hint,
     )
-    message_id = cursor.lastrowid
+    cursor.session.add(message)
+    cursor.session.flush()
     touch_session(cursor, session_id, user_id)
-    message = get_message(cursor, message_id, user_id)
-    if message is None:
-        raise RuntimeError("message insert succeeded but the row could not be reloaded")
-    return message
+    return _message_row(message) or {}
 
 
 def get_message(cursor, message_id: int, user_id: int) -> dict | None:
-    cursor.execute(
-        """
-        SELECT id, user_id, session_id, course_id, role, content,
-               tool_calls, sources_json, client_time_hint, created_at
-        FROM agent_chat_messages
-        WHERE id = %s AND user_id = %s
-        """,
-        (message_id, user_id),
-    )
-    row = cursor.fetchone()
-    if row:
-        row["tool_calls"] = _json_loads(row.get("tool_calls"), None)
-        row["sources"] = _json_loads(row.pop("sources_json", None), [])
-    return row
+    Message = reflected_model("agent_chat_messages")
+    message = cursor.session.scalar(select(Message).where(Message.id == message_id, Message.user_id == user_id))
+    return _message_row(message)
 
 
 def list_messages(
@@ -527,29 +482,13 @@ def list_messages(
     before_id: int | None,
     size: int,
 ) -> list[dict]:
-    params: list[Any] = [user_id, session_id]
-    before_clause = ""
+    Message = reflected_model("agent_chat_messages")
+    statement = select(Message).where(Message.user_id == user_id, Message.session_id == session_id)
     if before_id is not None:
-        before_clause = "AND id < %s"
-        params.append(before_id)
-    params.append(size)
-    cursor.execute(
-        f"""
-        SELECT id, user_id, session_id, course_id, role, content,
-               tool_calls, sources_json, client_time_hint, created_at
-        FROM agent_chat_messages
-        WHERE user_id = %s AND session_id = %s {before_clause}
-        ORDER BY id DESC
-        LIMIT %s
-        """,
-        params,
-    )
-    rows = list(cursor.fetchall())
-    rows.reverse()
-    for row in rows:
-        row["tool_calls"] = _json_loads(row.get("tool_calls"), None)
-        row["sources"] = _json_loads(row.pop("sources_json", None), [])
-    return rows
+        statement = statement.where(Message.id < before_id)
+    messages = cursor.session.scalars(statement.order_by(Message.id.desc()).limit(size)).all()
+    messages.reverse()
+    return [row for message in messages if (row := _message_row(message)) is not None]
 
 
 def list_messages_after(
@@ -559,42 +498,34 @@ def list_messages_after(
     after_id: int | None,
     limit: int = 200,
 ) -> list[dict]:
-    cursor.execute(
-        """
-        SELECT id, user_id, session_id, course_id, role, content,
-               tool_calls, sources_json, client_time_hint, created_at
-        FROM agent_chat_messages
-        WHERE user_id = %s AND session_id = %s AND id > %s
-        ORDER BY id
-        LIMIT %s
-        """,
-        (user_id, session_id, int(after_id or 0), max(1, min(int(limit), 500))),
+    Message = reflected_model("agent_chat_messages")
+    messages = cursor.session.scalars(
+        select(Message)
+        .where(
+            Message.user_id == user_id,
+            Message.session_id == session_id,
+            Message.id > int(after_id or 0),
+        )
+        .order_by(Message.id)
+        .limit(max(1, min(int(limit), 500)))
     )
-    rows = list(cursor.fetchall())
-    for row in rows:
-        row["tool_calls"] = _json_loads(row.get("tool_calls"), None)
-        row["sources"] = _json_loads(row.pop("sources_json", None), [])
-    return rows
+    return [row for message in messages if (row := _message_row(message)) is not None]
 
 
 def get_action_statuses(cursor, user_id: int, action_ids: list[int]) -> dict[int, str]:
     if not action_ids:
         return {}
-    placeholders = ",".join(["%s"] * len(action_ids))
-    cursor.execute(
-        f"""
-        SELECT id, status FROM agent_action_requests
-        WHERE user_id = %s AND id IN ({placeholders})
-        """,
-        (user_id, *action_ids),
+    ActionRequest = reflected_model("agent_action_requests")
+    actions = cursor.session.scalars(
+        select(ActionRequest).where(ActionRequest.user_id == user_id, ActionRequest.id.in_(action_ids))
     )
-    return {row["id"]: row["status"] for row in cursor.fetchall()}
+    return {action.id: action.status for action in actions}
 
 
 def load_profile(cursor, user_id: int) -> dict | None:
-    cursor.execute("SELECT profile_json FROM student_profiles WHERE user_id = %s", (user_id,))
-    row = cursor.fetchone()
-    return _json_loads(row["profile_json"], None) if row else None
+    StudentProfile = reflected_model("student_profiles")
+    profile = cursor.session.scalar(select(StudentProfile).where(StudentProfile.user_id == user_id))
+    return _json_loads(profile.profile_json, None) if profile is not None else None
 
 
 def create_action_request(
@@ -609,30 +540,22 @@ def create_action_request(
     server_time_utc: datetime,
     checkpoint: dict | None = None,
 ) -> dict:
-    cursor.execute(
-        """
-        INSERT INTO agent_action_requests
-            (user_id, session_id, course_id, tool_name, risk_level,
-             payload_json, idempotency_key, expires_at, server_time_utc,
-             checkpoint_json)
-        VALUES (%s, %s, %s, %s, 'destructive', %s, %s, %s, %s, %s)
-        """,
-        (
-            user_id,
-            session_id,
-            course_id,
-            tool_name,
-            _json_dumps(payload),
-            idempotency_key,
-            expires_at,
-            server_time_utc,
-            _json_dumps(checkpoint) if checkpoint is not None else None,
-        ),
+    ActionRequest = reflected_model("agent_action_requests")
+    action = ActionRequest(
+        user_id=user_id,
+        session_id=session_id,
+        course_id=course_id,
+        tool_name=tool_name,
+        risk_level="destructive",
+        payload_json=_json_dumps(payload),
+        idempotency_key=idempotency_key,
+        expires_at=expires_at,
+        server_time_utc=server_time_utc,
+        checkpoint_json=_json_dumps(checkpoint) if checkpoint is not None else None,
     )
-    action = get_action_request(cursor, cursor.lastrowid, user_id)
-    if action is None:
-        raise RuntimeError("action insert succeeded but the row could not be reloaded")
-    return action
+    cursor.session.add(action)
+    cursor.session.flush()
+    return _action_row(action) or {}
 
 
 def get_action_request(
@@ -641,24 +564,11 @@ def get_action_request(
     user_id: int,
     for_update: bool = False,
 ) -> dict | None:
-    lock = " FOR UPDATE" if for_update else ""
-    cursor.execute(
-        f"""
-        SELECT id, user_id, session_id, course_id, tool_name, risk_level,
-               payload_json, idempotency_key, status, result_json,
-               checkpoint_json, expires_at, confirmed_at, executed_at,
-               server_time_utc, created_at, updated_at
-        FROM agent_action_requests
-        WHERE id = %s AND user_id = %s{lock}
-        """,
-        (action_id, user_id),
-    )
-    row = cursor.fetchone()
-    if row:
-        row["payload"] = _json_loads(row.pop("payload_json"), {})
-        row["result"] = _json_loads(row.pop("result_json"), None)
-        row["checkpoint"] = _json_loads(row.pop("checkpoint_json"), None)
-    return row
+    ActionRequest = reflected_model("agent_action_requests")
+    statement = select(ActionRequest).where(ActionRequest.id == action_id, ActionRequest.user_id == user_id)
+    if for_update:
+        statement = statement.with_for_update()
+    return _action_row(cursor.session.scalar(statement))
 
 
 def set_action_status(
@@ -667,62 +577,47 @@ def set_action_status(
     status: str,
     result: dict | None = None,
 ) -> None:
-    cursor.execute(
-        """
-        UPDATE agent_action_requests
-        SET status = %s,
-            result_json = %s,
-            confirmed_at = CASE WHEN %s = 'executed' THEN CURRENT_TIMESTAMP ELSE confirmed_at END,
-            executed_at = CASE WHEN %s = 'executed' THEN CURRENT_TIMESTAMP ELSE executed_at END
-        WHERE id = %s
-        """,
-        (
-            status,
-            _json_dumps(result) if result is not None else None,
-            status,
-            status,
-            action_id,
-        ),
-    )
+    ActionRequest = reflected_model("agent_action_requests")
+    action = cursor.session.get(ActionRequest, action_id)
+    if action is not None:
+        action.status = status
+        action.result_json = _json_dumps(result) if result is not None else None
+        if status == "executed":
+            now = datetime.now()
+            action.confirmed_at = now
+            action.executed_at = now
 
 
 def claim_action_resume(cursor, action_id: int) -> None:
-    cursor.execute(
-        """
-        UPDATE agent_action_requests
-        SET status = 'resuming', confirmed_at = CURRENT_TIMESTAMP
-        WHERE id = %s AND status = 'pending'
-        """,
-        (action_id,),
-    )
+    ActionRequest = reflected_model("agent_action_requests")
+    action = cursor.session.get(ActionRequest, action_id)
+    if action is not None and action.status == "pending":
+        action.status = "resuming"
+        action.confirmed_at = datetime.now()
 
 
 def reset_action_pending(cursor, action_id: int) -> None:
-    cursor.execute(
-        """
-        UPDATE agent_action_requests
-        SET status = 'pending', confirmed_at = NULL
-        WHERE id = %s AND status = 'resuming'
-        """,
-        (action_id,),
-    )
+    ActionRequest = reflected_model("agent_action_requests")
+    action = cursor.session.get(ActionRequest, action_id)
+    if action is not None and action.status == "resuming":
+        action.status = "pending"
+        action.confirmed_at = None
 
 
 def get_task(cursor, task_id: int, user_id: int) -> dict | None:
-    cursor.execute(
-        """
-        SELECT id, user_id, course_id, title, description, status, priority,
-               created_at, updated_at
-        FROM tasks WHERE id = %s AND user_id = %s
-        """,
-        (task_id, user_id),
-    )
-    return cursor.fetchone()
+    Task = reflected_model("tasks")
+    task = cursor.session.scalar(select(Task).where(Task.id == task_id, Task.user_id == user_id))
+    return _row(task)
 
 
 def delete_task(cursor, task_id: int, user_id: int) -> bool:
-    cursor.execute("DELETE FROM tasks WHERE id = %s AND user_id = %s", (task_id, user_id))
-    return cursor.rowcount > 0
+    Task = reflected_model("tasks")
+    task = cursor.session.scalar(select(Task).where(Task.id == task_id, Task.user_id == user_id))
+    if task is None:
+        return False
+    cursor.session.delete(task)
+    cursor.session.flush()
+    return True
 
 
 def add_audit_log(
@@ -733,23 +628,27 @@ def add_audit_log(
     target_id: int | None,
     detail: dict,
 ) -> None:
-    cursor.execute(
-        """
-        INSERT INTO operation_logs (user_id, action, target_type, target_id, detail)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (user_id, action, target_type, target_id, _json_dumps(detail)),
+    OperationLog = reflected_model("operation_logs")
+    cursor.session.add(
+        OperationLog(
+            user_id=user_id,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            detail=_json_dumps(detail),
+        )
     )
 
 
 def get_latest_diagnostic_id(cursor, user_id: int, course_id: int) -> int | None:
-    cursor.execute(
-        """
-        SELECT id FROM quiz_sets
-        WHERE user_id = %s AND course_id = %s AND purpose = 'diagnostic'
-        ORDER BY id DESC LIMIT 1
-        """,
-        (user_id, course_id),
+    QuizSet = reflected_model("quiz_sets")
+    return cursor.session.scalar(
+        select(QuizSet.id)
+        .where(
+            QuizSet.user_id == user_id,
+            QuizSet.course_id == course_id,
+            QuizSet.purpose == "diagnostic",
+        )
+        .order_by(QuizSet.id.desc())
+        .limit(1)
     )
-    row = cursor.fetchone()
-    return row["id"] if row else None

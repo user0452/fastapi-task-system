@@ -1,9 +1,11 @@
 import json
 
 from fastapi import Depends, Query
+from sqlalchemy import func, select
 
 from app.core.database import get_cursor
 from app.core.responses import V1APIRouter, success
+from app.models import model_as_dict, reflected_model
 from app.modules.auth.dependencies import get_current_user
 
 router = V1APIRouter(tags=["account"])
@@ -11,16 +13,12 @@ router = V1APIRouter(tags=["account"])
 
 @router.get("/account/profile")
 def get_profile(user=Depends(get_current_user)):
+    StudentProfile = reflected_model("student_profiles")
     with get_cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT id, user_id, profile_json, created_at, updated_at
-            FROM student_profiles
-            WHERE user_id = %s
-            """,
-            (user["id"],),
+        profile_model = cursor.session.scalar(
+            select(StudentProfile).where(StudentProfile.user_id == user["id"])
         )
-        row = cursor.fetchone()
+        row = model_as_dict(profile_model) if profile_model is not None else None
     if row is None:
         return success(data=None, message="当前用户还没有学习画像")
 
@@ -45,23 +43,23 @@ def list_operation_logs(
     user=Depends(get_current_user),
 ):
     offset = (page - 1) * size
+    OperationLog = reflected_model("operation_logs")
     with get_cursor() as cursor:
-        cursor.execute(
-            "SELECT COUNT(*) AS total FROM operation_logs WHERE user_id = %s",
-            (user["id"],),
+        total = int(
+            cursor.session.scalar(
+                select(func.count()).select_from(OperationLog).where(OperationLog.user_id == user["id"])
+            ) or 0
         )
-        total = int(cursor.fetchone()["total"])
-        cursor.execute(
-            """
-            SELECT id, action, target_type, target_id, detail, created_at
-            FROM operation_logs
-            WHERE user_id = %s
-            ORDER BY id DESC
-            LIMIT %s OFFSET %s
-            """,
-            (user["id"], size, offset),
-        )
-        items = cursor.fetchall()
+        items = [
+            model_as_dict(item)
+            for item in cursor.session.scalars(
+                select(OperationLog)
+                .where(OperationLog.user_id == user["id"])
+                .order_by(OperationLog.id.desc())
+                .limit(size)
+                .offset(offset)
+            )
+        ]
     return success(data={"items": items, "total": total, "page": page, "size": size})
 
 

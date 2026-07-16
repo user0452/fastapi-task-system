@@ -20,6 +20,10 @@ const generating = ref(false)
 const submitting = ref(false)
 const submission = ref(null)
 
+function openTodayLearning() {
+  router.push({ path: `/learn/${props.courseId}`, query: { panel: 'today' } })
+}
+
 const answered = computed(() => (diagnostic.value?.questions || []).filter(question =>
   String(answers.value[question.id] || '').trim()
 ).length)
@@ -83,7 +87,7 @@ watch(() => props.courseId, load, { immediate: true })
         <h3>诊断完成，计划已建立</h3>
         <p>已评估 {{ submission.mastery_changes?.length || 0 }} 个知识点，并生成 {{ submission.plan?.days || 0 }} 天学习计划。</p>
       </div>
-      <button type="button" @click="router.push('/today')">进入今日学习</button>
+      <button type="button" @click="openTodayLearning">进入今日学习</button>
     </section>
 
     <section v-else-if="diagnostic?.submitted" class="diagnostic-complete">
@@ -92,7 +96,7 @@ watch(() => props.courseId, load, { immediate: true })
         <h3>本课程已完成诊断</h3>
         <p>掌握度和每日计划已经建立，无需重复作答。</p>
       </div>
-      <button type="button" @click="router.push('/today')">进入今日学习</button>
+      <button type="button" @click="openTodayLearning">进入今日学习</button>
     </section>
 
     <section v-else-if="!diagnostic" class="diagnostic-empty">

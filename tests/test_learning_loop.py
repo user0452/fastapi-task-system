@@ -245,6 +245,37 @@ def test_completed_session_restores_as_today_and_cannot_be_submitted_twice(learn
     assert error.value.error_code == "SESSION_ALREADY_SUBMITTED"
 
 
+def test_session_without_practice_can_be_completed(learning_course):
+    user, _, course, points, _ = learning_course
+    with get_cursor() as cursor:
+        session_id = repository.create_session(
+            cursor,
+            user["id"],
+            course["id"],
+            None,
+            date.today(),
+            course["daily_minutes"],
+        )
+        repository.add_session_item(
+            cursor,
+            session_id,
+            points[0]["id"],
+            "explanation",
+            "只读学习内容",
+            {},
+            0,
+            "test:completion-only",
+        )
+
+    result = submit_learning_session(user["id"], session_id, [], actual_minutes=12)
+
+    assert result == {"evaluation": None, "mastery_changes": [], "adaptations": []}
+    with get_cursor() as cursor:
+        completed = repository.get_session(cursor, session_id, user["id"])
+    assert completed["status"] == "completed"
+    assert completed["actual_minutes"] == 12
+
+
 def test_learning_loop_is_isolated_between_users(learning_course):
     user, other_user, course, _, diagnostic = learning_course
 

@@ -3,6 +3,7 @@ import logging
 from typing import Any
 
 from app.core.database import get_cursor
+from app.models import reflected_model
 
 logger = logging.getLogger(__name__)
 
@@ -15,18 +16,15 @@ def _write(
     target_id: int | None,
     detail: dict[str, Any] | None,
 ) -> None:
-    cursor.execute(
-        """
-        INSERT INTO operation_logs (user_id, action, target_type, target_id, detail)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (
-            user_id,
-            action[:100],
-            target_type[:50] if target_type else None,
-            target_id,
-            json.dumps(detail or {}, ensure_ascii=False, default=str),
-        ),
+    OperationLog = reflected_model("operation_logs")
+    cursor.session.add(
+        OperationLog(
+            user_id=user_id,
+            action=action[:100],
+            target_type=target_type[:50] if target_type else None,
+            target_id=target_id,
+            detail=json.dumps(detail or {}, ensure_ascii=False, default=str),
+        )
     )
 
 

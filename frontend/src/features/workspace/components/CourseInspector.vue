@@ -2,8 +2,10 @@
 import { computed } from 'vue'
 import {
   BookOpen,
+  CalendarCheck2,
   CalendarRange,
   ChartNoAxesColumn,
+  ClipboardCheck,
   CircleX,
   LayoutDashboard,
   Network,
@@ -15,6 +17,8 @@ import PlanPanel from '../panels/PlanPanel.vue'
 import PracticePanel from '../panels/PracticePanel.vue'
 import WrongAnswersPanel from '../panels/WrongAnswersPanel.vue'
 import MaterialsResourcesPanel from '../panels/MaterialsResourcesPanel.vue'
+import DiagnosticWorkspace from '../../courses/components/DiagnosticWorkspace.vue'
+import TodayPage from '../../today/TodayPage.vue'
 
 
 const props = defineProps({
@@ -26,6 +30,8 @@ const emit = defineEmits(['close', 'change-panel', 'prompt', 'data-changed'])
 
 const tabs = [
   { id: 'overview', label: '概览', icon: LayoutDashboard, component: OverviewPanel },
+  { id: 'today', label: '今日', icon: CalendarCheck2, component: TodayPage },
+  { id: 'diagnostic', label: '诊断', icon: ClipboardCheck, component: DiagnosticWorkspace },
   { id: 'knowledge', label: '知识点', icon: Network, component: KnowledgePanel },
   { id: 'plan', label: '计划', icon: CalendarRange, component: PlanPanel },
   { id: 'practice', label: '练习', icon: ChartNoAxesColumn, component: PracticePanel },
@@ -68,6 +74,7 @@ const current = computed(() => tabs.find(tab => tab.id === props.activePanel) ||
           :course-id="courseId"
           :refresh-key="refreshKey"
           @change-panel="panel => emit('change-panel', panel)"
+          @completed="emit('data-changed')"
           @prompt="prompt => emit('prompt', prompt)"
           @data-changed="emit('data-changed')"
         />
@@ -84,7 +91,7 @@ const current = computed(() => tabs.find(tab => tab.id === props.activePanel) ||
 .inspector-header strong { color: #34413a; font-size: 13px; }
 .inspector-header button { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 6px; color: #68736d; }
 .inspector-header button:hover { color: #176b58; background: #edf1ee; }
-.inspector-tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); padding: 4px 6px 0; border-bottom: 1px solid #dfe4e1; background: #fff; }
+.inspector-tabs { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); padding: 4px 6px 0; border-bottom: 1px solid #dfe4e1; background: #fff; }
 .inspector-tabs button { min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: #7a847f; border-bottom: 2px solid transparent; font-size: 9px; }
 .inspector-tabs button:hover { color: #3f6f60; }
 .inspector-tabs button.active { color: #176b58; border-bottom-color: #176b58; }

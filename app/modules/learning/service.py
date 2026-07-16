@@ -581,7 +581,28 @@ def submit_learning_session(
         ]
         questions = repository.get_questions_by_ids(cursor, question_ids, user_id)
         if not questions:
-            raise AppError("当前学习单元没有可提交的练习", 409, "SESSION_HAS_NO_PRACTICE")
+            repository.update_session_status(
+                cursor,
+                session_id,
+                user_id,
+                "completed",
+                actual_minutes,
+            )
+            record_audit(
+                user_id,
+                "COURSE_SESSION_SUBMITTED",
+                "study_session",
+                session_id,
+                {
+                    "course_id": session["course_id"],
+                    "score": None,
+                    "mastery_change_count": 0,
+                    "adaptation_count": 0,
+                    "completion_only": True,
+                },
+                cursor=cursor,
+            )
+            return {"evaluation": None, "mastery_changes": [], "adaptations": []}
         allowed_ids = {question["id"] for question in questions}
         answers = [item for item in answers if item["question_id"] in allowed_ids]
         if not answers:

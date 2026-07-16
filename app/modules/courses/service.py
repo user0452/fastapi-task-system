@@ -1,5 +1,8 @@
+from sqlalchemy import update
+
 from app.core.database import get_cursor
 from app.core.errors import AppError
+from app.models import reflected_model
 from app.modules.agent import repository as agent_repository
 from app.modules.audit.service import record_audit
 from app.modules.courses import repository
@@ -102,9 +105,11 @@ def archive_user_course(user_id: int, course_id: int) -> None:
         if course is None:
             raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
         repository.archive_course(cursor, course_id, user_id)
-        cursor.execute(
-            "UPDATE course_agents SET status = 'archived' WHERE course_id = %s AND user_id = %s",
-            (course_id, user_id),
+        CourseAgent = reflected_model("course_agents")
+        cursor.session.execute(
+            update(CourseAgent)
+            .where(CourseAgent.course_id == course_id, CourseAgent.user_id == user_id)
+            .values(status="archived")
         )
         record_audit(user_id, "COURSE_ARCHIVED", "course", course_id, cursor=cursor)
         if course.get("is_current"):
