@@ -1,13 +1,8 @@
-"""Alembic environment for future schema changes.
+"""Alembic environment for the complete application schema history."""
 
-Existing installations are bootstrapped by ``app.core.migrations``.  After
-that baseline has run, stamp the database to this revision and use Alembic for
-all new schema changes.
-"""
-
-from alembic import context
 from sqlalchemy import create_engine, pool
 
+from alembic import context
 from app.core.orm import database_url
 from app.models import Base
 
@@ -27,7 +22,11 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = create_engine(database_url(), poolclass=pool.NullPool)
+    connectable = create_engine(
+        database_url(),
+        connect_args={"init_command": "SET time_zone = '+00:00'"},
+        poolclass=pool.NullPool,
+    )
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():

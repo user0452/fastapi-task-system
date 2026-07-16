@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "codex/**"]
+    branches: [main, "codex/**", "feature/**"]
   pull_request:
 
 jobs:
@@ -13,7 +13,7 @@ jobs:
         image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: task_db2
+          MYSQL_DATABASE: a3_ci_test
         ports:
           - 3306:3306
         options: >-
@@ -28,7 +28,9 @@ jobs:
       DATABASE_PORT: 3306
       DATABASE_USER: root
       DATABASE_PASSWORD: root
-      DATABASE_NAME: task_db2
+      DATABASE_NAME: a3_ci_test
+      A3_TEST_DATABASE_NAME: a3_ci_test
+      A3_E2E_DATABASE_NAME: a3_e2e_test
       SECRET_KEY: ci-only-secret-key-with-at-least-32-characters
       A3_MOCK_LLM: "true"
       A3_MOCK_EMBEDDING: "true"
@@ -50,7 +52,7 @@ jobs:
       - name: Install backend dependencies
         run: uv sync --locked --dev
       - name: Apply database migrations
-        run: uv run python -m app.core.migrations
+        run: uv run alembic upgrade head
       - name: Backend lint and type check
         run: |
           uv run ruff check app tests
@@ -78,3 +80,44 @@ jobs:
           npm run lint
           npm run test:run
           npm run build
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Browser E2E
+        run: |
+          mkdir -p var
+          DATABASE_NAME="$A3_E2E_DATABASE_NAME" \
+            uv run python scripts/run_e2e_backend.py > var/e2e-backend.log 2>&1 &
+          BACKEND_PID=$!
+          (
+            cd frontend
+            VITE_API_TARGET=http://127.0.0.1:8011 \
+              npm run dev -- --host 127.0.0.1 --port 5176 > ../var/e2e-frontend.log 2>&1
+          ) &
+          FRONTEND_PID=$!
+          trap 'kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true' EXIT
+          for url in http://127.0.0.1:8011/health/ready http://127.0.0.1:5176; do
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent "$url" >/dev/null; then
+                break
+              fi
+              if [ "$attempt" -eq 60 ]; then
+                echo "Timed out waiting for $url"
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+          cd frontend
+          PLAYWRIGHT_EXTERNAL_SERVERS=true npm run test:e2e
+      - name: Upload E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-artifacts
+          if-no-files-found: ignore
+          path: |
+            var/e2e-backend.log
+            var/e2e-frontend.log
+            frontend/test-results
+            frontend/playwright-report

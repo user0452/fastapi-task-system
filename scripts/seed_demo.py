@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 import argparse
 import hashlib
 import json
@@ -7,16 +9,16 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from app.core.config import get_settings
 from app.core.database import get_cursor
-from app.core.migrations import run_migrations
+from app.core.schema import upgrade_database
+from app.core.test_database import validate_test_database_name
 from app.integrations.file_storage import UPLOAD_ROOT
 from utils import hash_password
-
 
 DEFAULT_PASSWORD = "A3Demo123!"
 MATERIAL_CONTENT = """等价类划分把输入域划分为有效等价类和无效等价类，从每类选择代表值设计测试用例。
@@ -245,7 +247,9 @@ def seed_user(username: str, password: str, reset: bool) -> dict:
     }
 
 
-def purge_users(username_prefix: str) -> int:
+def purge_users(username_prefix: str, *, require_test_database: bool = False) -> int:
+    if require_test_database:
+        validate_test_database_name(get_settings().database_name)
     prefix = username_prefix.strip()
     if len(prefix) < 3:
         raise ValueError("清理前缀至少需要 3 个字符")
@@ -278,10 +282,22 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=1)
     parser.add_argument("--reset", action="store_true")
     parser.add_argument("--purge-prefix", action="store_true")
+    parser.add_argument(
+        "--require-test-database",
+        action="store_true",
+        help="Reject cleanup unless DATABASE_NAME contains an explicit test marker.",
+    )
     args = parser.parse_args()
 
-    run_migrations()
-    purged_users = purge_users(args.username_prefix) if args.purge_prefix else 0
+    upgrade_database()
+    purged_users = (
+        purge_users(
+            args.username_prefix,
+            require_test_database=args.require_test_database,
+        )
+        if args.purge_prefix
+        else 0
+    )
     results = []
     for index in range(args.count):
         username = args.username_prefix if args.count == 1 else f"{args.username_prefix}_{index}"

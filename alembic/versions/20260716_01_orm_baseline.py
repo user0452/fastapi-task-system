@@ -5,6 +5,8 @@ Revises:
 Create Date: 2026-07-16
 """
 
+from app.core.migrations import run_migrations
+
 revision = "20260716_01"
 down_revision = None
 branch_labels = None
@@ -12,9 +14,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # ``app.core.migrations`` owns the historical schema.  This revision
-    # intentionally records the hand-off without rebuilding live tables.
-    pass
+    # This makes ``alembic upgrade head`` sufficient for both an empty
+    # database and an un-stamped historical installation.
+    run_migrations()
 
 
 def downgrade() -> None:
