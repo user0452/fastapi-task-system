@@ -13,6 +13,7 @@
 | `0c2ff72d7699edbe51a8f5c535cb55b72339c74d` | `fix: harden learning material and agent invariants` | 题目/评估安全、诊断状态机、资料与索引一致性、Agent 生命周期、认证/课程/用户隔离、时区、RAG 和低风险清理 |
 | `3947e9afa582067e9f6d4247e2c22bb94685c6bb` | `fix: isolate user state and streaming requests` | Pinia 账户隔离、课程加载竞态、流式取消、消息存在性检查、生产前端构建 |
 | `593e43d555fc83e56f941c4502b263ec54f44ccf` | `ci: isolate test databases and run cross-platform e2e` | Alembic 统一入口、测试库保护、readiness revision、跨平台 Playwright、CI E2E 与失败产物 |
+| `5e9a9f73524274bdc5a06b5a5b575b5ef9fd6c47` | `chore: remove stale dependency manifest and refresh docs` | 删除并行依赖清单，更新运行、迁移和验收文档 |
 
 ## 2. 九阶段验收结论
 
@@ -25,7 +26,7 @@
 | 5. 认证与用户隔离 | 通过 | Argon2id、legacy bcrypt 自动迁移、失败登录限流、可信代理 IP、课程状态命令、单 current 课程唯一约束、跨用户资源/会话/action/checkpoint 拒绝 |
 | 6. 时区、RAG、数据质量 | 通过 | 用户 IANA 时区、DB 会话 UTC、用户本地“今天”、向量/关键词/知识点独立配额、知识点主动召回、查询 embedding 单次计算、orphan 过滤 |
 | 7. 前端状态与流式竞态 | 通过 | 认证失效/退出/换号清空用户状态；请求版本与 AbortController 隔离旧流；reader 取消与释放；刷新并发课程加载合并 |
-| 8. 迁移、CI、E2E | 通过（远端 CI 待触发） | 空库与历史库均只执行 `alembic upgrade head`；测试库随机/显式 test 名；E2E 清理拒绝非测试库；bundled Chromium 7/7 |
+| 8. 迁移、CI、E2E | 通过 | 空库与历史库均只执行 `alembic upgrade head`；测试库随机/显式 test 名；E2E 清理拒绝非测试库；bundled Chromium 7/7；GitHub Actions 绿色 |
 | 9. 低风险清理 | 通过 | 源码乱码扫描 0；公共字符串先 strip、必填空白拒绝；`pyproject.toml`/`uv.lock` 单一依赖真源；精确外链域名；外部时间 UTC；JSON 可控错误；静态绝对路径；embedding 首载锁 |
 
 ## 3. 数据库迁移
@@ -60,6 +61,16 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1
 - Playwright：bundled Chromium，`7 passed (49.1s)`。
 - `git diff --check`：通过。
 - 源码乱码模式扫描：`0`。
+
+远端 GitHub Actions：
+
+- Workflow：`CI`
+- Run ID：[`29500887944`](https://github.com/user0452/fastapi-task-system/actions/runs/29500887944)
+- 验证 SHA：`5e9a9f73524274bdc5a06b5a5b575b5ef9fd6c47`
+- Event：`push`
+- Job：`verify`
+- 结论：`success`
+- 成功步骤：MySQL 8.4、锁定依赖、Alembic、Ruff/Mypy、后端测试与覆盖率、前端 ESLint/Vitest/构建、Playwright Chromium 和浏览器 E2E。
 
 阶段 8 迁移专项命令：
 
@@ -109,11 +120,10 @@ Playwright 验收实际启动了：
 
 ## 7. 限制与人工事项
 
-1. **远端 CI 尚未实际运行。** 当前分支未在本次验收中 push，也未创建 PR，因此 GitHub Actions 的成功状态不能伪造。工作流已覆盖 `feature/**`，本地已执行等价且更完整的统一验收；push 后仍需确认远端 `verify` job 绿色。
-2. E2E 使用 Mock LLM/Mock Embedding，外部 Bilibili、YouTube、Tavily 的实时可用性会受网络、配额和密钥影响；这些 Provider 失败时已验证为可控降级，不阻断核心学习流程。
-3. 历史数据库中旧时间列曾混用本地时间和 UTC，无法在没有业务语义映射的情况下安全批量改写。本次保证新连接、新写入和新时区计算使用 UTC；上线前建议对真实历史数据抽样审计。
-4. `routers/`、`agents/`、`services/` 的 legacy 入口仍被兼容模式和 E2E 危险操作测试引用，因此未误删；生产继续保持 `ENABLE_LEGACY_ROUTES=false`。
-5. 统一验收启动外层 PowerShell 时，Conda 自动激活在中文用户路径上输出一次 GBK 编码警告；脚本未中止且最终退出码为 0。项目命令均通过显式 `A3_PYTHON` 使用仓库 Python 3.13 环境。
+1. E2E 使用 Mock LLM/Mock Embedding，外部 Bilibili、YouTube、Tavily 的实时可用性会受网络、配额和密钥影响；这些 Provider 失败时已验证为可控降级，不阻断核心学习流程。
+2. 历史数据库中旧时间列曾混用本地时间和 UTC，无法在没有业务语义映射的情况下安全批量改写。本次保证新连接、新写入和新时区计算使用 UTC；上线前建议对真实历史数据抽样审计。
+3. `routers/`、`agents/`、`services/` 的 legacy 入口仍被兼容模式和 E2E 危险操作测试引用，因此未误删；生产继续保持 `ENABLE_LEGACY_ROUTES=false`。
+4. 统一验收启动外层 PowerShell 时，Conda 自动激活在中文用户路径上输出一次 GBK 编码警告；脚本未中止且最终退出码为 0。项目命令均通过显式 `A3_PYTHON` 使用仓库 Python 3.13 环境。
 
 ## 8. 合并前检查
 
@@ -121,5 +131,5 @@ Playwright 验收实际启动了：
 - [x] 所有本地代码、迁移、测试、构建和 E2E 门槛通过。
 - [x] 用户原有未跟踪文件未删除、未覆盖、未纳入提交。
 - [x] 实现提交已按后端、前端、CI 三个逻辑范围拆分。
-- [ ] push 当前分支并确认 GitHub Actions 成功。
+- [x] push 当前分支并确认 GitHub Actions `verify` 成功。
 - [ ] PR 审核时重点检查真实生产数据库备份、历史时间数据和生产 secrets。
