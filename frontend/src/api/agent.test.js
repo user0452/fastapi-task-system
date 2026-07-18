@@ -38,15 +38,23 @@ describe('sendAgentMessageStream', () => {
       cancel: vi.fn().mockResolvedValue(undefined),
       releaseLock: vi.fn()
     }
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       body: { getReader: () => reader }
-    }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
 
-    await expect(sendAgentMessageStream({ message: 'test' })).rejects.toMatchObject({
+    await expect(sendAgentMessageStream({
+      message: 'test',
+      web_search_mode: 'on'
+    })).rejects.toMatchObject({
       name: 'AbortError'
     })
 
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.web_search_mode).toBe('on')
+    expect(body.message).toBe('test')
     expect(reader.cancel).toHaveBeenCalledOnce()
     expect(reader.releaseLock).toHaveBeenCalledOnce()
   })

@@ -238,7 +238,7 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
 
 <style scoped>
 .materials-workspace { display: grid; gap: 24px; }
-.material-editor { border: 1px solid #d8dfdb; border-radius: 8px; background: #ffffff; overflow: hidden; }
+.material-editor { border: 1px solid var(--border-subtle); border-radius: 8px; background: #ffffff; overflow: hidden; }
 .editor-heading,
 .editor-actions,
 .list-heading {
@@ -247,12 +247,12 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
   justify-content: space-between;
   gap: 16px;
 }
-.editor-heading { padding: 16px 18px; border-bottom: 1px solid #e0e5e2; }
+.editor-heading { padding: 16px 18px; border-bottom: 1px solid var(--border-subtle); }
 .editor-heading h3,
 .list-heading h3 { font-size: 15px; font-weight: 750; }
 .editor-heading p { margin-top: 3px; color: #6c7771; font-size: 11px; }
-.mode-switch { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; border-radius: 7px; background: #edf1ee; }
-.mode-switch button { min-width: 86px; height: 30px; padding: 0 10px; border-radius: 5px; color: #68736d; font-size: 11px; font-weight: 700; }
+.mode-switch { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; border-radius: 7px; background: var(--surface-tertiary); }
+.mode-switch button { min-width: 86px; height: 30px; padding: 0 10px; border-radius: 5px; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
 .mode-switch button.active { color: #155d4b; background: #ffffff; box-shadow: 0 1px 2px rgba(31, 46, 39, .1); }
 .editor-fields { display: grid; gap: 14px; padding: 18px; }
 .editor-fields label { display: grid; gap: 6px; }
@@ -261,14 +261,14 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
 .editor-fields textarea {
   width: 100%;
   padding: 10px 11px;
-  border: 1px solid #cdd5d0;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: #fbfcfb;
+  background: var(--surface-secondary);
   font-size: 13px;
 }
 .editor-fields textarea { resize: vertical; line-height: 1.55; }
 .editor-fields input:focus,
-.editor-fields textarea:focus { border-color: #27806a; box-shadow: 0 0 0 2px rgba(39,128,106,.11); }
+.editor-fields textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(39,128,106,.11); }
 .file-picker {
   min-height: 126px;
   place-items: center;
@@ -277,25 +277,25 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
   border: 1px dashed #aebbb4;
   border-radius: 7px;
   color: #337563;
-  background: #f8faf8;
+  background: var(--surface-secondary);
   cursor: pointer;
 }
 .file-picker input { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; }
 .file-picker strong { margin-top: 4px; color: #31403a; font-size: 13px; }
 .file-picker span { color: #7a847f !important; font-size: 10px !important; font-weight: 500 !important; }
-.editor-actions { min-height: 58px; padding: 10px 18px; border-top: 1px solid #e0e5e2; background: #f5f7f5; }
-.editor-actions > span { color: #75807a; font-size: 10px; }
-.primary-button { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; border-radius: 6px; color: #ffffff; background: #176b58; font-size: 12px; font-weight: 750; }
+.editor-actions { min-height: 58px; padding: 10px 18px; border-top: 1px solid var(--border-subtle); background: var(--surface-secondary); }
+.editor-actions > span { color: var(--text-secondary); font-size: 10px; }
+.primary-button { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; border-radius: 6px; color: #ffffff; background: var(--accent); font-size: 12px; font-weight: 750; }
 .primary-button:disabled { opacity: .5; }
-.materials-list { border-top: 1px solid #dce2de; }
+.materials-list { border-top: 1px solid var(--border-subtle); }
 .list-heading { min-height: 58px; padding: 8px 2px; }
 .list-heading > div { display: flex; align-items: baseline; gap: 8px; }
 .list-heading span { color: #7a847f; font-size: 10px; }
 .icon-button { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 6px; color: #637069; }
-.icon-button:hover { background: #e9eeeb; color: #176b58; }
-.list-state { padding: 32px 4px; color: #77817c; border-top: 1px solid #e0e5e2; font-size: 12px; text-align: center; }
-.material-rows { border-top: 1px solid #e0e5e2; }
-.material-row { min-height: 76px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto; align-items: center; gap: 11px; padding: 10px 4px; border-bottom: 1px solid #e4e8e5; transition: opacity 160ms ease, background 160ms ease; }
+.icon-button:hover { background: var(--accent-soft); color: var(--accent); }
+.list-state { padding: 32px 4px; color: #77817c; border-top: 1px solid var(--border-subtle); font-size: 12px; text-align: center; }
+.material-rows { border-top: 1px solid var(--border-subtle); }
+.material-row { min-height: 76px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto; align-items: center; gap: 11px; padding: 10px 4px; border-bottom: 1px solid var(--border-subtle); transition: opacity 160ms ease, background 160ms ease; }
 .material-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 6px; color: #286a59; background: #e1eee8; }
 .material-copy { min-width: 0; display: grid; gap: 2px; }
 .material-copy strong,
@@ -304,7 +304,7 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
 .material-copy span { color: #78827d; font-size: 10px; }
 .material-copy .material-created { overflow: hidden; color: #87908b; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .material-copy p { color: #a13c35; font-size: 10px; }
-.status { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 5px; color: #68736d; background: #eef1ef; font-size: 10px; font-weight: 700; }
+.status { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 5px; color: var(--text-secondary); background: #eef1ef; font-size: 10px; font-weight: 700; }
 .status.ready { color: #146347; background: #dff1e7; }
 .status.failed { color: #9c382f; background: #fbe6e3; }
 .status i { width: 6px; height: 6px; border: 1px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 700ms linear infinite; }

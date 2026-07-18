@@ -124,7 +124,7 @@ function sourceTitle(source, fallback) {
 .summary-section li > :first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .summary-section li small { margin-left: auto; color: #8a9690; font-size: 8px; white-space: nowrap; }
 .tool-name { color: #34443d; font-family: Consolas, "SFMono-Regular", monospace; }
-.tool-status { flex: none; padding: 1px 5px; border-radius: 999px; color: #386656; background: #e5f1ec; font-size: 8px; font-weight: 800; }
+.tool-status { flex: none; padding: 1px 5px; border-radius: 999px; color: #386656; background: rgba(36, 138, 61, .1); font-size: 8px; font-weight: 800; }
 .tool-status.failed,
 .tool-status.timeout { color: #9a443d; background: #f8e8e6; }
 .tool-status.running,
@@ -136,7 +136,7 @@ function sourceTitle(source, fallback) {
 .context-section p,
 .update-section p { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; }
 .context-section span,
-.update-section span { padding: 2px 6px; border-radius: 999px; color: #4f6259; background: #eef3f0; font-size: 9px; }
+.update-section span { padding: 2px 6px; border-radius: 999px; color: #4f6259; background: var(--surface-secondary); font-size: 9px; }
 .summary-note { grid-column: 1 / -1; margin: 0; color: #8a9690; font-size: 9px; line-height: 1.5; }
 @media (max-width: 620px) { .summary-content { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .execution-summary summary::after { transition: none; } }

@@ -130,7 +130,12 @@ export async function sendAgentMessageStream(payload, handlers = {}, options = {
   let completed = false
 
   function dispatch(event) {
-    if (event.type === 'status') handlers.onStatus?.(event.message || '')
+    if (event.type === 'status') {
+      handlers.onStatus?.(event.message || '', {
+        phase: event.phase || 'thinking',
+        tool: event.tool || null
+      })
+    }
     if (event.type === 'reply_delta') handlers.onDelta?.(event.delta || '')
     if (event.type === 'result') handlers.onResult?.(event.data)
     if (event.type === 'done') handlers.onDone?.()

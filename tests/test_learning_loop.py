@@ -18,6 +18,7 @@ from app.modules.learning.service import (
     generate_practice,
     generate_study_plan,
     get_course_progress,
+    get_course_workspace_overview,
     get_diagnostic,
     get_today_learning,
     get_today_overview,
@@ -654,6 +655,23 @@ def test_today_overview_aggregates_courses_without_n_plus_one(learning_course):
     primary = next(item for item in overview["items"] if item["course"]["id"] == course["id"])
     assert primary["session"] is not None
     assert overview["summary"]["with_session"] >= 1
+
+
+def test_course_workspace_overview_returns_single_payload(learning_course):
+    user, _, course, points, diagnostic = learning_course
+    submit_diagnostic(
+        user["id"],
+        diagnostic["id"],
+        _all_answers(diagnostic),
+        evaluator=_evaluator({point["id"]: 72 for point in points}),
+    )
+    overview = get_course_workspace_overview(user["id"], course["id"])
+    assert overview["course"]["id"] == course["id"]
+    assert overview["progress"]["course"]["id"] == course["id"]
+    assert overview["today"] is not None
+    assert overview["plan"] is not None
+    assert overview["roadmap"] is not None
+    assert "attempts" in overview["practice"]
 
 
 def test_completed_session_restores_as_today_and_cannot_be_submitted_twice(learning_course):

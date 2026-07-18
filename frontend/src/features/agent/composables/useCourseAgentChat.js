@@ -25,7 +25,8 @@ export function useCourseAgentChat({
   scrollBottom = async () => {},
   focusInput = () => {},
   onDataChanged = () => {},
-  onSessionSelected = () => {}
+  onSessionSelected = () => {},
+  webSearchMode = () => 'auto'
 }) {
   const sessions = ref([])
   const activeId = ref(null)
@@ -109,6 +110,8 @@ export function useCourseAgentChat({
       messages.value = response.data.messages || []
       await restoreDraft()
       if (syncRoute) await syncSessionQuery(activeId.value)
+      // Drop the loading shell before scrolling so the message list is in the DOM.
+      if (version === loadVersion) loadingMessages.value = false
       await scrollBottom()
       return true
     } catch (error) {
@@ -257,7 +260,12 @@ export function useCourseAgentChat({
       content: '',
       sources: [],
       tool_calls: {},
-      streaming: true
+      streaming: true,
+      activity: {
+        phase: 'thinking',
+        message: '正在读取课程上下文',
+        tool: null
+      }
     })
     sending.value = true
     statusText.value = '正在读取课程上下文'
@@ -285,15 +293,33 @@ export function useCourseAgentChat({
           message: text,
           session_id: requestSessionId,
           course_id: requestCourseId,
-          client_request_id: requestId
+          client_request_id: requestId,
+          web_search_mode: unref(webSearchMode) || 'auto'
         },
         {
-          onStatus(message) {
-            if (isCurrentRequest()) statusText.value = message
+          onStatus(message, meta = {}) {
+            if (!isCurrentRequest()) return
+            const nextMessage = message || '正在处理'
+            statusText.value = nextMessage
+            const assistant = currentAssistant()
+            if (!assistant) return
+            assistant.activity = {
+              phase: meta.phase || 'thinking',
+              message: nextMessage,
+              tool: meta.tool || null
+            }
           },
           onDelta(delta) {
             const assistant = currentAssistant()
             if (!assistant) return
+            if (!assistant.content) {
+              assistant.activity = {
+                phase: 'answering',
+                message: '正在生成回答',
+                tool: null
+              }
+              statusText.value = '正在生成回答'
+            }
             assistant.content += delta
             scrollBottom()
           },
@@ -310,7 +336,8 @@ export function useCourseAgentChat({
             messages.value[assistantIndex] = {
               ...result.message,
               content: result.reply || assistant.content,
-              streaming: false
+              streaming: false,
+              activity: null
             }
           },
           onDone() {

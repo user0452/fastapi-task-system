@@ -8,21 +8,24 @@
 ### P0 前端设计系统收敛
 - 删除 `PlanPanel` / `KnowledgePanel` / `SettingsPage` / `OverviewPanel` 的双层 “Learning OS visual layer” 覆盖写法，合并为单层 token 样式。
 - 在 `frontend/src/styles/components.css` 增加共享 panel 原语（`.panel-state` / `.panel-empty` / `.panel-heading`）。
+- 继续统一 `PracticePanel` / `WrongAnswersPanel` / `MemoryPanel` / `SettingsPage` / `CourseInspector` 的圆角、阴影与色板。
 
 ### P0 仓库与文档
 - 新增本文件作为改进方案执行记录。
 - 清理根目录过程文件（若存在）：临时报告、一次性 memory 脚本、无效 `=3.0` 等。
 - 架构文档尺寸描述改为与当前工作台一致（课程栏 264px / 检查器 460px）。
 
-### P1 今日总览聚合 API
-- 新增 `GET /api/v1/study/today-overview`。
-- 一次返回全部课程今日单元、路线摘要与汇总指标。
-- `GlobalTodayPage` 改为单请求，去掉按课程 N+1。
+### P1 今日总览与课程概览聚合
+- `GET /api/v1/study/today-overview`：批量拉取课程今日单元，避免前端 N+1。
+- 后端 `list_today_sessions_for_user` + 批量 hydrate questions，降低多课程循环查询。
+- `GET /api/v1/courses/{id}/workspace-overview`：一次返回 progress / practice / plan / roadmap / today。
+- `GlobalTodayPage` 与 `OverviewPanel` 均改为单请求。
 
 ### P1 前端交互
 - `SessionList`：点击外部与 Esc 关闭操作菜单。
 - `MessageAnchorRail`：中间态/线形目录补 `aria-label`。
 - `AppShell` 创建课程对话框复用公共 `Modal`。
+- Overview 最近掌握度变化展示 `formula` / `weight`。
 
 ### P1 后端可维护与闭环
 - 抽出 `app/modules/agent/memory_service.py`，`service.py` 仅再导出兼容导入。
@@ -43,3 +46,4 @@ npm run build
 - 继续拆分 `agent/service.py` 的会话/工具/流式编排。
 - 逐步隔离并退役 `routers/` / `agents/` / `services/` legacy 层。
 - 压测课程级 FAISS 与聚合 Today 接口在多课程下的延迟。
+- 清理未使用的全局 MD3 样式块，准备暗色主题。

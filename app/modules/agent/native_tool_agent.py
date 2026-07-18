@@ -45,6 +45,10 @@ def build_course_tool_agent(
     list_material_outline: Callable[[int, int, int | None], dict],
     read_material_section: Callable[[int, int, int, str, int], dict],
     search_external: Callable[[int, int, ExternalResourceSearchRequest], dict],
+    list_memories: Callable[[int, int], dict],
+    write_memory: Callable[..., dict],
+    update_memory: Callable[..., dict],
+    delete_memory: Callable[[int, int, int], dict],
     delete_owned_task: Callable[[int, int], bool],
     calculate: Callable[[str], dict],
     run_python: Callable[[str], dict],
@@ -54,9 +58,13 @@ def build_course_tool_agent(
     """Return a create_agent graph plus mutable results for the HTTP response."""
     artifacts = ToolArtifacts()
     course = context.get("course")
+    web_search_mode = str(context.get("web_search_mode") or "auto").strip().lower()
+    if web_search_mode not in {"off", "on", "auto"}:
+        web_search_mode = "auto"
     rag_search_calls = 0
     rag_read_calls = 0
     remaining_evidence_tokens = 12_000
+    external_search_calls = 0
 
     def append_citations(items: list[dict]) -> None:
         existing = {int(item["chunk_id"]) for item in artifacts.citations if item.get("chunk_id") is not None}
@@ -233,11 +241,35 @@ def build_course_tool_agent(
 
     @tool
     def search_external_learning_resources(topic: str) -> str:
-        """Find relevant external learning videos and articles for the current course."""
+        """Find relevant external learning videos and articles for the current course. Use for online explanations, latest resources, or when course materials are insufficient."""
+        nonlocal external_search_calls
+        if web_search_mode == "off":
+            return json.dumps(
+                {
+                    "error": "WEB_SEARCH_DISABLED",
+                    "message": "用户已关闭联网搜索，请仅基于课程资料与已有上下文回答。",
+                },
+                ensure_ascii=False,
+            )
+        if external_search_calls >= 2:
+            return json.dumps(
+                {
+                    "error": "WEB_SEARCH_LIMIT_REACHED",
+                    "message": "本轮最多允许 2 次联网搜索，请使用已有结果回答。",
+                },
+                ensure_ascii=False,
+            )
+        external_search_calls += 1
         active = require_course()
         result = run_tool(
             "search_external_resources", "read",
-            {"course_id": active["id"], "topic": topic, "max_results": 4},
+            {
+                "course_id": active["id"],
+                "topic": topic,
+                "max_results": 4,
+                "web_search_mode": web_search_mode,
+                "search_round": external_search_calls,
+            },
             lambda: search_external(
                 user_id, active["id"], ExternalResourceSearchRequest(topic=topic, max_results=4)
             ),
@@ -318,6 +350,129 @@ def build_course_tool_agent(
         return json.dumps(result, ensure_ascii=False, default=str)
 
     @tool
+    def list_course_memories() -> str:
+        """List the current course's long-term memories, including disabled ones."""
+        active = require_course()
+        result = run_tool(
+            "list_course_memories",
+            "read",
+            {"course_id": active["id"]},
+            lambda: list_memories(user_id, active["id"]),
+        )
+        items = [
+            {
+                "id": item.get("id"),
+                "memory_key": item.get("memory_key"),
+                "memory_type": item.get("memory_type"),
+                "content": item.get("content"),
+                "enabled": item.get("enabled"),
+                "source_type": item.get("source_type"),
+                "updated_at": item.get("updated_at"),
+            }
+            for item in (result.get("items") or [])[:30]
+        ]
+        return json.dumps(
+            {"items": items, "total": result.get("total", len(items))},
+            ensure_ascii=False,
+            default=str,
+        )
+
+    @tool
+    def write_course_memory(
+        text: str,
+        memory_type: str = "course_context",
+        memory_key: str | None = None,
+    ) -> str:
+        """Create or upsert a durable course memory that should influence future answers."""
+        active = require_course()
+        result = run_tool(
+            "write_course_memory",
+            "write",
+            {
+                "course_id": active["id"],
+                "text": text,
+                "memory_type": memory_type,
+                "memory_key": memory_key,
+            },
+            lambda: write_memory(
+                user_id,
+                active["id"],
+                text=text,
+                memory_type=memory_type,
+                memory_key=memory_key,
+                source_message_id=(context.get("user_message") or {}).get("id"),
+            ),
+        )
+        artifacts.actions.append(
+            {
+                "type": "open_panel",
+                "panel": "memory",
+                "label": "查看长期记忆",
+                "to": f"/learn/{active['id']}?panel=memory",
+            }
+        )
+        return json.dumps({"memory": result, "updated": True}, ensure_ascii=False, default=str)
+
+    @tool
+    def update_course_memory(
+        memory_id: int,
+        text: str | None = None,
+        memory_type: str | None = None,
+        enabled: bool | None = None,
+    ) -> str:
+        """Update an existing course memory by id. Use list_course_memories first when the id is unknown."""
+        active = require_course()
+        result = run_tool(
+            "update_course_memory",
+            "write",
+            {
+                "course_id": active["id"],
+                "memory_id": memory_id,
+                "text": text,
+                "memory_type": memory_type,
+                "enabled": enabled,
+            },
+            lambda: update_memory(
+                user_id,
+                active["id"],
+                int(memory_id),
+                text=text,
+                memory_type=memory_type,
+                enabled=enabled,
+                source_message_id=(context.get("user_message") or {}).get("id"),
+            ),
+        )
+        artifacts.actions.append(
+            {
+                "type": "open_panel",
+                "panel": "memory",
+                "label": "查看长期记忆",
+                "to": f"/learn/{active['id']}?panel=memory",
+            }
+        )
+        return json.dumps({"memory": result, "updated": True}, ensure_ascii=False, default=str)
+
+    @tool
+    def delete_course_memory(memory_id: int) -> str:
+        """Delete one course long-term memory. This action always requires user approval."""
+        active = require_course()
+        result = run_tool(
+            "delete_course_memory",
+            "destructive",
+            {"course_id": active["id"], "memory_id": int(memory_id)},
+            lambda: delete_memory(user_id, active["id"], int(memory_id)),
+        )
+        artifacts.actions.append(
+            {
+                "type": "open_panel",
+                "panel": "memory",
+                "label": "查看长期记忆",
+                "to": f"/learn/{active['id']}?panel=memory",
+            }
+        )
+        return json.dumps(result, ensure_ascii=False, default=str)
+
+    @tool
     def delete_task(task_id: int) -> str:
         """Permanently delete one owned task. This action always requires user approval."""
         result = run_tool(
@@ -330,18 +485,40 @@ def build_course_tool_agent(
         get_today_learning, get_course_progress, get_study_plan, get_wrong_answer_summary,
         search_course_knowledge, read_course_evidence, list_course_material_outline,
         list_course_files,
-        read_course_section, search_external_learning_resources,
+        read_course_section,
+        list_course_memories, write_course_memory, update_course_memory, delete_course_memory,
         generate_practice_questions, generate_diagnostic_questions,
         calculator, python_sandbox, integration_status, delete_task,
     ]
+    if web_search_mode in {"on", "auto"}:
+        tools.insert(9, search_external_learning_resources)
     middleware = HumanInTheLoopMiddleware(
         {
             "delete_task": {
                 "allowed_decisions": ["approve", "reject"],
                 "description": "删除任务会永久移除数据，请确认任务 ID 和操作范围。",
-            }
+            },
+            "delete_course_memory": {
+                "allowed_decisions": ["approve", "reject"],
+                "description": "删除长期记忆会永久移除该条记忆，请确认记忆 ID 和内容。",
+            },
         }
     )
+    if web_search_mode == "on":
+        web_search_policy = (
+            "用户已开启联网搜索。回答前优先调用 search_external_learning_resources 获取最新外部资料，"
+            "再结合课程资料回答；若联网结果为空或失败，明确说明并回退到课程资料。"
+        )
+    elif web_search_mode == "off":
+        web_search_policy = (
+            "用户已关闭联网搜索。不要调用外部联网搜索工具，仅基于课程资料、学习记录和已有上下文回答。"
+        )
+    else:
+        web_search_policy = (
+            "联网搜索处于自动模式。当用户询问最新资讯、网上视频讲解、课程资料明显不足，"
+            "或明确要求联网/搜索时，调用 search_external_learning_resources；"
+            "纯课程内容问题优先使用课程资料检索。"
+        )
     agent = create_agent(
         get_llm(),
         tools=tools,
@@ -353,6 +530,12 @@ def build_course_tool_agent(
             "再用 read_course_evidence 读取命中片段的前后文；比较问题可分别检索多个子问题；"
             "章节总结先调用 list_course_material_outline，再调用 read_course_section。"
             "最多进行 3 轮搜索和 4 次证据读取，证据不足时明确说明，不得用常识冒充资料结论。"
+            f"{web_search_policy}"
+            "长期记忆用于跨会话保留偏好、目标、薄弱点、错误模式和重要课程上下文。"
+            "当用户明确要求记住/修改/删除记忆，或出现稳定且对后续学习有用的偏好信息时，"
+            "使用 list_course_memories、write_course_memory、update_course_memory 或 delete_course_memory。"
+            "写入记忆要简洁、可验证，不要把一次性问题或整段对话原文塞进记忆。"
+            "删除记忆必须调用 delete_course_memory，系统会要求用户确认。"
             "调用工具时只发出工具调用，不要说‘我来查一下’、‘找到了’或‘继续读取’等过程话术；"
             "拿到工具结果后直接回答用户。不要输出 JSON 计划或伪造工具结果。"
             "回答采用克制、清晰的 Markdown：先给结论，再按需使用短段落、##/### 小标题、列表或表格；"

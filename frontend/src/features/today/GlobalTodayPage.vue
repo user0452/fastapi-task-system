@@ -192,7 +192,10 @@ onMounted(load)
 .empty-orb { width: 72px; height: 72px; display: grid; place-items: center; margin-bottom: 8px; border-radius: 26px; color: #fff; background: var(--gradient-brand); box-shadow: 0 18px 46px rgba(79, 124, 255, .24); }
 .today-error > svg { color: var(--danger); }
 .today-error button { min-height: 42px; margin-top: 7px; padding: 0 16px; border-radius: 13px; color: #fff; background: var(--accent); font-size: 14px; font-weight: 600; }
-.today-hero { position: relative; min-height: 390px; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(240px, .7fr); align-items: end; gap: 44px; overflow: hidden; padding: clamp(34px, 5vw, 62px); border: 1px solid rgba(255, 255, 255, .62); border-radius: 32px; background: var(--gradient-soft-page); box-shadow: var(--shadow-medium); }
+.today-hero { position: relative; min-height: 390px; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(240px, .7fr); align-items: end; gap: 44px; overflow: hidden; padding: clamp(34px, 5vw, 62px); border: 1px solid rgba(255, 255, 255, .62); border-radius: 32px; background:
+    radial-gradient(circle at 12% 18%, rgba(79, 124, 255, .16), transparent 28%),
+    radial-gradient(circle at 88% 12%, rgba(109, 93, 252, .12), transparent 24%),
+    var(--gradient-soft-page); box-shadow: var(--shadow-medium); }
 .today-hero::before { content: ''; position: absolute; width: 340px; height: 340px; right: -80px; top: -130px; border-radius: 50%; background: rgba(109, 93, 252, .11); filter: blur(1px); }
 .hero-copy,
 .hero-progress { position: relative; z-index: 1; }

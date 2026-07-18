@@ -121,8 +121,10 @@ describe('WorkspaceChat stream isolation', () => {
 
     const outlineItems = wrapper.findAll('.anchor-item')
     expect(outlineItems).toHaveLength(2)
+    expect(wrapper.findAll('.anchor-bar')).toHaveLength(2)
     expect(wrapper.get('#chat-message-31').attributes('data-message-role')).toBe('user')
     expect(wrapper.get('#chat-message-33').attributes('data-message-id')).toBe('33')
+    expect(outlineItems[0].attributes('aria-label')).toContain('解释边界值分析')
 
     await outlineItems[0].trigger('click')
     expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }))
@@ -131,6 +133,31 @@ describe('WorkspaceChat stream isolation', () => {
     await wrapper.get('.history-action').trigger('click')
     expect(wrapper.get('.history-drawer').attributes('aria-label')).toBe('历史对话')
     expect(wrapper.get('.history-drawer').text()).toContain('课程 1 会话')
+    wrapper.unmount()
+  })
+
+  it('opens already at the latest messages after restoring conversation history', async () => {
+    agentApi.getCourseAgentWorkspace.mockResolvedValue({
+      code: 200,
+      data: {
+        session: { id: 10 },
+        agent: { id: 1 },
+        messages: [
+          { id: 31, role: 'user', content: '最早的问题' },
+          { id: 32, role: 'assistant', content: '最早的回答' },
+          { id: 33, role: 'user', content: '最新的问题' },
+          { id: 34, role: 'assistant', content: '最新的回答' }
+        ]
+      }
+    })
+    const wrapper = mountChat(1)
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('#chat-message-34').exists()).toBe(true)
+    // Restored history is pinned via scrollTop, not an animated scrollTo.
+    expect(wrapper.find('.chat-viewport').classes()).not.toContain('is-pinning')
     wrapper.unmount()
   })
 

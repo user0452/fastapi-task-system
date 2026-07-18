@@ -6,7 +6,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from time import perf_counter, sleep
-from typing import Callable
+from typing import Any, Callable
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from langchain_core.messages import AIMessage, AIMessageChunk
@@ -76,13 +76,16 @@ PYTHON_SANDBOX = SandboxExecutor()
 
 # Memory CRUD lives in memory_service; re-export for existing imports.
 from app.modules.agent.memory_service import (  # noqa: E402
+    delete_chat_memory,
     delete_course_agent_memory,
     list_course_agent_memories,
     public_memory as _public_memory,
     require_course_agent as _require_course_agent,
     save_course_agent_memory,
     set_course_agent_memory_type_enabled,
+    update_chat_memory,
     update_course_agent_memory,
+    write_chat_memory,
 )
 
 
@@ -417,6 +420,9 @@ def _prepare_context(
     risk_level: str,
 ) -> dict:
     server_time = get_user_server_time(user_id)
+    web_search_mode = str(getattr(request, "web_search_mode", None) or "auto").strip().lower()
+    if web_search_mode not in {"off", "on", "auto"}:
+        web_search_mode = "auto"
     with get_cursor() as cursor:
         session = None
         if request.session_id is not None:
@@ -609,6 +615,7 @@ def _prepare_context(
         "context_report": context_report,
         "run": run,
         "server_time": server_time,
+        "web_search_mode": web_search_mode,
         "duplicate_request": False,
     }
 
@@ -748,6 +755,114 @@ def _execute_tool(
     return result
 
 
+def _tool_activity_label(tool_name: str, arguments: dict | None = None) -> str:
+    labels = {
+        "get_today_learning": "正在读取今日学习",
+        "get_course_progress": "正在读取课程进度",
+        "get_study_plan": "正在读取学习计划",
+        "get_wrong_answers": "正在读取错题摘要",
+        "search_course_knowledge": "正在检索课程资料",
+        "read_course_evidence": "正在读取课程证据",
+        "list_course_material_outline": "正在整理课程目录",
+        "list_course_files": "正在列出课程文件",
+        "read_course_section": "正在阅读课程章节",
+        "search_external_resources": "正在联网搜索",
+        "list_course_memories": "正在读取长期记忆",
+        "write_course_memory": "正在写入长期记忆",
+        "update_course_memory": "正在修改长期记忆",
+        "delete_course_memory": "正在删除长期记忆",
+        "generate_practice": "正在生成练习题",
+        "get_or_generate_diagnostic": "正在准备课程诊断",
+        "calculator": "正在计算",
+        "python_sandbox": "正在运行受限 Python",
+        "integration_status": "正在检查外部能力状态",
+        "delete_task": "正在处理删除确认",
+    }
+    label = labels.get(tool_name, f"正在调用工具 {tool_name}")
+    if tool_name == "search_external_resources" and isinstance(arguments, dict):
+        topic = str(arguments.get("topic") or "").strip()
+        if topic:
+            short = topic if len(topic) <= 24 else f"{topic[:24]}…"
+            return f"正在联网搜索：{short}"
+    if tool_name == "search_course_knowledge" and isinstance(arguments, dict):
+        query = str(arguments.get("query") or "").strip()
+        if query:
+            short = query if len(query) <= 24 else f"{query[:24]}…"
+            return f"正在检索课程资料：{short}"
+    return label
+
+
+def _publish_activity(context: dict, message: str, *, phase: str, tool: str | None = None) -> None:
+    callback = context.get("on_status")
+    if not callable(callback):
+        return
+    payload = {"message": message, "phase": phase}
+    if tool:
+        payload["tool"] = tool
+    try:
+        callback(payload)
+    except Exception:
+        # Activity updates must never break the main agent run.
+        return
+
+
+def _unwrap_memory_result(result: Any) -> dict | None:
+    """Accept either a public memory row or a tool wrapper {"memory": ...}."""
+    if not isinstance(result, dict):
+        return None
+    memory = result.get("memory")
+    if isinstance(memory, dict):
+        return memory
+    if any(key in result for key in ("id", "memory_key", "memory_type", "content")):
+        return result
+    return None
+
+
+def _memory_update_entry(tool_name: str, arguments: dict, result: Any) -> dict | None:
+    """Project successful memory tool results into the execution summary."""
+    if tool_name == "write_course_memory":
+        memory = _unwrap_memory_result(result)
+        if memory is None:
+            return None
+        return {
+            "op": "write",
+            "id": memory.get("id"),
+            "memory_key": memory.get("memory_key"),
+            "memory_type": memory.get("memory_type"),
+            "content": memory.get("content"),
+        }
+    if tool_name == "update_course_memory":
+        memory = _unwrap_memory_result(result)
+        if memory is None:
+            return None
+        return {
+            "op": "update",
+            "id": memory.get("id"),
+            "memory_key": memory.get("memory_key"),
+            "memory_type": memory.get("memory_type"),
+            "content": memory.get("content"),
+            "enabled": memory.get("enabled"),
+        }
+    if tool_name == "delete_course_memory":
+        payload = result if isinstance(result, dict) else {}
+        return {
+            "op": "delete",
+            "id": payload.get("memory_id") or arguments.get("memory_id"),
+            "deleted": bool(payload.get("deleted")),
+        }
+    return None
+
+
+def _record_memory_update(context: dict, tool_name: str, arguments: dict, result: Any) -> None:
+    entry = _memory_update_entry(tool_name, arguments, result)
+    if entry is None:
+        return
+    updates = context.setdefault("memory_updates", [])
+    if len(updates) >= 20:
+        return
+    updates.append(entry)
+
+
 def _execute_registered_tool(
     user_id: int,
     context: dict,
@@ -757,6 +872,13 @@ def _execute_registered_tool(
     callback: Callable,
 ):
     executions = context.setdefault("tool_executions", [])
+    phase = "web_search" if tool_name == "search_external_resources" else "tool"
+    _publish_activity(
+        context,
+        _tool_activity_label(tool_name, arguments),
+        phase=phase,
+        tool=tool_name,
+    )
     execution = TOOL_EXECUTOR.execute(
         name=tool_name,
         requested_risk=risk_level,
@@ -778,6 +900,8 @@ def _execute_registered_tool(
         ),
         record_sink=lambda record: executions.append(record) if len(executions) < 30 else None,
     )
+    _record_memory_update(context, tool_name, arguments or {}, execution.value)
+    _publish_activity(context, "正在整理工具结果", phase="thinking", tool=tool_name)
     return execution.value
 
 
@@ -1565,49 +1689,119 @@ def _native_confirmation(
     graph_config: dict,
 ) -> tuple[str, dict | None]:
     """Persist a HumanInTheLoop interruption for the existing confirmation UI."""
-    if action_request.get("name") != "delete_task":
-        return "该工具需要确认后才能继续。", None
+    tool_name = str(action_request.get("name") or "")
     arguments = action_request.get("args") or {}
-    try:
-        task_id = int(arguments["task_id"])
-    except (KeyError, TypeError, ValueError):
-        return "删除操作缺少有效的任务 ID。", None
-    with get_cursor() as cursor:
-        task = repository.get_task(cursor, task_id, user_id)
-        if task is None:
-            return f"没有找到任务 #{task_id}，或该任务不属于你。", None
-        now = _utc_now()
-        action = repository.create_action_request(
-            cursor,
-            user_id,
-            context["session"]["id"],
-            context["course"]["id"] if context.get("course") else None,
-            "delete_task",
-            {"task_id": task_id, "task_title": task["title"], "tool_call_id": action_request.get("id")},
-            _stable_idempotency_key(
-                context["run"]["request_id"],
+    now = _utc_now()
+    if tool_name == "delete_task":
+        try:
+            task_id = int(arguments["task_id"])
+        except (KeyError, TypeError, ValueError):
+            return "删除操作缺少有效的任务 ID。", None
+        with get_cursor() as cursor:
+            task = repository.get_task(cursor, task_id, user_id)
+            if task is None:
+                return f"没有找到任务 #{task_id}，或该任务不属于你。", None
+            action = repository.create_action_request(
+                cursor,
+                user_id,
+                context["session"]["id"],
+                context["course"]["id"] if context.get("course") else None,
                 "delete_task",
-                {"task_id": task_id},
-            ),
-            now + timedelta(minutes=10),
-            now,
-            checkpoint={
-                "thread_id": graph_config["configurable"]["thread_id"],
-                "checkpoint_ns": graph_config["configurable"].get("checkpoint_ns", ""),
-                "run_id": context["run"]["id"],
-                "request_id": context["run"]["request_id"],
-                "tool_call_id": action_request.get("id"),
-            },
-        )
+                {
+                    "task_id": task_id,
+                    "task_title": task["title"],
+                    "tool_call_id": action_request.get("id"),
+                },
+                _stable_idempotency_key(
+                    context["run"]["request_id"],
+                    "delete_task",
+                    {"task_id": task_id},
+                ),
+                now + timedelta(minutes=10),
+                now,
+                checkpoint={
+                    "thread_id": graph_config["configurable"]["thread_id"],
+                    "checkpoint_ns": graph_config["configurable"].get("checkpoint_ns", ""),
+                    "run_id": context["run"]["id"],
+                    "request_id": context["run"]["request_id"],
+                    "tool_call_id": action_request.get("id"),
+                },
+            )
+        summary = f"删除任务“{task['title']}”"
+        reply = f"删除任务“{task['title']}”需要二次确认。确认前不会执行工具。"
+    elif tool_name == "delete_course_memory":
+        if not context.get("course"):
+            return "请先选择课程后再删除长期记忆。", None
+        try:
+            memory_id = int(arguments["memory_id"])
+        except (KeyError, TypeError, ValueError):
+            return "删除记忆缺少有效的记忆 ID。", None
+        with get_cursor() as cursor:
+            memory = repository.get_course_memory(
+                cursor,
+                memory_id,
+                user_id,
+                context["course"]["id"],
+            )
+            if memory is None:
+                return f"没有找到记忆 #{memory_id}，或该记忆不属于当前课程。", None
+            content = memory.get("content") or {}
+            content_text = ""
+            if isinstance(content, dict):
+                content_text = str(
+                    content.get("text")
+                    or content.get("value")
+                    or content.get("summary")
+                    or content.get("goal")
+                    or content.get("preference")
+                    or content.get("description")
+                    or ""
+                ).strip()
+            if not content_text:
+                content_text = json.dumps(content, ensure_ascii=False, default=str)[:80]
+            action = repository.create_action_request(
+                cursor,
+                user_id,
+                context["session"]["id"],
+                context["course"]["id"],
+                "delete_course_memory",
+                {
+                    "course_id": context["course"]["id"],
+                    "memory_id": memory_id,
+                    "memory_key": memory.get("memory_key"),
+                    "memory_type": memory.get("memory_type"),
+                    "content_preview": content_text[:120],
+                    "tool_call_id": action_request.get("id"),
+                },
+                _stable_idempotency_key(
+                    context["run"]["request_id"],
+                    "delete_course_memory",
+                    {"memory_id": memory_id},
+                ),
+                now + timedelta(minutes=10),
+                now,
+                checkpoint={
+                    "thread_id": graph_config["configurable"]["thread_id"],
+                    "checkpoint_ns": graph_config["configurable"].get("checkpoint_ns", ""),
+                    "run_id": context["run"]["id"],
+                    "request_id": context["run"]["request_id"],
+                    "tool_call_id": action_request.get("id"),
+                },
+            )
+        summary = f"删除长期记忆“{content_text[:40] or memory.get('memory_key') or memory_id}”"
+        reply = f"{summary}需要二次确认。确认前不会执行工具。"
+    else:
+        return "该工具需要确认后才能继续。", None
+
     confirmation = {
         "id": action["id"],
         "tool_name": action["tool_name"],
         "risk_level": action["risk_level"],
-        "summary": f"删除任务“{task['title']}”",
+        "summary": summary,
+        "status": action["status"],
         "expires_at": action["expires_at"],
-        "status": "pending",
     }
-    return f"删除任务“{task['title']}”需要二次确认。确认前不会执行工具。", confirmation
+    return reply, confirmation
 
 
 def _build_native_agent(user_id: int, context: dict):
@@ -1630,6 +1824,10 @@ def _build_native_agent(user_id: int, context: dict):
         list_material_outline=list_course_material_outline,
         read_material_section=read_course_material_section,
         search_external=search_external_resources,
+        list_memories=list_course_agent_memories,
+        write_memory=write_chat_memory,
+        update_memory=update_chat_memory,
+        delete_memory=delete_chat_memory,
         delete_owned_task=_native_delete_task,
         calculate=calculate_expression,
         run_python=lambda code: PYTHON_SANDBOX.execute(
@@ -1677,6 +1875,15 @@ def _resume_native_action(user_id: int, action: dict, confirmed: bool) -> dict:
                 "task_id": task_id,
                 "deleted": repository.get_task(cursor, task_id, user_id) is None,
             }
+    elif confirmed and action["tool_name"] == "delete_course_memory":
+        memory_id = int(action["payload"]["memory_id"])
+        course_id = int(action["payload"].get("course_id") or context["course"]["id"])
+        with get_cursor() as cursor:
+            remaining = repository.get_course_memory(cursor, memory_id, user_id, course_id)
+        result = {
+            "memory_id": memory_id,
+            "deleted": remaining is None,
+        }
     return {
         "reply": reply,
         "result": result,
@@ -1825,14 +2032,18 @@ def run_native_tool_agent_chat(
     request: AgentChatRequest,
     on_delta: Callable[[str], None] | None = None,
     cancel_event: Event | None = None,
+    on_status: Callable[[dict | str], None] | None = None,
 ) -> dict:
     """Run the v1 course agent using native model tool calls, not JSON plans."""
+    if on_status is not None:
+        on_status({"message": "已收到问题，正在加载课程上下文", "phase": "thinking"})
     context = _retry_transaction(
         lambda: _prepare_context(user_id, request, "native_tool_agent", "mixed")
     )
     if context.get("duplicate_request"):
         return _existing_run_response(context, request)
     context["cancel_event"] = cancel_event
+    context["on_status"] = on_status
     course = context.get("course")
     artifacts = None
     confirmation = None
@@ -1845,6 +2056,8 @@ def run_native_tool_agent_chat(
         mode="native_tool_agent",
     )
     try:
+        if on_status is not None:
+            on_status({"message": "正在思考如何回答", "phase": "thinking"})
         agent, artifacts = _build_native_agent(user_id, context)
         thread_id = f"course-agent-{context['run']['request_id']}"
         config = {
@@ -1855,6 +2068,8 @@ def run_native_tool_agent_chat(
         if on_delta is None:
             state = agent.invoke({"messages": [("user", request.message)]}, config=config)
         else:
+            if on_status is not None:
+                on_status({"message": "正在生成回答", "phase": "answering"})
             for chunk, _metadata in agent.stream(
                 {"messages": [("user", request.message)]},
                 config=config,
@@ -1868,6 +2083,8 @@ def run_native_tool_agent_chat(
             if snapshot.interrupts:
                 state["__interrupt__"] = snapshot.interrupts
         _raise_if_cancelled(context)
+        if on_status is not None:
+            on_status({"message": "正在整理最终回答", "phase": "answering"})
         interrupts = state.get("__interrupt__") or []
         if interrupts:
             interrupt_value = getattr(interrupts[0], "value", {}) or {}
@@ -1943,14 +2160,18 @@ async def run_native_tool_agent_chat_async(
     request: AgentChatRequest,
     on_delta: Callable[[str], None] | None = None,
     cancel_event: Event | None = None,
+    on_status: Callable[[dict | str], None] | None = None,
 ) -> dict:
     """Run the streaming agent on LangGraph's async interface so cancellation propagates."""
+    if on_status is not None:
+        on_status({"message": "已收到问题，正在加载课程上下文", "phase": "thinking"})
     context = _retry_transaction(
         lambda: _prepare_context(user_id, request, "native_tool_agent", "mixed")
     )
     if context.get("duplicate_request"):
         return _existing_run_response(context, request)
     context["cancel_event"] = cancel_event
+    context["on_status"] = on_status
     course = context.get("course")
     artifacts = None
     confirmation = None
@@ -1968,8 +2189,11 @@ async def run_native_tool_agent_chat_async(
         "recursion_limit": 18,
     }
     try:
+        if on_status is not None:
+            on_status({"message": "正在思考如何回答", "phase": "thinking"})
         agent, artifacts = _build_native_agent(user_id, context)
         _raise_if_cancelled(context)
+        answering_started = False
         async for chunk, _metadata in agent.astream(
             {"messages": [("user", request.message)]},
             config=config,
@@ -1977,6 +2201,9 @@ async def run_native_tool_agent_chat_async(
         ):
             _raise_if_cancelled(context)
             if isinstance(chunk, AIMessageChunk) and isinstance(chunk.content, str) and chunk.content:
+                if on_status is not None and not answering_started:
+                    answering_started = True
+                    on_status({"message": "正在生成回答", "phase": "answering"})
                 if on_delta is not None:
                     on_delta(chunk.content)
         snapshot = await agent.aget_state(config)
@@ -1984,6 +2211,8 @@ async def run_native_tool_agent_chat_async(
         if snapshot.interrupts:
             state["__interrupt__"] = snapshot.interrupts
         _raise_if_cancelled(context)
+        if on_status is not None:
+            on_status({"message": "正在整理最终回答", "phase": "answering"})
         interrupts = state.get("__interrupt__") or []
         if interrupts:
             interrupt_value = getattr(interrupts[0], "value", {}) or {}

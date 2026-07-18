@@ -27,6 +27,10 @@ export function getTodayOverview() {
   return request('/api/v1/study/today-overview')
 }
 
+export function getCourseWorkspaceOverview(courseId) {
+  return request(`/api/v1/courses/${courseId}/workspace-overview`)
+}
+
 export function startLearningSession(sessionId) {
   return request(`/api/v1/study/sessions/${sessionId}/start`, { method: 'POST' })
 }

@@ -14,6 +14,7 @@ from app.modules.learning.service import (
     generate_diagnostic,
     generate_practice,
     get_course_progress,
+    get_course_workspace_overview,
     get_diagnostic,
     get_latest_course_diagnostic,
     get_practice,
@@ -106,6 +107,11 @@ def submit_session(
 @router.get("/courses/{course_id}/progress")
 def course_progress(course_id: int, user=Depends(get_current_user)):
     return success(data=get_course_progress(user["id"], course_id))
+
+
+@router.get("/courses/{course_id}/workspace-overview")
+def course_workspace_overview(course_id: int, user=Depends(get_current_user)):
+    return success(data=get_course_workspace_overview(user["id"], course_id))
 
 
 @router.post("/courses/{course_id}/practice", status_code=status.HTTP_201_CREATED)

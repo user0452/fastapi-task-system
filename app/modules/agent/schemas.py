@@ -16,6 +16,10 @@ class AgentChatRequest(TrimmedRequestModel):
     course_id: int | None = Field(default=None, gt=0)
     current_time: str | None = Field(default=None, max_length=64)
     client_request_id: UUID | None = None
+    # off: never use external web search
+    # on: prefer external web search when answering
+    # auto: model decides based on the question
+    web_search_mode: str = Field(default="auto", pattern=r"^(off|on|auto)$")
 
 
 class ActionDecision(TrimmedRequestModel):

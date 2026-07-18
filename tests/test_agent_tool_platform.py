@@ -30,9 +30,20 @@ def test_default_registry_exposes_real_risk_and_confirmation_metadata():
     deletion = registry.get("delete_task")
     assert deletion.risk_level == "destructive"
     assert deletion.confirmation_required is True
-    assert {"list_course_files", "integration_status"}.issubset(
-        {item.name for item in registry.list()}
-    )
+    memory_delete = registry.get("delete_course_memory")
+    assert memory_delete.risk_level == "destructive"
+    assert memory_delete.confirmation_required is True
+    assert registry.get("write_course_memory").risk_level == "write"
+    assert registry.get("update_course_memory").risk_level == "write"
+    assert registry.get("list_course_memories").risk_level == "read"
+    assert {
+        "list_course_files",
+        "integration_status",
+        "list_course_memories",
+        "write_course_memory",
+        "update_course_memory",
+        "delete_course_memory",
+    }.issubset({item.name for item in registry.list()})
 
 
 def test_registry_rejects_duplicates_and_policy_rejects_risk_downgrade():
@@ -221,6 +232,15 @@ def test_execution_summary_contains_sources_and_tool_states_but_no_reasoning():
                 }
             ],
             "context_report": {"memory_count": 2, "weak_point_count": 3, "recent_turns": 4},
+            "memory_updates": [
+                {
+                    "op": "write",
+                    "id": 8,
+                    "memory_key": "style_pref",
+                    "memory_type": "course_preference",
+                    "content": {"text": "先给结论"},
+                }
+            ],
         },
         [{"chunk_id": 11, "material_title": "课程讲义"}],
         [{"id": 5, "title": "外部文章", "url": "https://example.com"}],
@@ -230,5 +250,6 @@ def test_execution_summary_contains_sources_and_tool_states_but_no_reasoning():
     assert summary["internal_sources"] == [{"chunk_id": 11, "material_title": "课程讲义"}]
     assert summary["external_sources"][0]["title"] == "外部文章"
     assert summary["context_used"]["memory_count"] == 2
+    assert summary["updates"]["memory"][0]["memory_key"] == "style_pref"
     assert "推理过程" in summary["note"]
     assert "chain" not in str(summary).lower()

@@ -582,6 +582,61 @@ def get_today_session(cursor, user_id: int, course_id: int, today: date) -> dict
     return get_session(cursor, session_id, user_id) if session_id else None
 
 
+def list_session_items_for_sessions(cursor, session_ids: list[int]) -> dict[int, list[dict]]:
+    """Batch-load session items keyed by session_id."""
+    if not session_ids:
+        return {}
+    StudySessionItem = reflected_model("study_session_items")
+    KnowledgePoint = reflected_model("knowledge_points")
+    rows = cursor.session.execute(
+        select(StudySessionItem, KnowledgePoint.name.label("knowledge_point_name"))
+        .outerjoin(KnowledgePoint, KnowledgePoint.id == StudySessionItem.knowledge_point_id)
+        .where(StudySessionItem.session_id.in_(session_ids))
+        .order_by(StudySessionItem.session_id, StudySessionItem.sort_order, StudySessionItem.id)
+    )
+    grouped: dict[int, list[dict]] = {int(session_id): [] for session_id in session_ids}
+    for item_model, point_name in rows:
+        row = _row(item_model) or {}
+        content_ref = row.get("content_ref")
+        row["content_ref"] = (
+            json.loads(content_ref or "{}") if isinstance(content_ref, str) else content_ref or {}
+        )
+        row["knowledge_point_name"] = point_name
+        grouped.setdefault(int(row["session_id"]), []).append(row)
+    return grouped
+
+
+def list_today_sessions_for_user(cursor, user_id: int, today: date) -> dict[int, dict]:
+    """Return one today session per course for the user, keyed by course_id."""
+    StudySession = reflected_model("study_sessions")
+    rows = list(
+        cursor.session.scalars(
+            select(StudySession)
+            .where(
+                StudySession.user_id == user_id,
+                StudySession.scheduled_date == today,
+                StudySession.status.in_(("planned", "in_progress", "completed", "evaluated")),
+            )
+            .order_by(StudySession.course_id, StudySession.id)
+        )
+    )
+    by_course: dict[int, dict] = {}
+    session_ids: list[int] = []
+    for session_model in rows:
+        session = _row(session_model)
+        if session is None:
+            continue
+        course_id = int(session["course_id"])
+        if course_id in by_course:
+            continue
+        by_course[course_id] = session
+        session_ids.append(int(session["id"]))
+    items_by_session = list_session_items_for_sessions(cursor, session_ids)
+    for session in by_course.values():
+        session["items"] = items_by_session.get(int(session["id"]), [])
+    return by_course
+
+
 def get_latest_question_for_point(
     cursor,
     user_id: int,

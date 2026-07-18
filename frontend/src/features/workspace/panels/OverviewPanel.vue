@@ -1,13 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ArrowRight, Clock3, Route, Target, TrendingDown, TrendingUp } from 'lucide-vue-next'
-import {
-  getCourseProgress,
-  getLearningRoadmap,
-  getPracticeStats,
-  getStudyPlan,
-  getTodayLearning
-} from '../../../api/learning'
+import { getCourseWorkspaceOverview } from '../../../api/learning'
 import { calculateRoadmapProgress } from '../roadmapProgress'
 
 
@@ -49,18 +43,20 @@ const todayCompleted = computed(() => ['completed', 'evaluated'].includes(today.
 
 async function load() {
   loading.value = true
-  const [progressResponse, practiceResponse, planResponse, roadmapResponse, todayResponse] = await Promise.all([
-    getCourseProgress(props.courseId),
-    getPracticeStats(props.courseId),
-    getStudyPlan(props.courseId),
-    getLearningRoadmap(props.courseId),
-    getTodayLearning(props.courseId)
-  ])
-  progress.value = progressResponse.code === 200 ? progressResponse.data : null
-  practice.value = practiceResponse.code === 200 ? practiceResponse.data : null
-  plan.value = planResponse.code === 200 ? planResponse.data : null
-  roadmap.value = roadmapResponse.code === 200 ? roadmapResponse.data : null
-  today.value = todayResponse.code === 200 ? todayResponse.data : null
+  const response = await getCourseWorkspaceOverview(props.courseId)
+  if (response.code === 200) {
+    progress.value = response.data?.progress || null
+    practice.value = response.data?.practice || null
+    plan.value = response.data?.plan || null
+    roadmap.value = response.data?.roadmap || null
+    today.value = response.data?.today || null
+  } else {
+    progress.value = null
+    practice.value = null
+    plan.value = null
+    roadmap.value = null
+    today.value = null
+  }
   loading.value = false
 }
 
@@ -107,7 +103,11 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
         <div v-if="progress?.recent_changes?.length" class="change-list">
           <article v-for="change in progress.recent_changes.slice(0, 3)" :key="change.id">
             <component :is="Number(change.after_value) >= Number(change.before_value) ? TrendingUp : TrendingDown" :size="14" />
-            <div><strong>{{ change.knowledge_point_name }}</strong><span>{{ change.reason }}</span></div>
+            <div>
+              <strong>{{ change.knowledge_point_name }}</strong>
+              <span>{{ change.reason }}</span>
+              <small v-if="change.formula || change.weight">{{ change.formula || `weight ${change.weight}` }}</small>
+            </div>
             <b>{{ Number(change.before_value).toFixed(0) }} → {{ Number(change.after_value).toFixed(0) }}</b>
           </article>
         </div>
@@ -152,12 +152,12 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
 <style scoped>
 .overview-panel { display: grid; gap: 28px; }
 .panel-state { min-height: 260px; display: grid; place-items: center; color: var(--text-secondary); font-size: 14px; }
-.metric-band { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-block: 1px solid var(--border-subtle); }
-.metric-band > div { min-width: 0; padding: 17px 14px; border-right: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+.metric-band { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--border-subtle); border-radius: 20px; overflow: hidden; background: rgba(255, 255, 255, .72); box-shadow: var(--shadow-small); }
+.metric-band > div { min-width: 0; padding: 18px 16px; border-right: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
 .metric-band > div:nth-child(2n) { border-right: 0; }
 .metric-band > div:nth-last-child(-n+2) { border-bottom: 0; }
 .metric-band span { display: block; color: var(--text-tertiary); font-size: 12px; }
-.metric-band strong { display: inline-block; margin-top: 3px; color: var(--text-primary); font-size: 26px; font-weight: 620; }
+.metric-band strong { display: inline-block; margin-top: 4px; color: var(--text-primary); font-size: 26px; font-weight: 620; }
 .metric-band small { margin-left: 2px; color: var(--text-tertiary); font-size: 11px; }
 .panel-heading { display: flex; align-items: center; gap: 8px; color: var(--accent); }
 .panel-heading h3 { font-size: 17px; font-weight: 620; }
@@ -172,41 +172,42 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
 .route-snapshot > p,
 .mastery-snapshot > p,
 .change-snapshot > p { color: var(--text-secondary); font-size: 13px; line-height: 1.68; }
-.adjustment-note { margin-top: 2px; padding: 11px 12px; border-radius: 12px; background: rgba(169, 101, 0, .08); }
+.adjustment-note { margin-top: 2px; padding: 12px 14px; border-radius: 14px; background: rgba(169, 101, 0, .08); }
 .adjustment-note span { color: var(--warning); font-size: 11px; font-weight: 600; }
-.adjustment-note p { margin-top: 2px; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
-.distribution-bar { height: 9px; display: flex; overflow: hidden; border-radius: 999px; background: var(--surface-tertiary); }
+.adjustment-note p { margin-top: 3px; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+.distribution-bar { height: 10px; display: flex; overflow: hidden; border-radius: 999px; background: var(--surface-tertiary); }
 .distribution-bar i { min-width: 0; height: 100%; }
 .distribution-bar .weak,
-.distribution-legend .weak i { background: #c85a50; }
+.distribution-legend .weak i { background: #d96b66; }
 .distribution-bar .steady,
-.distribution-legend .steady i { background: #c99534; }
+.distribution-legend .steady i { background: #d0a33e; }
 .distribution-bar .strong,
-.distribution-legend .strong i { background: #2d8163; }
-.distribution-legend { display: flex; flex-wrap: wrap; gap: 7px 12px; }
-.distribution-legend span { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 12px; }
+.distribution-legend .strong i { background: #3d9a5a; }
+.distribution-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.distribution-legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
 .distribution-legend span i { width: 8px; height: 8px; border-radius: 50%; }
 .change-list { display: grid; }
-.change-list article { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
+.change-list article { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
 .change-list article:last-child { border-bottom: 0; }
-.change-list svg { color: var(--accent); margin-top: 1px; }
-.change-list div { min-width: 0; display: grid; gap: 1px; }
+.change-list svg { color: var(--accent); margin-top: 2px; }
+.change-list div { min-width: 0; display: grid; gap: 2px; }
 .change-list strong { overflow: hidden; color: var(--text-primary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .change-list span,
 .change-list b { color: var(--text-secondary); font-size: 11px; }
-.next-block { display: grid; gap: 7px; padding-bottom: 22px; border-bottom: 1px solid var(--border-subtle); }
-.next-block > span { margin-top: 8px; color: var(--accent); font-size: 12px; font-weight: 600; }
+.change-list small { color: var(--text-tertiary); font-size: 10px; }
+.next-block { display: grid; gap: 8px; padding: 18px; border: 1px solid rgba(52, 120, 246, .12); border-radius: 18px; background: linear-gradient(135deg, rgba(52, 120, 246, .08), rgba(109, 93, 252, .05)); }
+.next-block > span { color: var(--accent); font-size: 12px; font-weight: 600; }
 .next-block > strong { color: var(--text-primary); font-size: 17px; }
 .next-block p { color: var(--text-secondary); font-size: 13px; line-height: 1.68; }
-.next-block button { min-height: 40px; display: inline-flex; align-items: center; gap: 5px; justify-self: start; margin-top: 4px; padding: 0 13px; border-radius: 12px; color: #fff; background: var(--accent); font-size: 13px; font-weight: 600; }
-.status-list { display: grid; }
-.status-list button { min-height: 50px; display: grid; grid-template-columns: minmax(0, 1fr) auto 18px; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); text-align: left; }
-.status-list button:hover { color: var(--accent); }
+.next-block button { min-height: 40px; display: inline-flex; align-items: center; gap: 5px; justify-self: start; margin-top: 2px; padding: 0 14px; border-radius: 12px; color: #fff; background: var(--gradient-brand); font-size: 13px; font-weight: 600; box-shadow: 0 8px 18px rgba(79, 124, 255, .2); }
+.status-list { display: grid; gap: 4px; }
+.status-list button { min-height: 52px; display: grid; grid-template-columns: minmax(0, 1fr) auto 18px; align-items: center; gap: 8px; padding: 0 10px; border-radius: 14px; color: var(--text-secondary); text-align: left; }
+.status-list button:hover { color: var(--accent); background: var(--accent-soft); }
 .status-list span,
 .status-list strong { font-size: 13px; }
 .status-list strong { color: var(--text-primary); }
-.course-rhythm { display: grid; gap: 5px; }
-.course-rhythm p { margin-top: 7px; color: var(--text-primary); font-size: 15px; font-weight: 600; }
+.course-rhythm { display: grid; gap: 6px; }
+.course-rhythm p { color: var(--text-primary); font-size: 15px; font-weight: 600; }
 .course-rhythm > span { color: var(--text-secondary); font-size: 13px; line-height: 1.68; }
 @media (prefers-reduced-motion: reduce) { .route-progress i { transition: none; } }
 </style>

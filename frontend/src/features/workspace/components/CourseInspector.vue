@@ -103,21 +103,21 @@ const current = computed(() => tabs.find(tab => tab.id === props.activePanel) ||
 </template>
 
 <style scoped>
-.course-inspector { width: 460px; height: 100dvh; display: grid; grid-template-rows: 78px auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--border-subtle); background: rgba(250, 250, 252, .96); box-shadow: -14px 0 44px rgba(0, 0, 0, .08); backdrop-filter: blur(24px); }
-.inspector-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px 0 22px; border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, .84); }
+.course-inspector { width: 460px; height: 100dvh; display: grid; grid-template-rows: 78px auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--border-subtle); background: linear-gradient(180deg, rgba(255, 255, 255, .97), rgba(248, 249, 252, .96)); box-shadow: -14px 0 44px rgba(0, 0, 0, .08); backdrop-filter: blur(24px); }
+.inspector-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px 0 22px; border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, .9); }
 .inspector-header > div { display: grid; gap: 3px; }
 .inspector-header span { color: var(--text-tertiary); font-size: 12px; }
 .inspector-header strong { color: var(--text-primary); font-size: 21px; font-weight: 640; letter-spacing: -.02em; }
 .inspector-header button { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; color: var(--text-secondary); }
 .inspector-header button:hover { color: var(--accent); background: var(--accent-soft); }
-.inspector-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, .72); }
+.inspector-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, .8); }
 .inspector-tab-group { min-width: 0; display: grid; gap: 6px; }
 .inspector-tab-group > span { color: var(--text-tertiary); font-size: 11px; font-weight: 600; }
 .inspector-tab-group > div { display: flex; flex-wrap: wrap; gap: 4px; }
-.inspector-tabs button { min-width: 0; min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 8px; border-radius: 10px; color: var(--text-secondary); font-size: 12px; font-weight: 550; }
+.inspector-tabs button { min-width: 0; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; border-radius: 11px; color: var(--text-secondary); font-size: 12px; font-weight: 550; }
 .inspector-tabs button:hover { color: var(--text-primary); background: rgba(0, 0, 0, .04); }
-.inspector-tabs button.active { color: var(--accent); background: var(--accent-soft); }
-.inspector-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 20px 36px; }
+.inspector-tabs button.active { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(52, 120, 246, .08); }
+.inspector-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 20px 36px; background: radial-gradient(circle at top right, rgba(52, 120, 246, .045), transparent 28%); }
 @media (max-width: 1180px) {
   .course-inspector { box-shadow: -12px 0 36px rgba(25, 35, 30, .12); }
 }

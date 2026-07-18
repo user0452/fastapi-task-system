@@ -9,8 +9,16 @@ describe('message anchor titles', () => {
       { id: 8, role: 'assistant', content: '回答' },
       { id: 9, role: 'user', content: '第二个问题' }
     ])).toEqual([
-      { id: 7, title: '第一段 重点 继续说明' },
-      { id: 9, title: '第二个问题' }
+      {
+        id: 7,
+        title: '第一段 重点 继续说明',
+        preview: '第一段 重点 继续说明'
+      },
+      {
+        id: 9,
+        title: '第二个问题',
+        preview: '第二个问题'
+      }
     ])
   })
 

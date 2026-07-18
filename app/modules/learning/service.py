@@ -785,19 +785,42 @@ def get_today_overview(user_id: int) -> dict:
     with get_cursor() as cursor:
         courses = course_repository.list_courses(cursor, user_id, include_archived=False)
         roadmap_service.attach_summaries(cursor, user_id, courses)
+        sessions_by_course = repository.list_today_sessions_for_user(cursor, user_id, today)
+        # Batch-load question payloads for every today session item.
+        question_ids: list[int] = []
+        for session in sessions_by_course.values():
+            for item in session.get("items", []):
+                question_id = item.get("content_ref", {}).get("question_id")
+                if question_id:
+                    question_ids.append(int(question_id))
+        questions = repository.get_questions_by_ids(cursor, question_ids, user_id)
+        question_map = {item["id"]: item for item in questions}
         rows = []
         total_minutes = 0
         total_items = 0
         completed = 0
         for course in courses:
-            session = repository.get_today_session(cursor, user_id, course["id"], today)
-            hydrated = _hydrate_session_questions(cursor, session, user_id) if session else None
-            if hydrated:
-                total_minutes += int(hydrated.get("estimated_minutes") or 0)
-                total_items += len(hydrated.get("items") or [])
-                if hydrated.get("status") in {"completed", "evaluated"}:
+            session = sessions_by_course.get(int(course["id"]))
+            if session is not None:
+                for item in session.get("items", []):
+                    question_id = item.get("content_ref", {}).get("question_id")
+                    if question_id in question_map:
+                        question = question_map[question_id]
+                        item["question"] = {
+                            key: question[key]
+                            for key in [
+                                "id",
+                                "knowledge_point_id",
+                                "question_type",
+                                "question",
+                                "difficulty",
+                            ]
+                        }
+                total_minutes += int(session.get("estimated_minutes") or 0)
+                total_items += len(session.get("items") or [])
+                if session.get("status") in {"completed", "evaluated"}:
                     completed += 1
-            rows.append({"course": course, "session": hydrated})
+            rows.append({"course": course, "session": session})
         record_audit(
             user_id,
             "COURSE_TODAY_OVERVIEW_VIEWED",
@@ -815,6 +838,43 @@ def get_today_overview(user_id: int) -> dict:
             "completed": completed,
             "with_session": sum(1 for row in rows if row["session"]),
         },
+    }
+
+
+def get_course_workspace_overview(user_id: int, course_id: int) -> dict:
+    """Single payload for the course inspector overview panel."""
+    course = get_user_course(user_id, course_id)
+    today = get_user_local_date(user_id)
+    with get_cursor() as cursor:
+        progress = repository.progress_summary(cursor, user_id, course_id)
+        practice = repository.practice_statistics(cursor, user_id, course_id)
+        plan = repository.get_course_plan(cursor, user_id, course_id)
+        session = repository.get_today_session(cursor, user_id, course_id, today)
+        today_data = _hydrate_session_questions(cursor, session, user_id) if session else None
+        record_audit(
+            user_id,
+            "COURSE_WORKSPACE_OVERVIEW_VIEWED",
+            "course",
+            course_id,
+            {
+                "has_plan": plan is not None,
+                "has_today": today_data is not None,
+            },
+            cursor=cursor,
+        )
+    progress["course"] = course
+    total = progress["session_total"]
+    progress["completion_rate"] = (
+        round(progress["session_completed"] / total * 100, 2) if total else 0
+    )
+    roadmap = roadmap_service.get_learning_roadmap(user_id, course_id)
+    return {
+        "course": course,
+        "progress": progress,
+        "practice": practice,
+        "plan": plan,
+        "roadmap": roadmap,
+        "today": today_data,
     }
 
 

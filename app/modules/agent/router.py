@@ -177,13 +177,28 @@ async def chat_stream(request: AgentChatRequest, http_request: Request, user=Dep
 
         async def run() -> None:
             try:
-                publish("status", "已收到问题，正在加载课程上下文")
-                publish("status", "Agent 正在选择并执行工具")
+                def publish_status(payload: object) -> None:
+                    if isinstance(payload, dict):
+                        message = str(payload.get("message") or "").strip()
+                        phase = str(payload.get("phase") or "thinking")
+                        tool = payload.get("tool")
+                        publish(
+                            "status",
+                            {
+                                "message": message or "正在处理",
+                                "phase": phase,
+                                "tool": tool,
+                            },
+                        )
+                    else:
+                        publish("status", {"message": str(payload), "phase": "thinking"})
+
                 result = await run_native_tool_agent_chat_async(
                     user["id"],
                     request,
                     on_delta=lambda delta: publish("reply_delta", delta),
                     cancel_event=cancelled,
+                    on_status=publish_status,
                 )
                 publish("result", result)
             except Exception as exc:
@@ -210,7 +225,15 @@ async def chat_stream(request: AgentChatRequest, http_request: Request, user=Dep
                         if event_type == "worker_done":
                             worker_done = True
                         elif event_type == "status":
-                            yield _event("status", message=str(payload))
+                            if isinstance(payload, dict):
+                                yield _event(
+                                    "status",
+                                    message=str(payload.get("message") or ""),
+                                    phase=str(payload.get("phase") or "thinking"),
+                                    tool=payload.get("tool"),
+                                )
+                            else:
+                                yield _event("status", message=str(payload), phase="thinking")
                         elif event_type == "reply_delta":
                             yield _event("reply_delta", delta=str(payload))
                         elif event_type == "result":

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } fro
 import { useRoute, useRouter } from 'vue-router'
 import {
   BookOpenText,
+  Globe,
   History,
   ListTree,
   PanelRightOpen,
@@ -29,6 +30,9 @@ const outlineOpen = ref(false)
 const historyOpen = ref(false)
 const activeMessageId = ref(null)
 const highlightedMessageId = ref(null)
+// False until restored history is pinned to the bottom, so the first paint is already latest.
+const historyPinned = ref(true)
+const webSearchMode = ref(localStorage.getItem('a3:web-search-mode') || 'auto')
 let scrollFrame = null
 let highlightTimer = null
 let suppressActiveUntil = 0
@@ -40,10 +44,60 @@ const quickPrompts = [
   '帮我找网上的视频讲解'
 ]
 
+const webSearchMeta = computed(() => ({
+  off: {
+    label: '联网已关',
+    title: '联网搜索：关闭。点击切换为开启',
+    hint: '仅用课程资料回答'
+  },
+  on: {
+    label: '联网已开',
+    title: '联网搜索：开启。点击切换为自动',
+    hint: '回答前优先联网搜索'
+  },
+  auto: {
+    label: '联网自动',
+    title: '联网搜索：自动。点击切换为关闭',
+    hint: '按问题需要自动决定是否联网'
+  }
+}[webSearchMode.value] || {
+  label: '联网自动',
+  title: '联网搜索：自动',
+  hint: '按问题需要自动决定是否联网'
+}))
+
+function cycleWebSearchMode() {
+  const order = ['auto', 'on', 'off']
+  const current = order.indexOf(webSearchMode.value)
+  webSearchMode.value = order[(current + 1) % order.length]
+  localStorage.setItem('a3:web-search-mode', webSearchMode.value)
+}
+
+async function pinToLatest() {
+  // Two ticks: first for v-if swap (loading -> messages), second for layout height.
+  await nextTick()
+  await nextTick()
+  if (!viewport.value) {
+    historyPinned.value = true
+    return
+  }
+  // Instant jump — opening a session should already be at the latest messages.
+  viewport.value.style.scrollBehavior = 'auto'
+  viewport.value.scrollTop = viewport.value.scrollHeight
+  viewport.value.style.removeProperty('scroll-behavior')
+  historyPinned.value = true
+  scheduleActiveMessageUpdate()
+}
+
 async function scrollBottom(behavior = 'auto') {
   await nextTick()
-  if (viewport.value) {
-    viewport.value.scrollTo({ top: viewport.value.scrollHeight, behavior })
+  if (!viewport.value) return
+  if (behavior === 'smooth') {
+    viewport.value.scrollTo({ top: viewport.value.scrollHeight, behavior: 'smooth' })
+  } else {
+    viewport.value.style.scrollBehavior = 'auto'
+    viewport.value.scrollTop = viewport.value.scrollHeight
+    viewport.value.style.removeProperty('scroll-behavior')
   }
   scheduleActiveMessageUpdate()
 }
@@ -74,7 +128,8 @@ const {
   scrollBottom,
   focusInput: () => inputElement.value?.focus(),
   onDataChanged: result => emit('data-changed', result),
-  onSessionSelected: () => { historyOpen.value = false }
+  onSessionSelected: () => { historyOpen.value = false },
+  webSearchMode
 })
 
 const userMessageCount = computed(() => messages.value.filter(message => message.role === 'user').length)
@@ -197,7 +252,13 @@ watch(() => props.courseId, courseId => {
   outlineOpen.value = false
   historyOpen.value = false
   activeMessageId.value = null
+  historyPinned.value = false
   switchCourse(courseId)
+})
+
+watch(activeId, () => {
+  // Hide the list until the restored session is pinned to the bottom.
+  historyPinned.value = false
 })
 
 watch(() => messages.value.filter(message => message.role === 'user').map(message => message.id).join(','), async () => {
@@ -205,7 +266,16 @@ watch(() => messages.value.filter(message => message.role === 'user').map(messag
   scheduleActiveMessageUpdate()
 })
 
+// After history restore finishes, open already at the latest messages (no animated scroll).
+watch(loadingMessages, async (loading, wasLoading) => {
+  if (wasLoading && !loading) {
+    if (messages.value.length) await pinToLatest()
+    else historyPinned.value = true
+  }
+})
+
 onMounted(async () => {
+  historyPinned.value = false
   await initialize()
   if (route.query.prompt) {
     const prompt = String(route.query.prompt)
@@ -213,8 +283,14 @@ onMounted(async () => {
     delete query.prompt
     await router.replace({ path: route.path, query })
     await send(prompt)
+    historyPinned.value = true
+    return
   }
-  scheduleActiveMessageUpdate()
+  if (messages.value.length) await pinToLatest()
+  else {
+    historyPinned.value = true
+    scheduleActiveMessageUpdate()
+  }
 })
 
 onBeforeUnmount(() => {
@@ -272,7 +348,12 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
         ><PanelRightOpen :size="18" /></button>
       </header>
 
-      <div ref="viewport" class="chat-viewport" @scroll.passive="scheduleActiveMessageUpdate">
+      <div
+        ref="viewport"
+        class="chat-viewport"
+        :class="{ 'is-pinning': !historyPinned && !loadingMessages && messages.length }"
+        @scroll.passive="scheduleActiveMessageUpdate"
+      >
         <div v-if="loadingMessages" class="chat-state">正在恢复课程对话</div>
         <div v-else-if="loadError" class="chat-state error-state">
           <strong>会话暂时无法加载</strong>
@@ -316,6 +397,18 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
       <footer class="chat-composer">
         <form @submit.prevent="submitMessage">
           <button type="button" title="打开资料面板" aria-label="打开资料面板" @click="$emit('open-panel', 'materials')"><Paperclip :size="18" /></button>
+          <button
+            type="button"
+            class="web-search-toggle"
+            :class="`mode-${webSearchMode}`"
+            :title="webSearchMeta.title"
+            :aria-label="webSearchMeta.title"
+            :aria-pressed="webSearchMode !== 'off'"
+            @click="cycleWebSearchMode"
+          >
+            <Globe :size="16" />
+            <span>{{ webSearchMeta.label }}</span>
+          </button>
           <textarea
             ref="inputElement"
             v-model="input"
@@ -328,7 +421,7 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
           ></textarea>
           <button class="send-action" type="submit" :disabled="sending || !input.trim()" title="发送" aria-label="发送消息"><Send :size="18" /></button>
         </form>
-        <small>AI 可能出错，请核对重要信息。课程资料与外部来源会分别标注。</small>
+        <small>AI 可能出错，请核对重要信息。课程资料与外部来源会分别标注。{{ webSearchMeta.hint }}</small>
       </footer>
     </div>
 
@@ -348,8 +441,8 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
 
 <style scoped>
 .workspace-chat-shell { position: relative; min-width: 0; height: 100dvh; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; background: var(--surface-primary); }
-.workspace-chat-shell.has-outline { grid-template-columns: 254px minmax(0, 1fr); }
-.workspace-chat { min-width: 0; min-height: 0; display: grid; grid-template-rows: 68px minmax(0, 1fr) auto; background: rgba(255, 255, 255, .94); }
+.workspace-chat-shell.has-outline { grid-template-columns: minmax(0, 1fr); }
+.workspace-chat { position: relative; z-index: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: 68px minmax(0, 1fr) auto; background: rgba(255, 255, 255, .94); }
 .chat-header { display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, .84); backdrop-filter: blur(18px); }
 .course-identity { min-width: 0; display: flex; align-items: center; gap: 11px; }
 .course-icon { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 38px; border-radius: 13px; color: var(--accent); background: var(--accent-soft); }
@@ -366,7 +459,8 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
 .agent-status + .history-action { margin-left: 0; }
 .agent-status i { width: 8px; height: 8px; border: 1px solid var(--accent); border-top-color: transparent; border-radius: 50%; animation: spin 700ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.chat-viewport { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; padding: 38px clamp(20px, 4vw, 58px) 32px; background: var(--surface-secondary); }
+.chat-viewport { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; padding: 38px clamp(20px, 4vw, 58px) 32px; background: var(--surface-secondary); }
+.chat-viewport.is-pinning { visibility: hidden; }
 .chat-state { height: 100%; display: grid; place-items: center; align-content: center; gap: 10px; color: var(--text-secondary); font-size: 14px; text-align: center; }
 .chat-state strong { color: var(--text-primary); font-size: 17px; }
 .chat-state button { min-height: 40px; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: 12px; color: var(--accent); background: #fff; font-weight: 600; }
@@ -386,10 +480,15 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
   18%, 72% { background: rgba(52, 120, 246, .09); box-shadow: 0 0 0 10px rgba(52, 120, 246, .09); }
 }
 .chat-composer { padding: 12px clamp(16px, 3vw, 38px) 14px; background: linear-gradient(to top, #fff 72%, rgba(255, 255, 255, .84)); }
-.chat-composer form { width: min(850px, 100%); min-height: 60px; display: grid; grid-template-columns: 42px minmax(0, 1fr) 44px; align-items: end; gap: 7px; margin: 0 auto; padding: 8px; border: 1px solid var(--border-subtle); border-radius: 23px; background: rgba(255, 255, 255, .94); box-shadow: 0 10px 34px rgba(0, 0, 0, .08); transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease; }
+.chat-composer form { width: min(850px, 100%); min-height: 60px; display: grid; grid-template-columns: 42px auto minmax(0, 1fr) 44px; align-items: end; gap: 7px; margin: 0 auto; padding: 8px; border: 1px solid var(--border-subtle); border-radius: 23px; background: rgba(255, 255, 255, .94); box-shadow: 0 10px 34px rgba(0, 0, 0, .08); transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease; }
 .chat-composer form:focus-within { border-color: rgba(52, 120, 246, .5); box-shadow: var(--shadow-focus), 0 14px 38px rgba(0, 0, 0, .09); }
-.chat-composer form > button:not(.send-action) { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; color: var(--text-tertiary); }
-.chat-composer form > button:not(.send-action):hover { color: var(--accent); background: var(--accent-soft); }
+.chat-composer form > button:not(.send-action):not(.web-search-toggle) { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; color: var(--text-tertiary); }
+.chat-composer form > button:not(.send-action):not(.web-search-toggle):hover { color: var(--accent); background: var(--accent-soft); }
+.web-search-toggle { min-height: 42px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: 14px; color: var(--text-secondary); background: rgba(0, 0, 0, .035); font-size: 12px; font-weight: 600; white-space: nowrap; transition: color var(--duration-fast) ease, background var(--duration-fast) ease, box-shadow var(--duration-fast) ease; }
+.web-search-toggle:hover { color: var(--accent); background: var(--accent-soft); }
+.web-search-toggle.mode-auto { color: var(--accent); background: var(--accent-soft); }
+.web-search-toggle.mode-on { color: #fff; background: var(--gradient-brand); box-shadow: 0 8px 18px rgba(79, 124, 255, .18); }
+.web-search-toggle.mode-off { color: var(--text-tertiary); }
 .chat-composer textarea { width: 100%; min-height: 42px; max-height: 156px; resize: none; overflow-y: auto; padding: 9px 4px 7px; border: 0; background: transparent; color: var(--text-primary); font-size: 15px; line-height: 1.6; }
 .chat-composer textarea::placeholder { color: var(--text-tertiary); }
 .send-action { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 14px; color: #fff; background: var(--gradient-brand); box-shadow: 0 8px 18px rgba(79, 124, 255, .24); }
@@ -398,10 +497,6 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
 .history-scrim { position: absolute; inset: 0; z-index: 49; width: 100%; background: rgba(20, 22, 28, .2); backdrop-filter: blur(3px); }
 .history-drawer { position: absolute; z-index: 50; inset: 12px 12px 12px auto; width: min(340px, calc(100% - 24px)); overflow: hidden; border: 1px solid rgba(255, 255, 255, .6); border-radius: 24px; background: rgba(248, 248, 250, .96); box-shadow: var(--shadow-floating); backdrop-filter: blur(24px); }
 .history-drawer :deep(.session-panel) { height: 100%; border: 0; background: transparent; }
-
-@media (max-width: 1180px) and (min-width: 821px) {
-  .workspace-chat-shell.has-outline { grid-template-columns: 70px minmax(0, 1fr); }
-}
 
 @media (max-width: 820px) {
   .workspace-chat-shell,
@@ -423,8 +518,10 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
   .welcome-actions { grid-template-columns: 1fr; }
   .chat-composer { padding: 8px 10px 10px; }
   .chat-composer > small { display: none; }
-  .chat-composer form { min-height: 56px; grid-template-columns: 40px minmax(0, 1fr) 42px; border-radius: 20px; }
-  .chat-composer form > button:not(.send-action),
+  .chat-composer form { min-height: 56px; grid-template-columns: 40px 40px minmax(0, 1fr) 42px; border-radius: 20px; }
+  .web-search-toggle { width: 40px; min-height: 40px; padding: 0; justify-content: center; border-radius: 12px; }
+  .web-search-toggle span { display: none; }
+  .chat-composer form > button:not(.send-action):not(.web-search-toggle),
   .send-action { width: 40px; height: 40px; }
 }
 

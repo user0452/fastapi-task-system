@@ -166,8 +166,8 @@ watch(() => courses.current?.id, syncPreferences)
 .page-heading h1 { margin-top: 7px; font-size: 42px; font-weight: 650; letter-spacing: -.045em; }
 .page-heading p { margin-top: 10px; color: var(--text-secondary); font-size: 15px; }
 .settings-layout { display: grid; gap: 20px; }
-.settings-section { border: 1px solid var(--border-subtle); border-radius: 22px; background: rgba(255, 255, 255, .86); overflow: hidden; box-shadow: var(--shadow-small); }
-.section-heading { display: flex; align-items: flex-start; gap: 12px; padding: 20px 22px; border-bottom: 1px solid #e0e5e2; color: var(--accent); border-bottom-color: var(--border-subtle); }
+.settings-section { overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 22px; background: rgba(255, 255, 255, .86); box-shadow: var(--shadow-small); }
+.section-heading { display: flex; align-items: flex-start; gap: 12px; padding: 20px 22px; border-bottom: 1px solid var(--border-subtle); color: var(--accent); }
 .section-heading h2 { color: var(--text-primary); font-size: 17px; font-weight: 620; }
 .section-heading p { margin-top: 4px; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
 .account-row { display: flex; align-items: center; gap: 13px; padding: 20px 22px; }
@@ -176,15 +176,15 @@ watch(() => courses.current?.id, syncPreferences)
 .account-row strong { font-size: 14px; }
 .account-row span { color: var(--text-tertiary); font-size: 12px; }
 .account-row button { margin-left: auto; }
-.profile-summary { display: grid; grid-template-columns: 1fr 2fr; border-top: 1px solid #e3e7e4; border-top-color: var(--border-subtle); }
-.profile-summary > div { display: grid; gap: 5px; padding: 17px 22px; border-right: 1px solid #e3e7e4; border-right-color: var(--border-subtle); }
+.profile-summary { display: grid; grid-template-columns: 1fr 2fr; border-top: 1px solid var(--border-subtle); }
+.profile-summary > div { display: grid; gap: 5px; padding: 17px 22px; border-right: 1px solid var(--border-subtle); }
 .profile-summary > div:last-child { border-right: 0; }
 .profile-summary span { color: var(--text-tertiary); font-size: 12px; }
 .profile-summary strong { font-size: 13px; font-weight: 580; }
 .preference-form { display: grid; grid-template-columns: 1fr 1.3fr auto; align-items: end; gap: 14px; padding: 20px 22px; }
 .preference-form label { display: grid; gap: 7px; }
 .preference-form label > span { color: var(--text-secondary); font-size: 13px; font-weight: 600; }
-.preference-form input { width: 100%; height: 44px; padding: 0 13px; border: 1px solid #cbd4cf; border-radius: 13px; background: var(--surface-secondary); font-size: 14px; border-color: var(--border-strong); }
+.preference-form input { width: 100%; height: 44px; padding: 0 13px; border: 1px solid var(--border-strong); border-radius: 13px; background: var(--surface-secondary); font-size: 14px; }
 .number-field { position: relative; }
 .number-field input { padding-right: 42px; }
 .number-field small { position: absolute; right: 13px; top: 13px; color: var(--text-tertiary); font-size: 11px; }
@@ -192,11 +192,11 @@ watch(() => courses.current?.id, syncPreferences)
 .secondary-button,
 .text-button { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 15px; border-radius: 13px; font-size: 13px; font-weight: 600; }
 .primary-button { color: #fff; background: var(--gradient-brand); box-shadow: 0 8px 20px rgba(79, 124, 255, .2); }
-.secondary-button { color: var(--accent); border: 1px solid #aec0b8; background: #fff; border-color: rgba(52, 120, 246, .24); }
+.secondary-button { color: var(--accent); border: 1px solid rgba(52, 120, 246, .24); background: #fff; }
 .text-button { margin: 0 18px 16px; color: var(--accent); padding: 0; }
 .developer-section > .secondary-button { margin: 0 18px 16px; }
 .capability-list { display: grid; }
-.capability-row { min-height: 72px; display: flex; align-items: center; gap: 18px; padding: 14px 22px; border-bottom: 1px solid #e3e7e4; border-bottom-color: var(--border-subtle); }
+.capability-row { min-height: 72px; display: flex; align-items: center; gap: 18px; padding: 14px 22px; border-bottom: 1px solid var(--border-subtle); }
 .capability-row:last-child { border-bottom: 0; }
 .capability-row > div { min-width: 0; flex: 1; display: grid; gap: 3px; }
 .capability-row strong { font-size: 14px; }
@@ -217,16 +217,14 @@ watch(() => courses.current?.id, syncPreferences)
 .toggle-row input:checked + i { background: var(--accent); }
 .toggle-row input:checked + i::after { transform: translateX(18px); }
 @media (max-width: 680px) {
-  .preference-form { grid-template-columns: 1fr; }
-  .profile-summary { grid-template-columns: 1fr; }
-  .profile-summary > div { border-right: 0; border-bottom: 1px solid #e3e7e4; }
-  .account-row { align-items: flex-start; flex-wrap: wrap; }
-  .account-row button { margin-left: 46px; }
-}
-@media (max-width: 680px) {
   .settings-page { padding: 26px 14px 48px; }
   .page-heading h1 { font-size: 36px; }
+  .preference-form { grid-template-columns: 1fr; }
+  .profile-summary { grid-template-columns: 1fr; }
+  .profile-summary > div { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
+  .account-row { align-items: flex-start; flex-wrap: wrap; }
   .account-row button { margin-left: 56px; }
   .capability-row { align-items: flex-start; }
 }
 </style>
+

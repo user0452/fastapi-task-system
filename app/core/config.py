@@ -71,7 +71,7 @@ class Settings:
             database_name=_env("DATABASE_NAME", _env("DB_NAME", "task_db2")),
             secret_key=_env("SECRET_KEY"),
             algorithm=_env("ALGORITHM", "HS256"),
-            access_token_expire_hours=int(_env("ACCESS_TOKEN_EXPIRE_HOURS", "2")),
+            access_token_expire_hours=int(_env("ACCESS_TOKEN_EXPIRE_HOURS", "168")),
             deepseek_api_key=_env("DEEPSEEK_API_KEY"),
             deepseek_base_url=_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             deepseek_model=_env("DEEPSEEK_MODEL"),

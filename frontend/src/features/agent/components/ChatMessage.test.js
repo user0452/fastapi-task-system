@@ -70,6 +70,26 @@ describe('ChatMessage', () => {
     expect(wrapper.find('script').exists()).toBe(false)
   })
 
+  it('shows live activity state while the assistant is streaming', () => {
+    const wrapper = mount(ChatMessage, {
+      props: {
+        message: {
+          ...baseMessage,
+          content: '',
+          streaming: true,
+          activity: {
+            phase: 'web_search',
+            message: '正在联网搜索：边界值分析',
+            tool: 'search_external_resources'
+          }
+        }
+      }
+    })
+
+    expect(wrapper.get('.activity-chip').text()).toContain('正在联网搜索：边界值分析')
+    expect(wrapper.get('.activity-chip').classes()).toContain('tone-search')
+  })
+
   it('adds a copy control to code blocks', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {

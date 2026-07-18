@@ -84,14 +84,14 @@ function openResource() {
 .play-mark { position: absolute; left: 10px; bottom: 9px; width: 29px; height: 29px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: rgba(20, 28, 24, .78); }
 .duration { position: absolute; right: 7px; bottom: 7px; padding: 2px 5px; border-radius: 3px; color: #fff; background: rgba(15, 20, 18, .78); font-size: 10px; font-variant-numeric: tabular-nums; }
 .video-copy { min-width: 0; display: grid; gap: 3px; padding: 9px 10px 7px; }
-.video-source { color: #27715d; font-size: 10px; font-weight: 740; text-transform: capitalize; }
+.video-source { color: var(--accent); font-size: 10px; font-weight: 740; text-transform: capitalize; }
 .video-copy strong { display: -webkit-box; overflow: hidden; color: #303b36; font-size: 12px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.video-copy p { display: -webkit-box; overflow: hidden; color: #74807a; font-size: 10px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.video-actions { height: 38px; display: flex; align-items: center; gap: 2px; padding: 4px 7px; border-top: 1px solid #e4e8e5; }
+.video-copy p { display: -webkit-box; overflow: hidden; color: var(--text-secondary); font-size: 10px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.video-actions { height: 38px; display: flex; align-items: center; gap: 2px; padding: 4px 7px; border-top: 1px solid var(--border-subtle); }
 .video-actions button:not(.practice-action) { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 5px; color: #707b75; }
 .video-actions button:hover,
-.video-actions button.active { color: #176b58; background: #e6efea; }
-.video-actions .practice-action { min-height: 28px; margin-left: auto; padding: 0 7px; border-radius: 5px; color: #185f4e; border: 1px solid #b8cac1; font-size: 10px; font-weight: 760; }
+.video-actions button.active { color: var(--accent); background: var(--accent-soft); }
+.video-actions .practice-action { min-height: 28px; margin-left: auto; padding: 0 7px; border-radius: 5px; color: #185f4e; border: 1px solid rgba(52, 120, 246, .24); font-size: 10px; font-weight: 760; }
 .compact { display: grid; grid-template-columns: 105px minmax(0, 1fr); }
 .compact .video-cover { grid-row: 1 / span 2; aspect-ratio: auto; height: 100%; min-height: 104px; }
 .compact .video-actions { grid-column: 2; }

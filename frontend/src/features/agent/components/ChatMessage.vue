@@ -17,6 +17,23 @@ const emit = defineEmits(['navigate', 'open-panel', 'decide', 'resource-updated'
 const renderedContent = computed(() => (
   props.message.role === 'assistant' ? renderAssistantMarkdown(props.message.content) : ''
 ))
+const activity = computed(() => {
+  if (!props.message.streaming) return null
+  const current = props.message.activity
+  if (current?.message) return current
+  return {
+    phase: props.message.content ? 'answering' : 'thinking',
+    message: props.message.content ? '正在生成回答' : '正在思考',
+    tool: null
+  }
+})
+const activityTone = computed(() => {
+  const phase = activity.value?.phase
+  if (phase === 'web_search') return 'search'
+  if (phase === 'tool') return 'tool'
+  if (phase === 'answering') return 'answer'
+  return 'think'
+})
 
 function cards() {
   return props.message.tool_calls?.cards || []
@@ -58,9 +75,13 @@ async function handleMarkdownClick(event) {
   <article class="chat-message" :class="message.role">
     <span class="message-avatar"><UserRound v-if="message.role === 'user'" :size="15" /><Bot v-else :size="15" /></span>
     <div class="message-body">
-      <div v-if="message.role === 'assistant'" class="message-text markdown-body" v-html="renderedContent" @click="handleMarkdownClick"></div>
-      <p v-else class="message-text">{{ message.content }}</p>
-      <span v-if="message.streaming" class="typing-indicator"><i></i><i></i><i></i></span>
+      <div v-if="activity" class="activity-chip" :class="`tone-${activityTone}`" aria-live="polite">
+        <i></i>
+        <span>{{ activity.message }}</span>
+      </div>
+      <div v-if="message.role === 'assistant' && renderedContent" class="message-text markdown-body" v-html="renderedContent" @click="handleMarkdownClick"></div>
+      <p v-else-if="message.role !== 'assistant'" class="message-text">{{ message.content }}</p>
+      <span v-if="message.streaming && !activity" class="typing-indicator"><i></i><i></i><i></i></span>
 
       <div v-for="(card, index) in cards().filter(item => item.type !== 'practice')" :key="`${card.type}-${index}`" class="message-card">
         <template v-if="card.type === 'today'">
@@ -121,6 +142,32 @@ async function handleMarkdownClick(event) {
 .user .message-avatar { color: var(--text-secondary); background: var(--surface-tertiary); }
 .message-body { min-width: 0; padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-medium); background: var(--surface-primary); }
 .chat-message.assistant .message-body { padding: 2px 0; border: 0; background: transparent; }
+.activity-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  margin: 0 0 10px;
+  padding: 0 11px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, .035);
+  font-size: 12px;
+  font-weight: 600;
+}
+.activity-chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(52, 120, 246, .35);
+  animation: pulse 1.2s ease-out infinite;
+}
+.activity-chip.tone-think { color: var(--text-secondary); background: rgba(0, 0, 0, .04); }
+.activity-chip.tone-tool { color: #2858a6; background: var(--accent-soft); }
+.activity-chip.tone-search { color: #1f5ec8; background: rgba(52, 120, 246, .12); }
+.activity-chip.tone-answer { color: var(--success); background: rgba(36, 138, 61, .1); }
+.activity-chip.tone-answer i { background: var(--success); }
 .message-text { color: inherit; font-size: 15px; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
 .markdown-body { max-width: 100%; overflow-x: auto; color: var(--text-primary); font-size: 15px; line-height: 1.76; white-space: normal; }
 .markdown-body :deep(> :first-child) { margin-top: 0; }
@@ -162,6 +209,11 @@ async function handleMarkdownClick(event) {
 .typing-indicator i:nth-child(2) { animation-delay: 120ms; }
 .typing-indicator i:nth-child(3) { animation-delay: 240ms; }
 @keyframes blink { 50% { opacity: .25; } }
+@keyframes pulse {
+  0% { transform: scale(.85); box-shadow: 0 0 0 0 rgba(52, 120, 246, .35); }
+  70% { transform: scale(1); box-shadow: 0 0 0 7px rgba(52, 120, 246, 0); }
+  100% { transform: scale(.85); box-shadow: 0 0 0 0 rgba(52, 120, 246, 0); }
+}
 .message-card { display: grid; gap: 4px; margin-top: 12px; padding: 12px 14px; border-left: 3px solid var(--accent); border-radius: 0 12px 12px 0; background: var(--accent-softer); }
 .message-card strong { font-size: 14px; }
 .message-card span { color: var(--text-secondary); font-size: 13px; }
@@ -173,5 +225,9 @@ async function handleMarkdownClick(event) {
   .chat-message.user { grid-template-columns: minmax(0, 1fr) 28px; }
   .message-avatar { width: 28px; height: 28px; border-radius: 9px; }
   .chat-message.user .message-body { max-width: 92%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-chip i,
+  .typing-indicator i { animation: none; }
 }
 </style>

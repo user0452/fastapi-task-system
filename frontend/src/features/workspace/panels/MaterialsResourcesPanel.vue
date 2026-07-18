@@ -115,40 +115,41 @@ watch(() => [props.courseId, props.refreshKey], loadResources, { immediate: true
 </template>
 
 <style scoped>
-.materials-resources-panel { display: grid; gap: 14px; }
-.panel-segment { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; border-radius: 7px; background: #edf1ee; }
-.panel-segment button { height: 32px; border-radius: 5px; color: #69746e; font-size: 11px; font-weight: 720; }
-.panel-segment button.active { color: #155e4c; background: #fff; box-shadow: 0 1px 2px rgba(30, 43, 36, .1); }
-.panel-search { height: 38px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 32px; align-items: center; gap: 3px; padding: 0 4px 0 8px; border: 1px solid #cbd4cf; border-radius: 6px; color: #6a756f; background: #fff; }
-.panel-search:focus-within { border-color: #287b66; box-shadow: 0 0 0 2px rgba(40, 123, 102, .1); }
-.panel-search input { min-width: 0; border: 0; font-size: 11px; }
-.panel-search button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 5px; color: #176b58; }
+.materials-resources-panel { display: grid; gap: 16px; }
+.panel-segment { display: grid; grid-template-columns: 1fr 1fr; padding: 4px; border-radius: 14px; background: var(--surface-tertiary); }
+.panel-segment button { height: 38px; border-radius: 11px; color: var(--text-secondary); font-size: 13px; font-weight: 600; }
+.panel-segment button.active { color: var(--accent); background: #fff; box-shadow: var(--shadow-small); }
+.panel-search { height: 44px; display: grid; grid-template-columns: 28px minmax(0, 1fr) 38px; align-items: center; gap: 4px; padding: 0 6px 0 12px; border: 1px solid var(--border-strong); border-radius: 13px; color: var(--text-tertiary); background: #fff; }
+.panel-search:focus-within { border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.panel-search input { min-width: 0; border: 0; color: var(--text-primary); font-size: 13px; background: transparent; }
+.panel-search button { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: var(--accent); }
+.panel-search button:hover { background: var(--accent-soft); }
 .panel-search button:disabled { opacity: .4; }
-.citation-results { display: grid; max-height: 290px; overflow-y: auto; border-block: 1px solid #dfe4e1; }
-.citation-results article { display: grid; gap: 3px; padding: 9px 2px; border-bottom: 1px solid #e3e7e4; }
+.citation-results { display: grid; max-height: 340px; overflow-y: auto; border-block: 1px solid var(--border-subtle); }
+.citation-results article { display: grid; gap: 5px; padding: 12px 2px; border-bottom: 1px solid var(--border-subtle); }
 .citation-results header { display: flex; justify-content: space-between; gap: 8px; }
-.citation-results strong { color: #34413a; font-size: 11px; }
-.citation-results header span { color: #19705a; font-size: 10px; }
-.citation-results small { color: #848d88; font-size: 9px; }
-.citation-results p { display: -webkit-box; overflow: hidden; color: #66716b; font-size: 10px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-.citation-results article > div { display: flex; flex-wrap: wrap; gap: 3px; }
-.citation-results article > div span { padding: 2px 4px; border-radius: 3px; color: #276a58; background: #e6efea; font-size: 9px; }
-.resource-list { display: grid; gap: 8px; }
-.resource-warning { padding: 8px 9px; border-left: 2px solid #c38a2d; color: #755d2d; background: #fff8e8; font-size: 10px; }
-.resource-empty { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; color: #78827d; text-align: center; }
-.resource-empty svg { color: #27715d; }
-.resource-empty strong { color: #35413b; font-size: 13px; }
-.resource-empty p { font-size: 10px; }
-.materials-resources-panel :deep(.materials-workspace) { gap: 15px; }
-.materials-resources-panel :deep(.material-editor) { border: 0; border-radius: 0; }
+.citation-results strong { color: var(--text-primary); font-size: 13px; }
+.citation-results header span { color: var(--accent); font-size: 12px; font-weight: 600; }
+.citation-results small { color: var(--text-tertiary); font-size: 11px; }
+.citation-results p { display: -webkit-box; overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.citation-results article > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.citation-results article > div span { padding: 3px 7px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: 11px; }
+.resource-list { display: grid; gap: 10px; }
+.resource-warning { padding: 11px 12px; border-radius: 12px; border-left: 3px solid var(--warning); color: var(--text-secondary); background: rgba(169, 101, 0, .08); font-size: 12px; }
+.resource-empty { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-secondary); text-align: center; }
+.resource-empty svg { color: var(--accent); }
+.resource-empty strong { color: var(--text-primary); font-size: 16px; font-weight: 620; }
+.resource-empty p { max-width: 280px; font-size: 13px; line-height: 1.65; }
+.materials-resources-panel :deep(.materials-workspace) { gap: 16px; }
+.materials-resources-panel :deep(.material-editor) { border: 0; border-radius: 0; background: transparent; }
 .materials-resources-panel :deep(.editor-heading) { padding: 10px 0; }
 .materials-resources-panel :deep(.editor-heading p) { display: none; }
 .materials-resources-panel :deep(.editor-fields) { padding: 12px 0; }
-.materials-resources-panel :deep(.editor-actions) { padding: 9px 0; background: transparent; }
-.materials-resources-panel :deep(.mode-switch button) { min-width: 65px; font-size: 10px; }
-.materials-resources-panel :deep(.file-picker) { min-height: 98px; }
-.materials-resources-panel :deep(.material-row) { grid-template-columns: 30px minmax(0, 1fr) auto auto; }
+.materials-resources-panel :deep(.editor-actions) { padding: 10px 0; background: transparent; }
+.materials-resources-panel :deep(.mode-switch button) { min-width: 72px; font-size: 12px; }
+.materials-resources-panel :deep(.file-picker) { min-height: 110px; border-radius: 14px; }
+.materials-resources-panel :deep(.material-row) { grid-template-columns: 34px minmax(0, 1fr) auto auto; }
 .materials-resources-panel :deep(.material-row .status) { grid-column: 3; }
 .materials-resources-panel :deep(.material-row .material-actions) { grid-column: 4; }
-.materials-resources-panel :deep(.material-copy span) { max-width: 190px; }
+.materials-resources-panel :deep(.material-copy span) { max-width: 210px; }
 </style>

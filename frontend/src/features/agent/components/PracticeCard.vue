@@ -60,17 +60,17 @@ async function submit() {
 
 <style scoped>
 .practice-card { margin-top: 10px; overflow: hidden; border: 1px solid #cfd9d4; border-radius: 7px; background: #fff; }
-.practice-card > header { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border-bottom: 1px solid #e0e5e2; background: #f2f6f3; }
+.practice-card > header { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--border-subtle); background: #f2f6f3; }
 .practice-card > header span { color: #3c4943; font-size: 11px; font-weight: 760; }
-.practice-card > header strong { color: #176b58; font-size: 11px; }
+.practice-card > header strong { color: var(--accent); font-size: 11px; }
 .practice-questions { display: grid; gap: 10px; padding: 10px; }
 .practice-questions label { display: grid; gap: 5px; }
 .practice-questions label > span { color: #36413c; font-size: 11px; line-height: 1.55; }
-.practice-questions textarea { width: 100%; resize: vertical; padding: 7px 8px; border: 1px solid #cdd5d0; border-radius: 5px; background: #fbfcfb; font-size: 11px; line-height: 1.5; }
-.practice-questions textarea:focus { border-color: #27806a; box-shadow: 0 0 0 2px rgba(39, 128, 106, .1); }
-.submit-practice { min-height: 34px; justify-self: end; padding: 0 11px; border-radius: 5px; color: #fff; background: #176b58; font-size: 11px; font-weight: 750; }
+.practice-questions textarea { width: 100%; resize: vertical; padding: 7px 8px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--surface-secondary); font-size: 11px; line-height: 1.5; }
+.practice-questions textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(39, 128, 106, .1); }
+.submit-practice { min-height: 34px; justify-self: end; padding: 0 11px; border-radius: 5px; color: #fff; background: var(--accent); font-size: 11px; font-weight: 750; }
 .submit-practice:disabled { opacity: .45; }
-.practice-result { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; padding: 12px; color: #19705a; }
+.practice-result { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; padding: 12px; color: var(--accent); }
 .practice-result strong { color: #30403a; font-size: 12px; }
 .practice-result p { margin-top: 2px; color: #6b7771; font-size: 10px; }
 </style>
