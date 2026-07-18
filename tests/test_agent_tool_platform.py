@@ -23,6 +23,10 @@ def test_default_registry_exposes_real_risk_and_confirmation_metadata():
 
     assert registry.get("calculator").risk_level == "read"
     assert registry.get("python_sandbox").risk_level == "sandboxed"
+    assert registry.get("python_sandbox").display_name == "受限 Python 执行器"
+    assert registry.get("python_sandbox").maturity == "experimental"
+    assert registry.get("python_sandbox").isolation_level == "application"
+    assert registry.get("python_sandbox").public_untrusted_access_allowed is False
     deletion = registry.get("delete_task")
     assert deletion.risk_level == "destructive"
     assert deletion.confirmation_required is True
@@ -105,7 +109,7 @@ def test_calculator_allows_arithmetic_and_rejects_code():
     assert error.value.error_code == "CALCULATOR_EXPRESSION_INVALID"
 
 
-def test_python_sandbox_is_isolated_and_blocks_imports_and_files(tmp_path: Path):
+def test_restricted_python_executor_reports_application_boundary_and_blocks_access(tmp_path: Path):
     sandbox = SandboxExecutor(root=tmp_path, timeout_seconds=2)
     result = sandbox.execute(
         "values = [1, 2, 3]\nprint(sum(values))",
@@ -115,6 +119,10 @@ def test_python_sandbox_is_isolated_and_blocks_imports_and_files(tmp_path: Path)
     assert result["status"] == "completed"
     assert result["stdout"].strip() == "6"
     assert "no_network" in result["restrictions"]
+    assert result["maturity"] == "experimental"
+    assert result["isolation_level"] == "application"
+    assert result["public_untrusted_access_allowed"] is False
+    assert "容器" in result["security_notice"]
 
     with pytest.raises(AppError) as import_error:
         sandbox.execute("import socket", user_id=7, course_id=9)
@@ -161,6 +169,44 @@ def test_unconfigured_integrations_never_report_fake_success(monkeypatch):
     assert status["integrations"]["image"]["status"] == "unconfigured"
     catalog = list_agent_tools()
     assert catalog["integrations"] == status["integrations"]
+
+
+def test_integration_states_distinguish_disabled_misconfigured_and_missing_adapter(monkeypatch):
+    monkeypatch.setenv("A3_MCP_ENABLED", "false")
+    monkeypatch.setenv("A3_MCP_ENDPOINT", "https://mcp.example.test")
+    monkeypatch.setenv("A3_IMAGE_TOOL_ENABLED", "true")
+    monkeypatch.delenv("A3_IMAGE_TOOL_ENDPOINT", raising=False)
+
+    status = integration_status()
+    assert status["integrations"]["mcp"]["status"] == "disabled"
+    assert status["integrations"]["image"]["status"] == "misconfigured"
+
+    monkeypatch.setenv("A3_MCP_ENABLED", "true")
+    status = integration_status()
+    assert status["integrations"]["mcp"] == {
+        "status": "configured_not_implemented",
+        "configured": True,
+        "endpoint_configured": True,
+        "adapter_implemented": False,
+    }
+    assert status["integrations"]["mcp"]["status"] != "available"
+
+
+def test_policy_rejects_configured_but_unimplemented_tool():
+    definition = ToolDefinition(
+        "future_adapter",
+        "not executable",
+        "integration",
+        availability="configured_not_implemented",
+    )
+    with pytest.raises(AppError) as error:
+        PolicyGuard().validate(
+            definition,
+            requested_risk="read",
+            arguments={},
+            execution_context=ToolExecutionContext(user_id=1, course_id=1),
+        )
+    assert error.value.error_code == "TOOL_UNAVAILABLE"
 
 
 def test_execution_summary_contains_sources_and_tool_states_but_no_reasoning():

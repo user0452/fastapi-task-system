@@ -1,7 +1,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Bug, LogOut, Save, ShieldCheck, UserRound } from 'lucide-vue-next'
+import { Braces, Bug, LogOut, Save, ShieldCheck, UserRound } from 'lucide-vue-next'
+import { getAgentTools } from '../../api/agent'
 import { getProfile } from '../../api/profiles'
 import { updateCourse } from '../../api/courses'
 import { useAuthStore } from '../../stores/auth'
@@ -13,6 +14,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const courses = useCourseStore()
 const profile = ref(null)
+const toolCatalog = ref(null)
 const saving = ref(false)
 const developerMode = ref(localStorage.getItem('a3:developer-mode') === 'true')
 const preferences = ref({ daily_minutes: 30, exam_at: '' })
@@ -62,8 +64,9 @@ async function logout() {
 onMounted(async () => {
   await courses.ensureLoaded()
   syncPreferences()
-  const response = await getProfile()
-  if (response.code === 200) profile.value = response.data
+  const [profileResponse, toolResponse] = await Promise.all([getProfile(), getAgentTools()])
+  if (profileResponse.code === 200) profile.value = profileResponse.data
+  if (toolResponse.code === 200) toolCatalog.value = toolResponse.data
 })
 watch(() => courses.current?.id, syncPreferences)
 </script>
@@ -115,6 +118,29 @@ watch(() => courses.current?.id, syncPreferences)
           <button class="primary-button" type="submit" :disabled="saving"><Save :size="15" /> {{ saving ? '正在保存' : '保存安排' }}</button>
         </form>
         <button v-else class="text-button" type="button" @click="router.push('/courses')">先创建一门课程</button>
+      </section>
+
+      <section v-if="toolCatalog" class="settings-section capability-section">
+        <div class="section-heading">
+          <Braces :size="19" />
+          <div><h2>工具与安全边界</h2><p>这里显示服务端报告的真实能力状态。</p></div>
+        </div>
+        <div class="capability-list">
+          <div v-if="toolCatalog.items?.find(item => item.name === 'python_sandbox')" class="capability-row">
+            <div>
+              <strong>受限 Python 执行器</strong>
+              <span>应用级隔离，不是容器或虚拟机，不可面向不可信公网用户开放。</span>
+            </div>
+            <small class="status-pill warning">实验性</small>
+          </div>
+          <div v-for="(integration, name) in toolCatalog.integrations" :key="name" class="capability-row">
+            <div>
+              <strong>{{ name === 'mcp' ? 'MCP 工具' : '图片生成' }}</strong>
+              <span>{{ integration.status === 'configured_not_implemented' ? '已配置，但真实执行适配器尚未实现。' : '按服务端配置与适配器状态显示。' }}</span>
+            </div>
+            <small class="status-pill" :class="integration.status">{{ ({ unconfigured: '未配置', misconfigured: '配置错误', configured_not_implemented: '适配器未实现', available: '可用', disabled: '已停用' })[integration.status] || integration.status }}</small>
+          </div>
+        </div>
       </section>
 
       <section class="settings-section developer-section">
@@ -169,6 +195,18 @@ watch(() => courses.current?.id, syncPreferences)
 .secondary-button { color: #175b4a; border: 1px solid #aec0b8; background: #ffffff; }
 .text-button { margin: 0 18px 16px; color: #176b58; padding: 0; }
 .developer-section > .secondary-button { margin: 0 18px 16px; }
+.capability-list { display: grid; }
+.capability-row { min-height: 58px; display: flex; align-items: center; gap: 16px; padding: 11px 18px; border-bottom: 1px solid #e3e7e4; }
+.capability-row:last-child { border-bottom: 0; }
+.capability-row > div { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.capability-row strong { font-size: 11px; }
+.capability-row span { color: #77817c; font-size: 9px; line-height: 1.5; }
+.status-pill { flex: none; padding: 3px 8px; border-radius: 999px; color: #315f52; background: #e5f1ec; font-size: 9px; font-weight: 750; }
+.status-pill.warning,
+.status-pill.configured_not_implemented,
+.status-pill.misconfigured { color: #7b5426; background: #f8edd7; }
+.status-pill.disabled,
+.status-pill.unconfigured { color: #69736e; background: #edf0ee; }
 .toggle-row { position: relative; display: flex; align-items: center; gap: 12px; padding: 16px 18px; cursor: pointer; }
 .toggle-row > div { flex: 1; display: grid; gap: 2px; }
 .toggle-row strong { font-size: 11px; }

@@ -20,6 +20,10 @@ export function getAgentSessions(params = {}) {
   return request(`/api/v1/agent/sessions${query ? `?${query}` : ''}`)
 }
 
+export function getAgentTools() {
+  return request('/api/v1/agent/tools')
+}
+
 export function getCourseAgentWorkspace(courseId, params = {}) {
   const query = new URLSearchParams(params).toString()
   return request(`/api/v1/agent/courses/${courseId}/workspace${query ? `?${query}` : ''}`)

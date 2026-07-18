@@ -99,7 +99,7 @@
 
 课程聊天请求应显式携带 `course_id`。`current_time` 使用本地时间和 UTC 偏移，精确到分钟，仅用于回答语境；服务端审计时间仍以 UTC 为准。若 `session_id` 属于另一门课程，接口返回 `409 SESSION_COURSE_MISMATCH`。
 
-消息中的 `execution_summary` 只保存可验证的工具状态、耗时、课程/外部来源、使用的学习上下文数量和业务更新，不保存隐藏推理。MCP 与图片工具若未接入执行适配器，配置状态为 `unconfigured` 或 `misconfigured`，不会伪造成功结果。
+消息中的 `execution_summary` 只保存可验证的工具状态、耗时、课程/外部来源、使用的学习上下文数量和业务更新，不保存隐藏推理。MCP 与图片工具状态区分 `unconfigured`、`misconfigured`、`configured_not_implemented`、`available` 和 `disabled`；未接入真实执行适配器时不会显示为可用，也不会伪造成功结果。受限 Python 执行器目录项同时公开 `experimental` 成熟度、`application` 隔离级别和不允许不可信公网访问的边界。
 
 ### 外部资源
 

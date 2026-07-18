@@ -133,7 +133,8 @@
 
 范围边界：
 
-- 已完成：本地课程工具、计算器、Python 沙箱、Tavily/视频 Provider、工具审计和回答依据。
+- 已完成：本地课程工具、计算器、实验性的受限 Python 执行器、Tavily/视频 Provider、工具审计和回答依据。
 - 需要外部配置：真实 LLM、Embedding、Tavily 和 YouTube 实时调用。
-- 仅完成接口：MCP 与图片工具的注册、策略和配置状态；未配置时明确为 `unconfigured`。
+- 仅完成接口：MCP 与图片工具的策略和配置状态；状态区分 `unconfigured`、`misconfigured`、`configured_not_implemented`、`available` 和 `disabled`。
 - 尚未实现：MCP Server 与外部图片生成服务的真实执行适配器，不返回模拟成功结果。
+- 安全边界：受限 Python 执行器只有应用级隔离，未使用容器、cgroup、seccomp 或独立虚拟机，不得面向不可信公网用户开放。

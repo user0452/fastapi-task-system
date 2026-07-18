@@ -169,5 +169,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_all.ps1
 本轮验证边界：
 
 1. 浏览器验收使用 Mock LLM/Mock Embedding，真实 LLM、Embedding、Tavily 和 YouTube 调用仍需要外部配置与网络可用性。
-2. MCP 与图片工具目前完成注册、策略和配置状态接口；MCP Server 与外部图片生成服务的真实执行适配器尚未实现，未用模拟成功掩盖该边界。
-3. 上述结果是本地分支验证；本轮推送后的远端 GitHub Actions 结果应单独记录，不在本节预先宣称成功。
+2. MCP 与图片工具目前完成策略和配置状态接口；MCP Server 与外部图片生成服务的真实执行适配器尚未实现，已配置时返回 `configured_not_implemented`，未用模拟成功掩盖该边界。
+3. 受限 Python 执行器继续保留超时、内存和输出限制，并明确标记为实验性的应用级隔离；它不是容器、cgroup、seccomp 或独立虚拟机隔离，不允许面向不可信公网用户开放。
+4. 上述结果是本地分支验证；本轮推送后的远端 GitHub Actions 结果应单独记录，不在本节预先宣称成功。

@@ -27,6 +27,10 @@ class ToolDefinition:
     requires_course: bool = True
     confirmation_required: bool = False
     availability: str = "available"
+    display_name: str | None = None
+    maturity: str = "stable"
+    isolation_level: str | None = None
+    public_untrusted_access_allowed: bool | None = None
 
     def public(self) -> dict:
         return asdict(self)
@@ -169,7 +173,8 @@ class ToolExecutor:
         else:
             record["status"] = "completed"
             if isinstance(result, dict) and result.get("status") in {
-                "available", "unconfigured", "misconfigured", "disabled"
+                "available", "unconfigured", "misconfigured",
+                "configured_not_implemented", "disabled",
             }:
                 record["result_status"] = result["status"]
             return ToolExecutionResult(value=result, record=record)
@@ -327,11 +332,11 @@ class SandboxExecutor:
             raise AppError(f"Python 语法错误：{exc.msg}", 422, "SANDBOX_CODE_INVALID") from exc
         for node in ast.walk(tree):
             if isinstance(node, self.FORBIDDEN_NODES):
-                raise AppError("沙箱禁止导入、文件上下文、函数/类定义和异常捕获", 422, "SANDBOX_POLICY_BLOCKED")
+                raise AppError("受限 Python 执行器禁止导入、文件上下文、函数/类定义和异常捕获", 422, "SANDBOX_POLICY_BLOCKED")
             if isinstance(node, ast.Name) and node.id in self.FORBIDDEN_NAMES:
-                raise AppError(f"沙箱禁止调用 {node.id}", 422, "SANDBOX_POLICY_BLOCKED")
+                raise AppError(f"受限 Python 执行器禁止调用 {node.id}", 422, "SANDBOX_POLICY_BLOCKED")
             if isinstance(node, ast.Attribute) and str(node.attr).startswith("__"):
-                raise AppError("沙箱禁止访问双下划线属性", 422, "SANDBOX_POLICY_BLOCKED")
+                raise AppError("受限 Python 执行器禁止访问双下划线属性", 422, "SANDBOX_POLICY_BLOCKED")
 
     def execute(self, code: str, *, user_id: int, course_id: int) -> dict:
         self._validate(code)
@@ -368,7 +373,7 @@ class SandboxExecutor:
                             limit_error = ToolTimeoutError("python_sandbox", self.timeout_seconds)
                         elif self._process_memory_bytes(process.pid) > self.memory_limit_bytes:
                             limit_error = AppError(
-                                "Python 沙箱超过内存限制",
+                                "受限 Python 执行器超过内存限制",
                                 422,
                                 "SANDBOX_MEMORY_LIMIT",
                             )
@@ -377,7 +382,7 @@ class SandboxExecutor:
                             or stderr_path.stat().st_size > self.MAX_OUTPUT_BYTES
                         ):
                             limit_error = AppError(
-                                "Python 沙箱输出超过限制",
+                                "受限 Python 执行器输出超过限制",
                                 422,
                                 "SANDBOX_OUTPUT_LIMIT",
                             )
@@ -396,7 +401,7 @@ class SandboxExecutor:
                 or len(stderr_bytes) > self.MAX_OUTPUT_BYTES
             ):
                 limit_error = AppError(
-                    "Python 沙箱输出超过限制",
+                    "受限 Python 执行器输出超过限制",
                     422,
                     "SANDBOX_OUTPUT_LIMIT",
                 )
@@ -411,21 +416,49 @@ class SandboxExecutor:
             "stderr": stderr,
             "output_truncated": False,
             "duration_ms": round((perf_counter() - started) * 1000, 2),
+            "maturity": "experimental",
+            "isolation_level": "application",
+            "public_untrusted_access_allowed": False,
+            "security_notice": (
+                "仅提供应用级限制，不是容器、cgroup、seccomp 或独立虚拟机隔离。"
+            ),
             "restrictions": [
                 "no_imports", "no_files", "no_network", "no_subprocesses",
-                "isolated_process", f"memory_{self.memory_limit_bytes // (1024 * 1024)}mb",
+                "separate_process", f"memory_{self.memory_limit_bytes // (1024 * 1024)}mb",
             ],
         }
 
 
-def _integration_item(enabled_key: str, endpoint_key: str) -> dict:
-    enabled = os.getenv(enabled_key, "").strip().lower() in {"1", "true", "yes", "on"}
+def _integration_item(
+    enabled_key: str,
+    endpoint_key: str,
+    *,
+    adapter_implemented: bool = False,
+) -> dict:
+    raw_enabled = os.getenv(enabled_key)
     endpoint = os.getenv(endpoint_key, "").strip()
-    if not enabled:
+    if raw_enabled is None or not raw_enabled.strip():
         return {"status": "unconfigured", "configured": False}
+    enabled = raw_enabled.strip().lower()
+    if enabled in {"0", "false", "no", "off"}:
+        return {"status": "disabled", "configured": False}
+    if enabled not in {"1", "true", "yes", "on"}:
+        return {"status": "misconfigured", "configured": False}
     if not endpoint:
         return {"status": "misconfigured", "configured": False}
-    return {"status": "available", "configured": True, "endpoint_configured": True}
+    if not adapter_implemented:
+        return {
+            "status": "configured_not_implemented",
+            "configured": True,
+            "endpoint_configured": True,
+            "adapter_implemented": False,
+        }
+    return {
+        "status": "available",
+        "configured": True,
+        "endpoint_configured": True,
+        "adapter_implemented": True,
+    }
 
 
 def integration_status() -> dict:
@@ -435,7 +468,7 @@ def integration_status() -> dict:
             "mcp": _integration_item("A3_MCP_ENABLED", "A3_MCP_ENDPOINT"),
             "image": _integration_item("A3_IMAGE_TOOL_ENABLED", "A3_IMAGE_TOOL_ENDPOINT"),
         },
-        "message": "未配置的外部能力不会执行，也不会返回模拟成功结果。",
+        "message": "未接入真实执行适配器的外部能力不可调用，也不会返回模拟成功结果。",
     }
 
 
@@ -455,7 +488,17 @@ def build_default_tool_registry() -> ToolRegistry:
         ToolDefinition("generate_practice", "生成针对性练习", "learning", "generate"),
         ToolDefinition("get_or_generate_diagnostic", "读取或生成课程诊断", "learning", "generate"),
         ToolDefinition("calculator", "执行受限算术计算", "compute", "read", 3, False),
-        ToolDefinition("python_sandbox", "在隔离进程执行受限 Python", "compute", "sandboxed", 6),
+        ToolDefinition(
+            "python_sandbox",
+            "执行受限 Python 代码；仅提供应用级隔离",
+            "compute",
+            "sandboxed",
+            6,
+            display_name="受限 Python 执行器",
+            maturity="experimental",
+            isolation_level="application",
+            public_untrusted_access_allowed=False,
+        ),
         ToolDefinition("integration_status", "读取 MCP 与外部工具配置状态", "integration", "read", 3, False),
         ToolDefinition("delete_task", "永久删除本人任务", "write", "destructive", None, False, True),
     ]
