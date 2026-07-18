@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount, RouterLinkStub } from '@vue/test-utils'
 import ChatMessage from './ChatMessage.vue'
 
@@ -68,6 +68,21 @@ describe('ChatMessage', () => {
     expect(wrapper.text()).not.toContain('chunk_id')
     expect(wrapper.text()).not.toContain('⭐')
     expect(wrapper.find('script').exists()).toBe(false)
+  })
+
+  it('adds a copy control to code blocks', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+    const wrapper = mount(ChatMessage, {
+      props: { message: { ...baseMessage, content: '```python\nprint(42)\n```' } }
+    })
+
+    await wrapper.get('.code-copy-button').trigger('click')
+    expect(writeText).toHaveBeenCalledWith('print(42)\n')
+    expect(wrapper.get('.code-copy-button').text()).toBe('已复制')
   })
 
   it('renders the persisted execution summary for assistant messages', () => {

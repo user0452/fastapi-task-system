@@ -27,9 +27,13 @@ export function renderAssistantMarkdown(content) {
     breaks: false,
     gfm: true
   })
-  return DOMPurify.sanitize(html, {
+  const sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR: ['href', 'title'],
     ALLOW_UNKNOWN_PROTOCOLS: false
   })
+  return sanitized.replace(
+    /<pre><code>([\s\S]*?)<\/code><\/pre>/g,
+    '<div class="code-block"><button type="button" class="code-copy-button">复制</button><pre><code>$1</code></pre></div>'
+  )
 }

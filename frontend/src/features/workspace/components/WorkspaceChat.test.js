@@ -60,6 +60,7 @@ describe('WorkspaceChat stream isolation', () => {
       routerMock.route.query = target.query || {}
     })
     HTMLElement.prototype.scrollTo = vi.fn()
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false })
     agentApi.getAgentSessions.mockImplementation(params => Promise.resolve({
       code: 200,
       data: {
@@ -99,6 +100,37 @@ describe('WorkspaceChat stream isolation', () => {
       message_limit: 100,
       session_id: 12
     })
+    wrapper.unmount()
+  })
+
+  it('builds a current conversation outline and keeps history in the header drawer', async () => {
+    agentApi.getCourseAgentWorkspace.mockResolvedValue({
+      code: 200,
+      data: {
+        session: { id: 10 },
+        agent: { id: 1 },
+        messages: [
+          { id: 31, role: 'user', content: '解释边界值分析' },
+          { id: 32, role: 'assistant', content: '边界值分析是……' },
+          { id: 33, role: 'user', content: '再给我三个练习题' }
+        ]
+      }
+    })
+    const wrapper = mountChat(1)
+    await flushPromises()
+
+    const outlineItems = wrapper.findAll('.anchor-item')
+    expect(outlineItems).toHaveLength(2)
+    expect(wrapper.get('#chat-message-31').attributes('data-message-role')).toBe('user')
+    expect(wrapper.get('#chat-message-33').attributes('data-message-id')).toBe('33')
+
+    await outlineItems[0].trigger('click')
+    expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }))
+
+    expect(wrapper.find('.history-drawer').exists()).toBe(false)
+    await wrapper.get('.history-action').trigger('click')
+    expect(wrapper.get('.history-drawer').attributes('aria-label')).toBe('历史对话')
+    expect(wrapper.get('.history-drawer').text()).toContain('课程 1 会话')
     wrapper.unmount()
   })
 

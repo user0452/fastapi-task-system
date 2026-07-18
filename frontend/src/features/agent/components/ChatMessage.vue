@@ -42,13 +42,23 @@ function triggerAction(action) {
   if (action.type === 'open_panel' && action.panel) emit('open-panel', action.panel)
   else if (action.to) emit('navigate', action.to)
 }
+
+async function handleMarkdownClick(event) {
+  const button = event.target.closest('.code-copy-button')
+  if (!button) return
+  const content = button.parentElement?.querySelector('code')?.textContent || ''
+  if (!content || !navigator.clipboard?.writeText) return
+  await navigator.clipboard.writeText(content)
+  button.textContent = '已复制'
+  window.setTimeout(() => { button.textContent = '复制' }, 1200)
+}
 </script>
 
 <template>
   <article class="chat-message" :class="message.role">
     <span class="message-avatar"><UserRound v-if="message.role === 'user'" :size="15" /><Bot v-else :size="15" /></span>
     <div class="message-body">
-      <div v-if="message.role === 'assistant'" class="message-text markdown-body" v-html="renderedContent"></div>
+      <div v-if="message.role === 'assistant'" class="message-text markdown-body" v-html="renderedContent" @click="handleMarkdownClick"></div>
       <p v-else class="message-text">{{ message.content }}</p>
       <span v-if="message.streaming" class="typing-indicator"><i></i><i></i><i></i></span>
 
@@ -103,58 +113,65 @@ function triggerAction(action) {
 </template>
 
 <style scoped>
-.chat-message { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: start; gap: 8px; max-width: 820px; }
-.chat-message.user { margin-left: auto; grid-template-columns: minmax(0, 1fr) 28px; }
+.chat-message { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: start; gap: 11px; max-width: 850px; }
+.chat-message.user { margin-left: auto; grid-template-columns: minmax(0, 1fr) 32px; }
 .chat-message.user .message-avatar { grid-column: 2; }
-.chat-message.user .message-body { grid-column: 1; grid-row: 1; justify-self: end; max-width: min(620px, 86%); color: #ffffff; background: #176b58; border-color: #176b58; }
-.message-avatar { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: #176b58; background: #dcece5; }
-.user .message-avatar { color: #5d6862; background: #e7ebe8; }
-.message-body { min-width: 0; padding: 9px 11px; border: 1px solid #d9e0dc; border-radius: 7px; background: #ffffff; }
+.chat-message.user .message-body { grid-column: 1; grid-row: 1; justify-self: end; max-width: min(640px, 88%); padding: 12px 16px; border: 1px solid rgba(52, 120, 246, .1); border-radius: 21px 21px 7px 21px; color: #21324d; background: rgba(52, 120, 246, .1); }
+.message-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 11px; color: var(--accent); background: var(--accent-soft); }
+.user .message-avatar { color: var(--text-secondary); background: var(--surface-tertiary); }
+.message-body { min-width: 0; padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-medium); background: var(--surface-primary); }
 .chat-message.assistant .message-body { padding: 2px 0; border: 0; background: transparent; }
-.message-text { color: inherit; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
-.markdown-body { max-width: 100%; overflow-x: auto; color: #2f3b35; font-size: 14px; line-height: 1.72; white-space: normal; }
+.message-text { color: inherit; font-size: 15px; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
+.markdown-body { max-width: 100%; overflow-x: auto; color: var(--text-primary); font-size: 15px; line-height: 1.76; white-space: normal; }
 .markdown-body :deep(> :first-child) { margin-top: 0; }
 .markdown-body :deep(> :last-child) { margin-bottom: 0; }
 .markdown-body :deep(p) { margin: 0 0 10px; }
 .markdown-body :deep(h1),
 .markdown-body :deep(h2),
 .markdown-body :deep(h3),
-.markdown-body :deep(h4) { margin: 20px 0 8px; color: #1f2b25; line-height: 1.35; letter-spacing: -.01em; }
-.markdown-body :deep(h1) { font-size: 18px; font-weight: 730; }
-.markdown-body :deep(h2) { font-size: 16px; font-weight: 730; }
+.markdown-body :deep(h4) { margin: 22px 0 9px; color: var(--text-primary); line-height: 1.35; letter-spacing: -.02em; }
+.markdown-body :deep(h1) { font-size: 22px; font-weight: 650; }
+.markdown-body :deep(h2) { font-size: 19px; font-weight: 640; }
 .markdown-body :deep(h3),
-.markdown-body :deep(h4) { font-size: 14px; font-weight: 720; }
-.markdown-body :deep(strong) { color: #1f2b25; font-weight: 720; }
+.markdown-body :deep(h4) { font-size: 17px; font-weight: 630; }
+.markdown-body :deep(strong) { color: var(--text-primary); font-weight: 650; }
 .markdown-body :deep(ul),
 .markdown-body :deep(ol) { margin: 7px 0 12px; padding-left: 22px; }
 .markdown-body :deep(li) { padding-left: 2px; }
 .markdown-body :deep(li + li) { margin-top: 4px; }
 .markdown-body :deep(li > ul),
 .markdown-body :deep(li > ol) { margin: 4px 0 2px; }
-.markdown-body :deep(blockquote) { margin: 12px 0; padding: 2px 0 2px 12px; border-left: 2px solid #82aa9d; color: #5d6a64; }
+.markdown-body :deep(blockquote) { margin: 14px 0; padding: 4px 0 4px 14px; border-left: 3px solid rgba(52, 120, 246, .38); color: var(--text-secondary); }
 .markdown-body :deep(blockquote p) { margin: 0; }
-.markdown-body :deep(hr) { height: 1px; margin: 18px 0; border: 0; background: #dfe5e1; }
-.markdown-body :deep(code) { padding: 1px 4px; border-radius: 4px; color: #245f50; background: #edf3f0; font-family: Consolas, "SFMono-Regular", monospace; font-size: .9em; }
-.markdown-body :deep(pre) { max-width: 100%; margin: 12px 0; overflow-x: auto; padding: 12px 13px; border: 1px solid #dce4df; border-radius: 7px; background: #f5f7f6; }
-.markdown-body :deep(pre code) { padding: 0; color: #26332d; background: transparent; font-size: 12px; line-height: 1.65; }
+.markdown-body :deep(hr) { height: 1px; margin: 20px 0; border: 0; background: var(--border-subtle); }
+.markdown-body :deep(code) { padding: 2px 5px; border-radius: 6px; color: #2858a6; background: rgba(52, 120, 246, .08); font-family: var(--font-mono); font-size: .9em; }
+.markdown-body :deep(.code-block) { position: relative; margin: 14px 0; }
+.markdown-body :deep(pre) { max-width: 100%; margin: 0; overflow-x: auto; padding: 18px 16px; border: 1px solid var(--border-subtle); border-radius: 16px; background: #f4f5f8; }
+.markdown-body :deep(pre code) { padding: 0; color: #273043; background: transparent; font-size: 13px; line-height: 1.68; }
+.markdown-body :deep(.code-copy-button) { position: absolute; z-index: 2; top: 9px; right: 9px; min-width: 52px; height: 30px; padding: 0 10px; border: 1px solid var(--border-subtle); border-radius: 9px; color: var(--text-secondary); background: rgba(255, 255, 255, .9); font-size: 12px; font-weight: 550; box-shadow: var(--shadow-small); }
+.markdown-body :deep(.code-copy-button:hover) { color: var(--accent); }
 .markdown-body :deep(table) { width: 100%; min-width: 440px; margin: 13px 0 15px; border-spacing: 0; border-collapse: separate; border: 1px solid #dce3df; border-radius: 7px; font-size: 12px; line-height: 1.55; }
 .markdown-body :deep(th),
 .markdown-body :deep(td) { padding: 8px 10px; border-right: 1px solid #e4e9e6; border-bottom: 1px solid #e4e9e6; text-align: left; vertical-align: top; }
 .markdown-body :deep(th) { color: #34423b; background: #f2f5f3; font-weight: 720; }
 .markdown-body :deep(tr > :last-child) { border-right: 0; }
 .markdown-body :deep(tbody tr:last-child td) { border-bottom: 0; }
-.markdown-body :deep(a) { color: #176b58; text-decoration: underline; text-decoration-color: #a8c8bd; text-underline-offset: 3px; }
+.markdown-body :deep(a) { color: var(--accent); text-decoration: underline; text-decoration-color: rgba(52, 120, 246, .32); text-underline-offset: 3px; }
 .typing-indicator { display: inline-flex; gap: 3px; padding-top: 3px; }
 .typing-indicator i { width: 4px; height: 4px; border-radius: 50%; background: #698078; animation: blink 900ms infinite; }
 .typing-indicator i:nth-child(2) { animation-delay: 120ms; }
 .typing-indicator i:nth-child(3) { animation-delay: 240ms; }
 @keyframes blink { 50% { opacity: .25; } }
-.message-card { display: grid; gap: 2px; margin-top: 9px; padding: 8px 9px; border-left: 3px solid #4b8271; background: #f1f5f3; }
-.message-card strong { font-size: 12px; }
-.message-card span { color: #6f7a74; font-size: 10px; }
+.message-card { display: grid; gap: 4px; margin-top: 12px; padding: 12px 14px; border-left: 3px solid var(--accent); border-radius: 0 12px 12px 0; background: var(--accent-softer); }
+.message-card strong { font-size: 14px; }
+.message-card span { color: var(--text-secondary); font-size: 13px; }
 .message-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
-.message-actions button { min-height: 31px; padding: 0 10px; border: 1px solid #b8c9c1; border-radius: 5px; color: #175e4c; background: #ffffff; font-size: 10px; font-weight: 750; }
-.resolved-action { display: inline-block; margin-top: 8px; color: #7a847f; font-size: 10px; }
+.message-actions button { min-height: 38px; padding: 0 13px; border: 1px solid rgba(52, 120, 246, .24); border-radius: 12px; color: var(--accent); background: #ffffff; font-size: 13px; font-weight: 600; }
+.resolved-action { display: inline-block; margin-top: 9px; color: var(--text-tertiary); font-size: 12px; }
 @media (max-width: 620px) {
+  .chat-message { grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
+  .chat-message.user { grid-template-columns: minmax(0, 1fr) 28px; }
+  .message-avatar { width: 28px; height: 28px; border-radius: 9px; }
+  .chat-message.user .message-body { max-width: 92%; }
 }
 </style>
