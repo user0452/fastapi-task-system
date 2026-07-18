@@ -1,141 +1,170 @@
-/* ===== Material Design 3 设计 Token ===== */
 :root {
-  /* === 色彩系统 (M3) === */
-  --color-primary: #1a6b5a;
-  --color-primary-hover: #155a4b;
-  --color-primary-light: #a0f0d0;
-  --color-on-primary: #ffffff;
-  --color-primary-container: #a0f0d0;
-  --color-on-primary-container: #002115;
+  color-scheme: light;
 
-  --color-secondary: #4a635c;
-  --color-secondary-container: #cce8df;
-  --color-on-secondary-container: #06201a;
+  /* Product surfaces */
+  --page-bg: #f5f5f7;
+  --surface-primary: #ffffff;
+  --surface-secondary: #fbfbfd;
+  --surface-tertiary: #f0f1f4;
+  --surface-elevated: rgba(255, 255, 255, 0.88);
+  --surface-glass: rgba(250, 250, 252, 0.78);
 
-  --color-tertiary: #406377;
-  --color-tertiary-container: #c3e8ff;
-  --color-on-tertiary-container: #001e2e;
+  /* Text */
+  --text-primary: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --text-tertiary: #86868b;
+  --text-inverse: #ffffff;
 
-  --color-error: #ba1a1a;
-  --color-error-container: #ffdad6;
-  --color-on-error: #ffffff;
-  --color-on-error-container: #410002;
+  /* Lines and semantic color */
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.14);
+  --accent: #3478f6;
+  --accent-hover: #1769e0;
+  --accent-soft: rgba(52, 120, 246, 0.12);
+  --accent-softer: rgba(52, 120, 246, 0.07);
+  --success: #248a3d;
+  --warning: #a96500;
+  --danger: #d70015;
+  --info: #3478f6;
 
-  /* 表面色 */
-  --color-surface: #fbfdf9;
-  --color-surface-dim: #dce5df;
-  --color-surface-bright: #fbfdf9;
-  --color-surface-container-lowest: #ffffff;
-  --color-surface-container-low: #f6f9f4;
-  --color-surface-container: #f0f3ee;
-  --color-surface-container-high: #eaeee8;
-  --color-surface-container-highest: #e4e8e3;
+  /* Restrained gradients */
+  --gradient-brand: linear-gradient(135deg, #4f7cff 0%, #6d5dfc 56%, #8b6df4 100%);
+  --gradient-blue-cyan: linear-gradient(135deg, #3f8cff 0%, #4bbec4 100%);
+  --gradient-soft-page:
+    radial-gradient(circle at 14% 4%, rgba(92, 124, 255, 0.12), transparent 30%),
+    radial-gradient(circle at 92% 22%, rgba(75, 190, 196, 0.1), transparent 28%),
+    #f5f5f7;
 
-  --color-on-surface: #191c1b;
-  --color-on-surface-variant: #3f4945;
-  --color-outline: #6f7975;
-  --color-outline-variant: #bfc9c4;
+  /* Shape and elevation */
+  --radius-small: 10px;
+  --radius-medium: 16px;
+  --radius-large: 24px;
+  --radius-hero: 32px;
+  --radius-round: 999px;
+  --shadow-small: 0 4px 18px rgba(0, 0, 0, 0.06);
+  --shadow-medium: 0 12px 36px rgba(0, 0, 0, 0.09);
+  --shadow-floating: 0 20px 60px rgba(0, 0, 0, 0.12);
+  --shadow-focus: 0 0 0 4px rgba(52, 120, 246, 0.14);
 
-  /* 状态色 */
-  --color-success: #006d3b;
-  --color-success-container: #95f7b8;
-  --color-warning: #7c5800;
-  --color-warning-container: #ffdea3;
-  --color-info: #0061a4;
-  --color-info-container: #d2e4ff;
+  /* Typography */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", "SF Mono", "Cascadia Code", Consolas, monospace;
+  --font-display: clamp(44px, 6vw, 76px);
+  --font-hero: clamp(34px, 4vw, 56px);
+  --font-page-title: 30px;
+  --font-section-title: 22px;
+  --font-card-title: 17px;
+  --font-body: 15px;
+  --font-secondary: 13px;
+  --font-caption: 12px;
 
-  /* 背景 */
-  --color-bg: #fbfdf9;
-  --color-surface: #ffffff;
-  --color-card: #ffffff;
-  --color-surface-strong: #f0f3ee;
-  --color-surface-hover: #eaeee8;
-
-  /* 边框 */
-  --color-line: #c4cec8;
-  --color-line-strong: #8a9490;
-
-  /* 文本层级 */
-  --color-text: #191c1b;
-  --color-text-soft: #3f4945;
-  --color-muted: #6f7975;
-
-  /* === 圆角系统 (M3 Shape) === */
-  --radius-xs: 4px;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 28px;
-  --radius-full: 9999px;
-
-  /* === 阴影系统 (M3 Elevation) === */
-  --shadow-none: 0 0 0 rgba(0, 0, 0, 0);
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px 1px rgba(0, 0, 0, 0.15);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px 2px rgba(0, 0, 0, 0.15);
-  --shadow-md: 0 4px 8px 3px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 6px 10px 4px rgba(0, 0, 0, 0.15), 0 2px 3px rgba(0, 0, 0, 0.3);
-  --shadow-xl: 0 8px 12px 6px rgba(0, 0, 0, 0.15), 0 4px 4px rgba(0, 0, 0, 0.3);
-
-  /* === 字体系统 (M3 Type Scale) === */
-  --font-sans: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'Roboto Mono', 'SF Mono', Consolas, monospace;
-
-  --text-display-lg: 3.5625rem;
-  --text-display-md: 2.8125rem;
-  --text-display-sm: 2.25rem;
-
-  --text-headline-lg: 2rem;
-  --text-headline-md: 1.75rem;
-  --text-headline-sm: 1.5rem;
-
-  --text-title-lg: 1.375rem;
-  --text-title-md: 1rem;
-  --text-title-sm: 0.875rem;
-
-  --text-body-lg: 1rem;
-  --text-body-md: 0.875rem;
-  --text-body-sm: 0.75rem;
-
-  --text-label-lg: 0.875rem;
-  --text-label-md: 0.75rem;
-  --text-label-sm: 0.6875rem;
-
-  /* === 间距系统 === */
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.25rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
-  --space-10: 2.5rem;
-  --space-12: 3rem;
-
-  /* === 动画曲线 (M3 Motion) === */
+  /* Spacing and motion */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --duration-fast: 150ms;
+  --duration-normal: 210ms;
+  --duration-slow: 320ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-standard-decelerate: cubic-bezier(0, 0, 0, 1);
-  --ease-standard-accelerate: cubic-bezier(0.3, 0, 1, 1);
-  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
-  --ease-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
-  --ease-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-  --duration-short1: 50ms;
-  --duration-short2: 100ms;
-  --duration-short3: 150ms;
-  --duration-short4: 200ms;
-  --duration-medium1: 250ms;
-  --duration-medium2: 300ms;
-  --duration-medium3: 350ms;
-  --duration-medium4: 400ms;
-  --duration-long1: 450ms;
-  --duration-long2: 500ms;
-  --duration-long3: 550ms;
-  --duration-long4: 600ms;
-
-  /* === 状态层 (State Layers) === */
-  --state-hover: rgba(26, 107, 90, 0.08);
-  --state-focus: rgba(26, 107, 90, 0.12);
-  --state-pressed: rgba(26, 107, 90, 0.16);
-  --state-dragged: rgba(26, 107, 90, 0.20);
+  /* Legacy aliases kept while feature surfaces migrate to the new system. */
+  --color-primary: var(--accent);
+  --color-primary-hover: var(--accent-hover);
+  --color-primary-light: var(--accent-soft);
+  --color-on-primary: var(--text-inverse);
+  --color-primary-container: var(--accent-soft);
+  --color-on-primary-container: #123c7a;
+  --color-secondary: #596375;
+  --color-secondary-container: #e8ecf5;
+  --color-on-secondary-container: #283246;
+  --color-tertiary: #52727d;
+  --color-tertiary-container: #e1f2f3;
+  --color-on-tertiary-container: #183f46;
+  --color-error: var(--danger);
+  --color-error-container: #ffe8ea;
+  --color-on-error: var(--text-inverse);
+  --color-on-error-container: #79000b;
+  --color-success: var(--success);
+  --color-success-container: #e3f4e7;
+  --color-warning: var(--warning);
+  --color-warning-container: #fff1d8;
+  --color-info: var(--info);
+  --color-info-container: #e7f0ff;
+  --color-bg: var(--page-bg);
+  --color-surface: var(--surface-primary);
+  --color-card: var(--surface-primary);
+  --color-surface-dim: #e9e9ed;
+  --color-surface-bright: var(--surface-primary);
+  --color-surface-container-lowest: var(--surface-primary);
+  --color-surface-container-low: var(--surface-secondary);
+  --color-surface-container: #f2f2f5;
+  --color-surface-container-high: #ebebef;
+  --color-surface-container-highest: #e4e4e9;
+  --color-surface-strong: var(--surface-tertiary);
+  --color-surface-hover: rgba(0, 0, 0, 0.045);
+  --color-on-surface: var(--text-primary);
+  --color-on-surface-variant: var(--text-secondary);
+  --color-outline: var(--text-tertiary);
+  --color-outline-variant: rgba(0, 0, 0, 0.12);
+  --color-line: var(--border-subtle);
+  --color-line-strong: var(--border-strong);
+  --color-text: var(--text-primary);
+  --color-text-soft: var(--text-secondary);
+  --color-muted: var(--text-tertiary);
+  --radius-xs: 6px;
+  --radius-sm: var(--radius-small);
+  --radius-md: var(--radius-medium);
+  --radius-lg: var(--radius-large);
+  --radius-xl: var(--radius-hero);
+  --radius-full: var(--radius-round);
+  --shadow-none: none;
+  --shadow-xs: var(--shadow-small);
+  --shadow-sm: var(--shadow-small);
+  --shadow-md: var(--shadow-medium);
+  --shadow-lg: var(--shadow-floating);
+  --shadow-xl: var(--shadow-floating);
+  --text-display-lg: var(--font-display);
+  --text-display-md: var(--font-hero);
+  --text-display-sm: 36px;
+  --text-headline-lg: var(--font-page-title);
+  --text-headline-md: 26px;
+  --text-headline-sm: var(--font-section-title);
+  --text-title-lg: var(--font-card-title);
+  --text-title-md: 15px;
+  --text-title-sm: 14px;
+  --text-body-lg: 16px;
+  --text-body-md: var(--font-body);
+  --text-body-sm: var(--font-secondary);
+  --text-label-lg: 14px;
+  --text-label-md: var(--font-secondary);
+  --text-label-sm: var(--font-caption);
+  --duration-short1: 80ms;
+  --duration-short2: 120ms;
+  --duration-short3: var(--duration-fast);
+  --duration-short4: 180ms;
+  --duration-medium1: var(--duration-normal);
+  --duration-medium2: var(--duration-normal);
+  --duration-medium3: 260ms;
+  --duration-medium4: 300ms;
+  --duration-long1: var(--duration-slow);
+  --duration-long2: 380ms;
+  --duration-long3: 440ms;
+  --duration-long4: 500ms;
+  --ease-standard-decelerate: var(--ease-out);
+  --ease-standard-accelerate: var(--ease-standard);
+  --ease-emphasized: var(--ease-out);
+  --ease-emphasized-decelerate: var(--ease-out);
+  --ease-emphasized-accelerate: var(--ease-standard);
+  --ease-spring: var(--ease-out);
+  --state-hover: rgba(52, 120, 246, 0.08);
+  --state-focus: rgba(52, 120, 246, 0.12);
+  --state-pressed: rgba(52, 120, 246, 0.16);
+  --state-dragged: rgba(52, 120, 246, 0.2);
 }

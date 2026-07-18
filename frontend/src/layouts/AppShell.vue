@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu, Sparkles, X } from 'lucide-vue-next'
+import { Menu, PanelLeftClose, PanelLeftOpen, Sparkles, X } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useCourseStore } from '../stores/course'
 import CourseRail from '../features/workspace/components/CourseRail.vue'
@@ -14,6 +14,7 @@ const courses = useCourseStore()
 const route = useRoute()
 const router = useRouter()
 const railOpen = ref(false)
+const railCollapsed = ref(localStorage.getItem('a3:course-rail-collapsed') === 'true')
 const creatorOpen = ref(false)
 const creating = ref(false)
 const form = reactive({ name: '', goal: '', exam_at: '', daily_minutes: 30 })
@@ -33,6 +34,11 @@ async function selectCourse(courseId) {
 function openCreator() {
   creatorOpen.value = true
   railOpen.value = false
+}
+
+function toggleRail() {
+  railCollapsed.value = !railCollapsed.value
+  localStorage.setItem('a3:course-rail-collapsed', String(railCollapsed.value))
 }
 
 function closeCreator() {
@@ -81,7 +87,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="ai-shell">
+  <div class="ai-shell" :class="{ 'rail-collapsed': railCollapsed }">
     <div class="desktop-rail">
       <CourseRail
         :courses="courses.courses"
@@ -89,9 +95,21 @@ onMounted(async () => {
         :username="auth.username"
         :loading="courses.loading"
         :error="courses.error"
+        :collapsed="railCollapsed"
         @create="openCreator"
         @logout="logout"
       />
+      <button
+        class="rail-collapse-toggle"
+        type="button"
+        :title="railCollapsed ? '展开课程栏' : '折叠课程栏'"
+        :aria-label="railCollapsed ? '展开课程栏' : '折叠课程栏'"
+        :aria-expanded="!railCollapsed"
+        @click="toggleRail"
+      >
+        <PanelLeftOpen v-if="railCollapsed" :size="16" />
+        <PanelLeftClose v-else :size="16" />
+      </button>
     </div>
 
     <header class="mobile-bar">
@@ -170,54 +188,69 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.ai-shell { min-height: 100dvh; display: grid; grid-template-columns: 236px minmax(0, 1fr); background: #f8f9f7; }
-.desktop-rail { position: fixed; inset: 0 auto 0 0; z-index: 40; width: 236px; }
+.ai-shell { min-height: 100dvh; display: grid; grid-template-columns: 264px minmax(0, 1fr); background: var(--gradient-soft-page); transition: grid-template-columns var(--duration-normal) var(--ease-out); }
+.ai-shell.rail-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
+.desktop-rail { position: fixed; inset: 0 auto 0 0; z-index: 40; width: 264px; transition: width var(--duration-normal) var(--ease-out); }
+.rail-collapsed .desktop-rail { width: 76px; }
 .ai-main { grid-column: 2; min-width: 0; min-height: 100dvh; overflow: hidden; }
+.rail-collapse-toggle { position: absolute; z-index: 3; right: -13px; top: 82px; width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border-subtle); border-radius: 9px; color: var(--text-secondary); background: rgba(255, 255, 255, .92); box-shadow: var(--shadow-small); backdrop-filter: blur(16px); }
+.rail-collapse-toggle:hover { color: var(--accent); border-color: rgba(52, 120, 246, .22); }
 .mobile-bar,
 .mobile-rail,
 .rail-scrim { display: none; }
 .workspace-fade-enter-active,
-.workspace-fade-leave-active { transition: opacity 150ms ease, transform 150ms ease; }
+.workspace-fade-leave-active { transition: opacity var(--duration-normal) var(--ease-standard), transform var(--duration-normal) var(--ease-out); }
 .workspace-fade-enter-from { opacity: 0; transform: translateY(4px); }
 .workspace-fade-leave-to { opacity: 0; transform: translateY(-2px); }
-.creator-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(28, 35, 31, .38); }
-.course-creator { width: min(520px, 100%); overflow: hidden; border: 1px solid #d8dfdb; border-radius: 8px; background: #fff; box-shadow: 0 20px 60px rgba(27, 39, 33, .18); }
-.course-creator > header { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 18px; border-bottom: 1px solid #e0e5e2; }
-.course-creator header span { color: #19705a; font-size: 9px; font-weight: 760; }
-.course-creator h2 { margin-top: 3px; font-size: 16px; font-weight: 740; }
-.course-creator header button { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 6px; color: #66716b; }
-.course-creator header button:hover { background: #edf1ee; }
-.course-creator form { display: grid; gap: 15px; padding: 18px; }
+.creator-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(20, 22, 28, .32); backdrop-filter: blur(10px); }
+.course-creator { width: min(540px, 100%); overflow: hidden; border: 1px solid rgba(255, 255, 255, .58); border-radius: 26px; background: var(--surface-elevated); box-shadow: var(--shadow-floating); backdrop-filter: blur(28px) saturate(1.1); }
+.course-creator > header { min-height: 92px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 21px 24px; border-bottom: 1px solid var(--border-subtle); }
+.course-creator header span { color: var(--accent); font-size: var(--font-caption); font-weight: 600; }
+.course-creator h2 { margin-top: 5px; font-size: 21px; font-weight: 600; }
+.course-creator header button { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; color: var(--text-secondary); }
+.course-creator header button:hover { background: var(--color-surface-hover); }
+.course-creator form { display: grid; gap: 18px; padding: 24px; }
 .course-creator label { display: grid; gap: 6px; }
-.course-creator label > span { color: #58635e; font-size: 10px; font-weight: 720; }
+.course-creator label > span { color: var(--text-secondary); font-size: var(--font-secondary); font-weight: 600; }
 .course-creator input,
-.course-creator textarea { width: 100%; padding: 10px 11px; border: 1px solid #cbd4cf; border-radius: 6px; background: #fbfcfb; font-size: 12px; }
+.course-creator textarea { width: 100%; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 14px; background: rgba(255, 255, 255, .72); font-size: 14px; }
 .course-creator textarea { resize: vertical; line-height: 1.55; }
 .course-creator input:focus,
-.course-creator textarea:focus { border-color: #287b66; box-shadow: 0 0 0 2px rgba(40, 123, 102, .11); }
+.course-creator textarea:focus { border-color: var(--accent); box-shadow: var(--shadow-focus); }
 .creator-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(120px, .7fr); gap: 12px; }
 .course-creator footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 3px; }
 .creator-cancel,
-.creator-submit { min-height: 36px; padding: 0 14px; border-radius: 6px; font-size: 11px; font-weight: 730; }
-.creator-cancel { color: #59655f; border: 1px solid #cbd3ce; }
-.creator-submit { color: #fff; background: #176b58; }
+.creator-submit { min-height: 44px; padding: 0 18px; border-radius: 13px; font-size: 14px; font-weight: 600; }
+.creator-cancel { color: var(--text-secondary); border: 1px solid var(--border-strong); background: rgba(255, 255, 255, .65); }
+.creator-submit { color: #fff; background: var(--gradient-brand); box-shadow: 0 8px 22px rgba(79, 124, 255, .22); }
 .creator-submit:disabled { opacity: .45; }
 
 @media (max-width: 820px) {
   .ai-shell { display: block; padding-top: 52px; }
   .desktop-rail { display: none; }
+  .rail-collapse-toggle { display: none; }
   .ai-main { min-height: calc(100dvh - 52px); }
-  .mobile-bar { position: fixed; inset: 0 0 auto; z-index: 45; height: 52px; display: grid; grid-template-columns: 38px auto minmax(0, 1fr); align-items: center; gap: 9px; padding: 0 10px; background: #fff; border-bottom: 1px solid #dce1dd; }
-  .mobile-bar > span { display: inline-flex; align-items: center; gap: 5px; color: #1d5f4e; font-size: 11px; font-weight: 760; white-space: nowrap; }
-  .mobile-bar .mobile-course { overflow: hidden; justify-self: end; color: #727c77; font-size: 9px; text-overflow: ellipsis; }
-  .mobile-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 6px; color: #5e6963; }
+  .mobile-bar { position: fixed; inset: 0 0 auto; z-index: 45; height: 52px; display: grid; grid-template-columns: 40px auto minmax(0, 1fr); align-items: center; gap: 9px; padding: 0 10px; border-bottom: 1px solid var(--border-subtle); background: rgba(250, 250, 252, .86); backdrop-filter: blur(22px) saturate(1.25); }
+  .mobile-bar > span { display: inline-flex; align-items: center; gap: 5px; color: var(--text-primary); font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .mobile-bar > span svg { color: var(--accent); }
+  .mobile-bar .mobile-course { overflow: hidden; justify-self: end; color: var(--text-secondary); font-size: 12px; font-weight: 500; text-overflow: ellipsis; }
+  .mobile-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; color: var(--text-secondary); }
   .mobile-rail { position: fixed; inset: 0 auto 0 0; z-index: 70; display: block; }
   .mobile-rail :deep(.course-rail) { width: min(290px, 84vw); }
-  .rail-scrim { position: fixed; inset: 0; z-index: 65; display: block; width: 100%; background: rgba(24, 31, 27, .32); }
+  .rail-scrim { position: fixed; inset: 0; z-index: 65; display: block; width: 100%; background: rgba(20, 22, 28, .28); backdrop-filter: blur(4px); }
   .rail-slide-enter-active,
   .rail-slide-leave-active { transition: transform 190ms ease; }
   .rail-slide-enter-from,
   .rail-slide-leave-to { transform: translateX(-100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-shell,
+  .desktop-rail,
+  .workspace-fade-enter-active,
+  .workspace-fade-leave-active,
+  .rail-slide-enter-active,
+  .rail-slide-leave-active { transition: none; }
 }
 
 @media (max-width: 520px) {
