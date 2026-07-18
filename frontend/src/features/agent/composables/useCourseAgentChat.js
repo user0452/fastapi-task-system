@@ -44,6 +44,7 @@ export function useCourseAgentChat({
   let streamController = null
   let draftSyncPaused = false
   let routeSyncPaused = false
+  let routeNavigationVersion = 0
 
   const currentCourseId = () => Number(unref(courseId)) || null
 
@@ -87,7 +88,10 @@ export function useCourseAgentChat({
     statusText.value = ''
   }
 
-  async function loadWorkspace(sessionId = null, { syncRoute = true } = {}) {
+  async function loadWorkspace(
+    sessionId = null,
+    { syncRoute = true, reportError = true } = {}
+  ) {
     const requestedCourseId = currentCourseId()
     if (!requestedCourseId) return false
     const version = ++loadVersion
@@ -109,12 +113,25 @@ export function useCourseAgentChat({
       return true
     } catch (error) {
       if (version !== loadVersion) return false
-      loadError.value = error.message || '课程会话加载失败'
-      showToast({ type: 'error', message: loadError.value })
+      if (reportError) {
+        loadError.value = error.message || '课程会话加载失败'
+        showToast({ type: 'error', message: loadError.value })
+      }
       return false
     } finally {
       if (version === loadVersion) loadingMessages.value = false
     }
+  }
+
+  async function loadLatestSession() {
+    const fallback = sessions.value[0] || null
+    if (fallback) {
+      if (Number(fallback.id) === Number(activeId.value)) return true
+      return selectSession(fallback, { syncRoute: false, notify: false })
+    }
+    const loaded = await loadWorkspace(null, { syncRoute: false })
+    if (loaded) await loadSessions({ select: false })
+    return loaded
   }
 
   async function loadSessions({ preferredId = null, select = true } = {}) {
@@ -132,15 +149,27 @@ export function useCourseAgentChat({
       sessions.value = response.data?.items || []
       if (!select) return
       const requestedId = Number(preferredId) || null
-      const preferred = requestedId
-        ? sessions.value.find(item => Number(item.id) === requestedId)
-        : null
-      const fallback = preferred || sessions.value[0] || null
-      if (fallback) {
-        await selectSession(fallback, { syncRoute: true, notify: false })
+      if (requestedId) {
+        const preferred = sessions.value.find(item => Number(item.id) === requestedId)
+        if (preferred) {
+          await selectSession(preferred, { syncRoute: false, notify: false })
+          return
+        }
+        const loaded = await loadWorkspace(requestedId, {
+          syncRoute: false,
+          reportError: false
+        })
+        if (loaded) {
+          if (!sessions.value.some(item => Number(item.id) === requestedId)) {
+            sessions.value = [session.value, ...sessions.value]
+          }
+          return
+        }
+        await syncSessionQuery(null)
+      }
+      if (await loadLatestSession()) {
         return
       }
-      if (await loadWorkspace(null)) await loadSessions({ select: false })
     } catch (error) {
       loadError.value = error.message || '历史会话加载失败'
       showToast({ type: 'error', message: loadError.value })
@@ -345,6 +374,7 @@ export function useCourseAgentChat({
     saveDraft()
     cancelStream()
     loadVersion += 1
+    routeNavigationVersion += 1
     sessions.value = []
     activeId.value = null
     session.value = null
@@ -356,24 +386,56 @@ export function useCourseAgentChat({
     await initialize({ useRouteSession: false })
   }
 
+  async function reconcileRouteSession(value) {
+    if (routeSyncPaused) return
+    const navigationVersion = ++routeNavigationVersion
+    const requestedId = Number(value) || null
+    if (requestedId === Number(activeId.value)) return
+
+    if (!requestedId) {
+      await loadLatestSession()
+      return
+    }
+
+    const target = sessions.value.find(item => Number(item.id) === requestedId)
+    if (target) {
+      await selectSession(target, { syncRoute: false })
+      return
+    }
+
+    saveDraft()
+    cancelStream()
+    const loaded = await loadWorkspace(requestedId, {
+      syncRoute: false,
+      reportError: false
+    })
+    if (navigationVersion !== routeNavigationVersion) return
+    if (loaded) {
+      if (!sessions.value.some(item => Number(item.id) === requestedId)) {
+        sessions.value = [session.value, ...sessions.value]
+      }
+      onSessionSelected(session.value)
+      return
+    }
+
+    await syncSessionQuery(null)
+    if (navigationVersion !== routeNavigationVersion) return
+    await loadLatestSession()
+  }
+
   watch(input, saveDraft)
 
   if (route) {
     watch(
       () => route.query?.session,
-      async value => {
-        if (routeSyncPaused) return
-        const requestedId = Number(value) || null
-        if (!requestedId || requestedId === Number(activeId.value)) return
-        const target = sessions.value.find(item => Number(item.id) === requestedId)
-        if (target) await selectSession(target, { syncRoute: false })
-      }
+      reconcileRouteSession
     )
   }
 
   onBeforeUnmount(() => {
     saveDraft()
     loadVersion += 1
+    routeNavigationVersion += 1
     cancelStream()
   })
 

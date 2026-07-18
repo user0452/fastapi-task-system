@@ -24,10 +24,13 @@ describe('SessionList', () => {
     const wrapper = mount(SessionList, { props: { sessions: [session], activeId: 7 } })
 
     await wrapper.get('.session-select').trigger('click')
-    await wrapper.get('.archive-action').trigger('click')
+    await wrapper.get('.session-menu-trigger').trigger('click')
+    expect(wrapper.get('.session-menu-trigger').attributes('aria-expanded')).toBe('true')
+    await wrapper.get('[role="menuitem"]').trigger('click')
 
     expect(wrapper.emitted('select')).toEqual([[session]])
     expect(wrapper.emitted('archive')).toEqual([[session]])
     expect(wrapper.get('.session-item').classes()).toContain('active')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
   })
 })

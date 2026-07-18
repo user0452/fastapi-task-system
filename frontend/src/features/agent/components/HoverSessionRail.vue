@@ -34,7 +34,6 @@ function schedulePointerClose() {
   clearCloseTimer()
   closeTimer = window.setTimeout(() => {
     pointerInside.value = false
-    if (!focusInside.value) manualExpanded.value = false
   }, 200)
 }
 

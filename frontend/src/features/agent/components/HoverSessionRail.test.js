@@ -41,6 +41,26 @@ describe('HoverSessionRail', () => {
     expect(wrapper.emitted('select')).toEqual([[sessions[1]]])
   })
 
+  it('keeps a manually expanded rail locked after the pointer leaves', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(HoverSessionRail, {
+      props: { sessions, activeId: 7 }
+    })
+
+    await wrapper.get('.expand-control').trigger('click')
+    expect(wrapper.get('.expand-control').attributes('aria-expanded')).toBe('true')
+
+    await wrapper.get('.hover-session-rail').trigger('mouseleave')
+    await vi.advanceTimersByTimeAsync(200)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.get('.hover-session-rail').classes()).toContain('expanded')
+    expect(wrapper.get('.expand-control').attributes('aria-expanded')).toBe('true')
+
+    await wrapper.get('.hover-session-rail').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.get('.hover-session-rail').classes()).not.toContain('expanded')
+  })
+
   it('uses a drawer on mobile and closes after selection', async () => {
     const wrapper = mount(HoverSessionRail, {
       props: { sessions, activeId: 7, mobileOpen: true }
