@@ -763,6 +763,44 @@ def list_knowledge_point_relations(cursor, course_id: int, user_id: int) -> list
     return list(cursor.fetchall())
 
 
+def list_knowledge_point_evidence(cursor, course_id: int, user_id: int) -> list[dict]:
+    cursor.execute(
+        """
+        SELECT source.knowledge_point_id, source.chunk_id, source.evidence_type,
+               source.confidence, chunk.chunk_index, chunk.chunk_text,
+               material.id AS material_id, material.title AS material_title,
+               material.filename
+        FROM knowledge_point_sources source
+        JOIN course_material_chunks chunk ON chunk.id = source.chunk_id
+        JOIN course_materials material ON material.id = source.material_id
+        WHERE source.course_id = %s AND source.user_id = %s
+          AND chunk.user_id = %s AND material.user_id = %s
+        ORDER BY source.knowledge_point_id, source.confidence DESC, source.chunk_id
+        """,
+        (course_id, user_id, user_id, user_id),
+    )
+    return list(cursor.fetchall())
+
+
+def list_relation_evidence(cursor, course_id: int, user_id: int) -> dict[int, dict]:
+    cursor.execute(
+        """
+        SELECT relation.id AS relation_id, chunk.id AS chunk_id,
+               chunk.chunk_index, chunk.chunk_text,
+               material.id AS material_id, material.title AS material_title,
+               material.filename
+        FROM knowledge_point_relations relation
+        JOIN course_material_chunks chunk ON chunk.id = relation.evidence_chunk_id
+        JOIN course_materials material ON material.id = chunk.material_id
+        WHERE relation.course_id = %s AND relation.user_id = %s
+          AND chunk.user_id = %s AND material.user_id = %s
+        ORDER BY relation.id
+        """,
+        (course_id, user_id, user_id, user_id),
+    )
+    return {row["relation_id"]: row for row in cursor.fetchall()}
+
+
 def add_sequential_knowledge_relations(
     cursor,
     user_id: int,

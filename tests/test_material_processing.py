@@ -30,6 +30,7 @@ from app.modules.materials.schemas import TextMaterialCreate
 from app.modules.materials.service import (
     create_text_material,
     delete_user_material,
+    get_course_knowledge_graph,
     get_user_material,
     list_course_knowledge_points,
     process_material,
@@ -244,6 +245,15 @@ def test_text_material_is_automatically_indexed_with_sources(two_users):
     assert len(points) == 3
     assert all(point["source_chunk_ids"] for point in points)
     assert updated_course["status"] == "diagnostic_pending"
+    graph = get_course_knowledge_graph(user["id"], course["id"])
+    assert len(graph["points"]) == 3
+    assert all(point["evidence"] for point in graph["points"])
+    assert all(
+        evidence["material_title"] == "等价类划分"
+        and evidence["snippet"]
+        for point in graph["points"]
+        for evidence in point["evidence"]
+    )
 
     with get_cursor() as cursor:
         cursor.execute(

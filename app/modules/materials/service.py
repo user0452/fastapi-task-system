@@ -1,6 +1,6 @@
 import hashlib
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from contextlib import contextmanager
 from time import perf_counter
 from typing import Callable
@@ -554,6 +554,8 @@ def get_course_knowledge_graph(user_id: int, course_id: int) -> dict:
     with get_cursor() as cursor:
         points = repository.list_knowledge_points(cursor, course_id, user_id)
         relations = repository.list_knowledge_point_relations(cursor, course_id, user_id)
+        point_evidence = repository.list_knowledge_point_evidence(cursor, course_id, user_id)
+        relation_evidence = repository.list_relation_evidence(cursor, course_id, user_id)
         record_audit(
             user_id,
             "COURSE_KNOWLEDGE_GRAPH_VIEWED",
@@ -562,6 +564,20 @@ def get_course_knowledge_graph(user_id: int, course_id: int) -> dict:
             {"point_count": len(points), "relation_count": len(relations)},
             cursor=cursor,
         )
+    evidence_by_point: dict[int, list[dict]] = defaultdict(list)
+    for item in point_evidence:
+        point_id = int(item.pop("knowledge_point_id"))
+        if len(evidence_by_point[point_id]) >= 3:
+            continue
+        item["snippet"] = str(item.pop("chunk_text") or "")[:360]
+        item["confidence"] = float(item.get("confidence") or 0)
+        evidence_by_point[point_id].append(item)
+    for relation in relations:
+        evidence = relation_evidence.get(relation["id"])
+        if evidence is not None:
+            evidence["snippet"] = str(evidence.pop("chunk_text") or "")[:360]
+        relation["evidence"] = evidence
+        relation["confidence"] = float(relation.get("confidence") or 0)
     return {
         "course_id": course_id,
         "points": [
@@ -570,6 +586,7 @@ def get_course_knowledge_graph(user_id: int, course_id: int) -> dict:
                 for key, value in point.items()
                 if key not in {"embedding_json", "embedding_hash"}
             }
+            | {"evidence": evidence_by_point.get(point["id"], [])}
             for point in points
         ],
         "relations": relations,

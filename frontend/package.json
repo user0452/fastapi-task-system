@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "dompurify": "^3.4.12",
+    "echarts": "^6.1.0",
     "lucide-vue-next": "^0.577.0",
     "marked": "^18.0.6",
     "pinia": "^3.0.4",
