@@ -41,18 +41,22 @@ def _event(event_type: str, **payload) -> str:
 def sessions(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
+    course_id: int | None = Query(default=None, gt=0),
     user=Depends(get_current_user),
 ):
-    return success(data=list_chat_sessions(user["id"], page, size))
+    return success(data=list_chat_sessions(user["id"], page, size, course_id))
 
 
 @router.get("/courses/{course_id}/workspace")
 def course_agent_workspace(
     course_id: int,
     message_limit: int = Query(default=100, ge=1, le=100),
+    session_id: int | None = Query(default=None, gt=0),
     user=Depends(get_current_user),
 ):
-    return success(data=get_course_agent_workspace(user["id"], course_id, message_limit))
+    return success(
+        data=get_course_agent_workspace(user["id"], course_id, message_limit, session_id)
+    )
 
 
 @router.put("/courses/{course_id}/memories")

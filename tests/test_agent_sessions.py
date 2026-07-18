@@ -24,6 +24,7 @@ from app.modules.agent.service import (
     decide_action,
     gc_agent_checkpoints,
     get_chat_session,
+    get_course_agent_workspace,
     list_chat_sessions,
     run_agent_chat,
     run_native_tool_agent_chat,
@@ -1594,6 +1595,7 @@ def test_session_page_size_is_capped_by_api(api_client):
 
 def test_chat_session_lifecycle_is_persisted_and_archived(agent_course):
     user, _, course = agent_course
+    primary = get_course_agent_workspace(user["id"], course["id"])["session"]
     session = create_chat_session(
         user["id"],
         ChatSessionCreate(course_id=course["id"], title="生命周期会话"),
@@ -1602,13 +1604,51 @@ def test_chat_session_lifecycle_is_persisted_and_archived(agent_course):
     detail = get_chat_session(user["id"], session["id"])
     assert detail["session"]["title"] == "生命周期会话"
     assert detail["messages"] == []
-    assert list_chat_sessions(user["id"])["total"] == 1
+    assert session["id"] != primary["id"]
+    assert list_chat_sessions(user["id"], course_id=course["id"])["total"] == 2
 
     archive_chat_session(user["id"], session["id"])
-    assert list_chat_sessions(user["id"])["total"] == 0
+    assert list_chat_sessions(user["id"], course_id=course["id"])["total"] == 1
     with pytest.raises(AppError) as error:
         get_chat_session(user["id"], session["id"])
     assert error.value.error_code == "CHAT_SESSION_NOT_FOUND"
+
+
+def test_course_session_navigation_is_filtered_and_restorable(agent_course):
+    user, _, course = agent_course
+    primary = get_course_agent_workspace(user["id"], course["id"])["session"]
+    second = create_chat_session(
+        user["id"],
+        ChatSessionCreate(course_id=course["id"], title="第二个课程会话"),
+    )
+    other_course = create_user_course(
+        user["id"],
+        CourseCreate(name="另一门课程", goal="验证会话课程隔离"),
+    )
+    other_session = get_course_agent_workspace(user["id"], other_course["id"])["session"]
+
+    course_sessions = list_chat_sessions(user["id"], course_id=course["id"])
+    assert {item["id"] for item in course_sessions["items"]} == {
+        primary["id"],
+        second["id"],
+    }
+    assert all(item["course_id"] == course["id"] for item in course_sessions["items"])
+    assert other_session["id"] not in {item["id"] for item in course_sessions["items"]}
+
+    restored = get_course_agent_workspace(
+        user["id"],
+        course["id"],
+        session_id=second["id"],
+    )
+    assert restored["session"]["id"] == second["id"]
+
+    with pytest.raises(AppError) as mismatch:
+        get_course_agent_workspace(
+            user["id"],
+            other_course["id"],
+            session_id=second["id"],
+        )
+    assert mismatch.value.error_code == "SESSION_COURSE_MISMATCH"
 
 
 def test_agent_read_intents_return_today_and_progress_cards(agent_course):

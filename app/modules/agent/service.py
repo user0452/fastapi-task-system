@@ -184,15 +184,24 @@ def _page(page: int, size: int) -> tuple[int, int]:
     return max(1, page), max(1, min(size, 100))
 
 
-def list_chat_sessions(user_id: int, page: int = 1, size: int = 20) -> dict:
+def list_chat_sessions(
+    user_id: int,
+    page: int = 1,
+    size: int = 20,
+    course_id: int | None = None,
+) -> dict:
     page, size = _page(page, size)
     with get_cursor() as cursor:
-        result = repository.list_sessions(cursor, user_id, page, size)
+        if course_id is not None:
+            course = course_repository.get_course(cursor, course_id, user_id)
+            if course is None or course.get("status") == "archived":
+                raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        result = repository.list_sessions(cursor, user_id, page, size, course_id)
         record_audit(
             user_id,
             "COURSE_AGENT_SESSIONS_VIEWED",
             "chat_session",
-            detail={"count": len(result["items"])},
+            detail={"count": len(result["items"]), "course_id": course_id},
             cursor=cursor,
         )
         return result
@@ -210,17 +219,13 @@ def create_chat_session(user_id: int, request: ChatSessionCreate) -> dict:
             course = course_repository.get_current_course(cursor, user_id)
             course_id = course["id"] if course else None
         if course is not None:
-            agent = repository.ensure_course_agent(cursor, user_id, course)
-            session = agent["primary_session"]
-            repository.update_session_title(cursor, session["id"], user_id, request.title)
-            session = repository.get_session(cursor, session["id"], user_id)
-            if session is None:
-                raise RuntimeError("primary chat session disappeared while it was being updated")
+            session = repository.create_session(cursor, user_id, course_id, request.title)
+            repository.ensure_course_agent(cursor, user_id, course)
             record_audit(
                 user_id,
-                "COURSE_AGENT_OPENED",
-                "course_agent",
-                agent["id"],
+                "COURSE_AGENT_SESSION_CREATED",
+                "chat_session",
+                session["id"],
                 {"course_id": course_id, "session_id": session["id"]},
                 cursor=cursor,
             )
@@ -236,14 +241,31 @@ def create_chat_session(user_id: int, request: ChatSessionCreate) -> dict:
         return session
 
 
-def get_course_agent_workspace(user_id: int, course_id: int, message_limit: int = 100) -> dict:
+def get_course_agent_workspace(
+    user_id: int,
+    course_id: int,
+    message_limit: int = 100,
+    session_id: int | None = None,
+) -> dict:
     _, message_limit = _page(1, message_limit)
     with get_cursor() as cursor:
         course = course_repository.get_course(cursor, course_id, user_id)
         if course is None or course.get("status") == "archived":
             raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
         agent = repository.ensure_course_agent(cursor, user_id, course)
-        session = agent.pop("primary_session")
+        primary_session = agent.pop("primary_session")
+        session = primary_session
+        if session_id is not None:
+            selected_session = repository.get_session(cursor, session_id, user_id)
+            if selected_session is None or selected_session.get("archived_at") is not None:
+                raise AppError("会话不存在或无访问权限", 404, "CHAT_SESSION_NOT_FOUND")
+            if selected_session.get("course_id") != course_id:
+                raise AppError(
+                    "该会话属于另一门课程，不能跨课程复用上下文",
+                    409,
+                    "SESSION_COURSE_MISMATCH",
+                )
+            session = selected_session
         messages = repository.list_messages(cursor, user_id, session["id"], None, message_limit)
         memories = repository.list_course_memories(cursor, agent["id"], user_id)
         confirmation_ids = [
@@ -262,7 +284,11 @@ def get_course_agent_workspace(user_id: int, course_id: int, message_limit: int 
             "COURSE_AGENT_WORKSPACE_VIEWED",
             "course_agent",
             agent["id"],
-            {"course_id": course_id, "message_count": len(messages)},
+            {
+                "course_id": course_id,
+                "session_id": session["id"],
+                "message_count": len(messages),
+            },
             cursor=cursor,
         )
     return {

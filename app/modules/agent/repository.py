@@ -572,20 +572,26 @@ def get_session(cursor, session_id: int, user_id: int) -> dict | None:
     return _row(session_model)
 
 
-def list_sessions(cursor, user_id: int, page: int, size: int) -> dict:
+def list_sessions(
+    cursor,
+    user_id: int,
+    page: int,
+    size: int,
+    course_id: int | None = None,
+) -> dict:
     ChatSession = reflected_model("chat_sessions")
     Course = reflected_model("courses")
     Message = reflected_model("agent_chat_messages")
     session = cursor.session
+    filters = [ChatSession.user_id == user_id, ChatSession.archived_at.is_(None)]
+    if course_id is not None:
+        filters.append(ChatSession.course_id == course_id)
     total = session.scalar(
-        select(func.count()).select_from(ChatSession).where(
-            ChatSession.user_id == user_id,
-            ChatSession.archived_at.is_(None),
-        )
+        select(func.count()).select_from(ChatSession).where(*filters)
     ) or 0
     session_models = session.scalars(
         select(ChatSession)
-        .where(ChatSession.user_id == user_id, ChatSession.archived_at.is_(None))
+        .where(*filters)
         .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
         .limit(size)
         .offset((page - 1) * size)
@@ -608,6 +614,7 @@ def list_sessions(cursor, user_id: int, page: int, size: int) -> dict:
         row = _row(session_model) or {}
         row["course_name"] = course_names.get(session_model.course_id)
         row["last_message"] = latest_messages.get(session_model.id)
+        row["status"] = "active"
         items.append(row)
     return {"items": items, "total": total, "page": page, "size": size}
 

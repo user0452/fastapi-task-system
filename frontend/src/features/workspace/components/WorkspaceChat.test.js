@@ -2,15 +2,24 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const agentApi = vi.hoisted(() => ({
+  archiveAgentSession: vi.fn(),
+  createAgentSession: vi.fn(),
   decideAgentAction: vi.fn(),
+  getAgentSessions: vi.fn(),
   getCourseAgentWorkspace: vi.fn(),
   sendAgentMessageStream: vi.fn()
 }))
 
+const routerMock = vi.hoisted(() => ({
+  route: { path: '/learn/1', query: {} },
+  replace: vi.fn(),
+  push: vi.fn()
+}))
+
 vi.mock('../../../api/agent', () => agentApi)
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ path: '/learn/1', query: {} }),
-  useRouter: () => ({ replace: vi.fn() })
+  useRoute: () => routerMock.route,
+  useRouter: () => ({ replace: routerMock.replace, push: routerMock.push })
 }))
 vi.mock('../../../components/common/toast', () => ({ showToast: vi.fn() }))
 
@@ -44,7 +53,19 @@ describe('WorkspaceChat stream isolation', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    routerMock.route.path = '/learn/1'
+    routerMock.route.query = {}
+    routerMock.replace.mockImplementation(async target => {
+      routerMock.route.path = target.path
+      routerMock.route.query = target.query || {}
+    })
     HTMLElement.prototype.scrollTo = vi.fn()
+    agentApi.getAgentSessions.mockImplementation(params => Promise.resolve({
+      code: 200,
+      data: {
+        items: [{ id: Number(params.course_id) * 10, title: `课程 ${params.course_id} 会话` }]
+      }
+    }))
     agentApi.getCourseAgentWorkspace.mockImplementation(courseId => Promise.resolve({
       code: 200,
       data: {
@@ -53,6 +74,32 @@ describe('WorkspaceChat stream isolation', () => {
         messages: []
       }
     }))
+  })
+
+  it('restores the routed session and requests only the current course sessions', async () => {
+    routerMock.route.query = { session: '12' }
+    agentApi.getAgentSessions.mockResolvedValue({
+      code: 200,
+      data: {
+        items: [
+          { id: 11, title: '基础概念' },
+          { id: 12, title: '边界值复习' }
+        ]
+      }
+    })
+    const wrapper = mountChat(1)
+    await flushPromises()
+
+    expect(agentApi.getAgentSessions).toHaveBeenCalledWith({
+      page: 1,
+      size: 100,
+      course_id: 1
+    })
+    expect(agentApi.getCourseAgentWorkspace).toHaveBeenCalledWith(1, {
+      message_limit: 100,
+      session_id: 12
+    })
+    wrapper.unmount()
   })
 
   it('ignores stale stream callbacks after switching courses', async () => {

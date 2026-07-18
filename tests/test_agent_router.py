@@ -4,8 +4,26 @@ from app.modules.agent import router as agent_router
 
 
 def test_agent_v1_routes_delegate_and_keep_response_envelope(api_client, monkeypatch):
-    monkeypatch.setattr(agent_router, "list_chat_sessions", lambda user_id, page, size: {"user_id": user_id, "page": page, "size": size})
-    monkeypatch.setattr(agent_router, "get_course_agent_workspace", lambda user_id, course_id, limit: {"user_id": user_id, "course_id": course_id, "limit": limit})
+    monkeypatch.setattr(
+        agent_router,
+        "list_chat_sessions",
+        lambda user_id, page, size, course_id: {
+            "user_id": user_id,
+            "page": page,
+            "size": size,
+            "course_id": course_id,
+        },
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "get_course_agent_workspace",
+        lambda user_id, course_id, limit, session_id: {
+            "user_id": user_id,
+            "course_id": course_id,
+            "limit": limit,
+            "session_id": session_id,
+        },
+    )
     monkeypatch.setattr(agent_router, "save_course_agent_memory", lambda user_id, course_id, request: {"user_id": user_id, "course_id": course_id, "key": request.memory_key})
     monkeypatch.setattr(agent_router, "create_chat_session", lambda user_id, request: {"id": 41, "user_id": user_id, "title": request.title})
     monkeypatch.setattr(agent_router, "get_chat_session", lambda user_id, session_id, before_id, size: {"user_id": user_id, "session_id": session_id, "before_id": before_id, "size": size})
@@ -14,8 +32,16 @@ def test_agent_v1_routes_delegate_and_keep_response_envelope(api_client, monkeyp
     monkeypatch.setattr(agent_router, "run_native_tool_agent_chat", lambda user_id, request, **_kwargs: {"user_id": user_id, "reply": request.message})
     monkeypatch.setattr(agent_router, "decide_action", lambda user_id, action_id, confirmed: {"user_id": user_id, "action_id": action_id, "confirmed": confirmed})
 
-    assert api_client.get("/api/v1/agent/sessions?page=2&size=5").json()["data"]["page"] == 2
-    assert api_client.get("/api/v1/agent/courses/13/workspace?message_limit=7").json()["data"]["limit"] == 7
+    sessions = api_client.get(
+        "/api/v1/agent/sessions?page=2&size=5&course_id=13"
+    ).json()["data"]
+    assert sessions["page"] == 2
+    assert sessions["course_id"] == 13
+    workspace = api_client.get(
+        "/api/v1/agent/courses/13/workspace?message_limit=7&session_id=41"
+    ).json()["data"]
+    assert workspace["limit"] == 7
+    assert workspace["session_id"] == 41
     memory = api_client.put(
         "/api/v1/agent/courses/13/memories",
         json={"memory_key": "style", "memory_type": "preference", "content": {"brief": True}},

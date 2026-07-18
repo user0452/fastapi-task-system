@@ -23,7 +23,7 @@ describe('SessionList', () => {
   it('selects and archives the requested session', async () => {
     const wrapper = mount(SessionList, { props: { sessions: [session], activeId: 7 } })
 
-    await wrapper.get('.session-item').trigger('click')
+    await wrapper.get('.session-select').trigger('click')
     await wrapper.get('.archive-action').trigger('click')
 
     expect(wrapper.emitted('select')).toEqual([[session]])
