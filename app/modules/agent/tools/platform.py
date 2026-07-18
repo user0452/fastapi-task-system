@@ -283,12 +283,15 @@ class SandboxExecutor:
 
         process_query_information = 0x0400
         process_vm_read = 0x0010
-        kernel32 = ctypes.windll.kernel32
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            return 0
+        kernel32 = windll.kernel32
         kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
         kernel32.OpenProcess.restype = ctypes.c_void_p
         kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
         kernel32.CloseHandle.restype = ctypes.c_int
-        psapi = ctypes.windll.psapi
+        psapi = windll.psapi
         psapi.GetProcessMemoryInfo.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(ProcessMemoryCounters),
