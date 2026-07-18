@@ -427,6 +427,30 @@ def create_mastery_change(
     return change.id
 
 
+def count_recent_mastery_changes(
+    cursor,
+    user_id: int,
+    course_id: int,
+    point_id: int,
+    hours: int = 6,
+) -> int:
+    """Count mastery updates for a point in the recent window, excluding the current write."""
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM mastery_changes mc
+        INNER JOIN mastery_records mr ON mr.id = mc.mastery_record_id
+        WHERE mr.user_id = %s
+          AND mr.course_id = %s
+          AND mr.knowledge_point_id = %s
+          AND mc.created_at >= (UTC_TIMESTAMP() - INTERVAL %s HOUR)
+        """,
+        (user_id, course_id, point_id, max(1, int(hours))),
+    )
+    row = cursor.fetchone() or {}
+    return int(row.get("total") or 0)
+
+
 def archive_active_plans(cursor, user_id: int, course_id: int) -> None:
     StudyPlan = reflected_model("study_plans")
     for plan in cursor.session.scalars(

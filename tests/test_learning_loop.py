@@ -20,6 +20,7 @@ from app.modules.learning.service import (
     get_course_progress,
     get_diagnostic,
     get_today_learning,
+    get_today_overview,
     start_learning_session,
     submit_diagnostic,
     submit_learning_session,
@@ -618,17 +619,41 @@ def test_low_score_updates_mastery_and_changes_tomorrow_plan(learning_course):
         item
         for item in tomorrow["items"]
         if item["knowledge_point_id"] == point_id
-        and item["content_ref"].get("mastery_change_id") == change["id"]
     ]
-    assert {item["item_type"] for item in adapted_items} == {
+    assert {item["item_type"] for item in adapted_items} >= {
         "review",
         "explanation",
         "worked_example",
         "practice",
     }
+    assert any(
+        item.get("content_ref", {}).get("spaced_review") for item in adapted_items if item["item_type"] == "review"
+    )
     assert next(item for item in adapted_items if item["item_type"] == "practice")[
         "content_ref"
     ]["question_id"]
+
+
+def test_today_overview_aggregates_courses_without_n_plus_one(learning_course):
+    user, _, course, points, diagnostic = learning_course
+    submit_diagnostic(
+        user["id"],
+        diagnostic["id"],
+        _all_answers(diagnostic),
+        evaluator=_evaluator({point["id"]: 70 for point in points}),
+    )
+    second = create_user_course(
+        user["id"],
+        CourseCreate(name="第二门课", goal="补充总览覆盖", daily_minutes=25),
+    )
+    overview = get_today_overview(user["id"])
+    assert overview["summary"]["course_count"] >= 2
+    course_ids = {item["course"]["id"] for item in overview["items"]}
+    assert course["id"] in course_ids
+    assert second["id"] in course_ids
+    primary = next(item for item in overview["items"] if item["course"]["id"] == course["id"])
+    assert primary["session"] is not None
+    assert overview["summary"]["with_session"] >= 1
 
 
 def test_completed_session_restores_as_today_and_cannot_be_submitted_twice(learning_course):

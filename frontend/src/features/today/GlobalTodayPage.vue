@@ -9,7 +9,7 @@ import {
   Route,
   RotateCw
 } from 'lucide-vue-next'
-import { getTodayLearning } from '../../api/learning'
+import { getTodayOverview } from '../../api/learning'
 import { useCourseStore } from '../../stores/course'
 
 
@@ -17,13 +17,16 @@ const router = useRouter()
 const courses = useCourseStore()
 const loading = ref(true)
 const rows = ref([])
+const overviewError = ref('')
+const summary = ref({ course_count: 0, total_minutes: 0, total_items: 0, completed: 0, with_session: 0 })
 
 const now = new Date()
 const todayLabel = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(now)
 const greeting = now.getHours() < 6 ? '夜深了' : now.getHours() < 12 ? '早上好' : now.getHours() < 18 ? '下午好' : '晚上好'
-const totalMinutes = computed(() => rows.value.reduce((sum, row) => sum + Number(row.session?.estimated_minutes || 0), 0))
-const totalItems = computed(() => rows.value.reduce((sum, row) => sum + Number(row.session?.items?.length || 0), 0))
-const completed = computed(() => rows.value.filter(row => ['completed', 'evaluated'].includes(row.session?.status)).length)
+const totalMinutes = computed(() => Number(summary.value.total_minutes || 0))
+const totalItems = computed(() => Number(summary.value.total_items || 0))
+const completed = computed(() => Number(summary.value.completed || 0))
+const loadError = computed(() => overviewError.value || courses.error)
 const primaryRow = computed(() => (
   rows.value.find(row => row.session && !['completed', 'evaluated'].includes(row.session.status))
   || rows.value.find(row => row.session)
@@ -41,14 +44,23 @@ const primaryProgress = computed(() => Math.round(
 async function load() {
   loading.value = true
   rows.value = []
+  overviewError.value = ''
   try {
     await courses.ensureLoaded()
     if (courses.error) return
-    const results = await Promise.all(courses.courses.map(async course => {
-      const response = await getTodayLearning(course.id)
-      return { course, session: response.code === 200 ? response.data : null }
-    }))
-    rows.value = results
+    const response = await getTodayOverview()
+    if (response.code === 200) {
+      rows.value = response.data?.items || []
+      summary.value = response.data?.summary || {
+        course_count: rows.value.length,
+        total_minutes: 0,
+        total_items: 0,
+        completed: 0,
+        with_session: 0
+      }
+    } else {
+      overviewError.value = response.message || '今日总览加载失败'
+    }
   } finally {
     loading.value = false
   }
@@ -72,10 +84,10 @@ onMounted(load)
     </header>
 
     <div v-if="loading" class="today-state">正在汇总所有课程</div>
-    <div v-else-if="courses.error" class="today-empty today-error">
+    <div v-else-if="loadError" class="today-empty today-error">
       <CalendarCheck2 :size="34" />
       <h2>课程暂时未加载</h2>
-      <p>{{ courses.error }}</p>
+      <p>{{ loadError }}</p>
       <button type="button" @click="load">重新加载</button>
     </div>
     <div v-else-if="!rows.length" class="today-empty">

@@ -21,7 +21,20 @@ ai_playground/
 frontend/test-results/
 frontend/playwright-report/
 
-# Runtime uploads
+# Runtime uploads and local process artifacts
 var/uploads/
 var/rag-evaluation/
 var/rag_indexes/
+var/runtime/
+*.err.log
+backend-*.log
+backend-*.err.log
+
+# Ad-hoc local notes / experiment dumps
+CODE_REVIEW.md
+FINAL_SUMMARY.md
+MEMORY_*.md
+OPTIMIZATION_*.md
+test_memory.py
+test_memory_db.py
+=3.0

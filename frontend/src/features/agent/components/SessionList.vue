@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { Archive, MessageSquare, MoreHorizontal, Plus } from 'lucide-vue-next'
 
 
@@ -10,6 +10,7 @@ defineProps({
 })
 const emit = defineEmits(['select', 'new', 'archive'])
 const openMenuId = ref(null)
+const root = ref(null)
 
 function shortDate(value) {
   if (!value) return ''
@@ -28,10 +29,29 @@ function archive(session) {
 function closeMenu() {
   openMenuId.value = null
 }
+
+function onDocumentPointerDown(event) {
+  if (!root.value || openMenuId.value == null) return
+  if (!root.value.contains(event.target)) closeMenu()
+}
+
+function onDocumentKeydown(event) {
+  if (event.key === 'Escape') closeMenu()
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown)
+  document.addEventListener('keydown', onDocumentKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
+  document.removeEventListener('keydown', onDocumentKeydown)
+})
 </script>
 
 <template>
-  <aside class="session-panel">
+  <aside ref="root" class="session-panel">
     <div class="session-heading">
       <strong>对话</strong>
       <button type="button" title="新建对话" aria-label="新建对话" @click="$emit('new')"><Plus :size="17" /></button>

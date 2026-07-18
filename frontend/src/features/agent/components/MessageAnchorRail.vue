@@ -53,6 +53,7 @@ watch(() => props.activeMessageId, async id => {
           type="button"
           class="anchor-item"
           :class="{ active: String(activeMessageId) === String(anchor.id) }"
+          :aria-label="anchor.title"
           :title="anchor.title"
           :aria-current="String(activeMessageId) === String(anchor.id) ? 'location' : undefined"
           @click="jump(anchor.id)"

@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu, PanelLeftClose, PanelLeftOpen, Sparkles, X } from 'lucide-vue-next'
+import { Menu, PanelLeftClose, PanelLeftOpen, Sparkles } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useCourseStore } from '../stores/course'
 import CourseRail from '../features/workspace/components/CourseRail.vue'
+import Modal from '../components/common/Modal.vue'
 import { showToast } from '../components/common/toast'
 import { safePostLoginRoute } from '../router/redirect'
 
@@ -145,45 +146,35 @@ onMounted(async () => {
       </router-view>
     </main>
 
-    <Teleport to="body">
-      <div v-if="creatorOpen" class="creator-overlay" @click.self="closeCreator">
-        <section class="course-creator" role="dialog" aria-modal="true" aria-labelledby="course-creator-title">
-          <header>
-            <div>
-              <span>新课程助手</span>
-              <h2 id="course-creator-title">创建一门长期学习的课程</h2>
-            </div>
-            <button type="button" title="关闭" aria-label="关闭" @click="closeCreator"><X :size="19" /></button>
-          </header>
-          <form @submit.prevent="createCourse">
-            <label>
-              <span>课程名称</span>
-              <input v-model="form.name" autofocus maxlength="100" placeholder="例如：软件测试" />
-            </label>
-            <label>
-              <span>学习目标</span>
-              <textarea v-model="form.goal" rows="3" maxlength="500" placeholder="例如：掌握核心测试设计方法并完成考试冲刺"></textarea>
-            </label>
-            <div class="creator-grid">
-              <label>
-                <span>目标日期</span>
-                <input v-model="form.exam_at" type="datetime-local" />
-              </label>
-              <label>
-                <span>每日分钟</span>
-                <input v-model.number="form.daily_minutes" type="number" min="10" max="480" step="5" />
-              </label>
-            </div>
-            <footer>
-              <button class="creator-cancel" type="button" @click="closeCreator">取消</button>
-              <button class="creator-submit" type="submit" :disabled="!form.name.trim() || creating">
-                {{ creating ? '正在创建' : '创建课程助手' }}
-              </button>
-            </footer>
-          </form>
-        </section>
-      </div>
-    </Teleport>
+    <Modal :show="creatorOpen" title="创建一门长期学习的课程" size="md" @close="closeCreator">
+      <form class="course-creator-form" @submit.prevent="createCourse">
+        <p class="creator-kicker">新课程助手</p>
+        <label>
+          <span>课程名称</span>
+          <input v-model="form.name" autofocus maxlength="100" placeholder="例如：软件测试" />
+        </label>
+        <label>
+          <span>学习目标</span>
+          <textarea v-model="form.goal" rows="3" maxlength="500" placeholder="例如：掌握核心测试设计方法并完成考试冲刺"></textarea>
+        </label>
+        <div class="creator-grid">
+          <label>
+            <span>目标日期</span>
+            <input v-model="form.exam_at" type="datetime-local" />
+          </label>
+          <label>
+            <span>每日分钟</span>
+            <input v-model.number="form.daily_minutes" type="number" min="10" max="480" step="5" />
+          </label>
+        </div>
+        <footer>
+          <button class="creator-cancel" type="button" @click="closeCreator">取消</button>
+          <button class="creator-submit" type="submit" :disabled="!form.name.trim() || creating">
+            {{ creating ? '正在创建' : '创建课程助手' }}
+          </button>
+        </footer>
+      </form>
+    </Modal>
   </div>
 </template>
 
@@ -202,23 +193,17 @@ onMounted(async () => {
 .workspace-fade-leave-active { transition: opacity var(--duration-normal) var(--ease-standard), transform var(--duration-normal) var(--ease-out); }
 .workspace-fade-enter-from { opacity: 0; transform: translateY(4px); }
 .workspace-fade-leave-to { opacity: 0; transform: translateY(-2px); }
-.creator-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(20, 22, 28, .32); backdrop-filter: blur(10px); }
-.course-creator { width: min(540px, 100%); overflow: hidden; border: 1px solid rgba(255, 255, 255, .58); border-radius: 26px; background: var(--surface-elevated); box-shadow: var(--shadow-floating); backdrop-filter: blur(28px) saturate(1.1); }
-.course-creator > header { min-height: 92px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 21px 24px; border-bottom: 1px solid var(--border-subtle); }
-.course-creator header span { color: var(--accent); font-size: var(--font-caption); font-weight: 600; }
-.course-creator h2 { margin-top: 5px; font-size: 21px; font-weight: 600; }
-.course-creator header button { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; color: var(--text-secondary); }
-.course-creator header button:hover { background: var(--color-surface-hover); }
-.course-creator form { display: grid; gap: 18px; padding: 24px; }
-.course-creator label { display: grid; gap: 6px; }
-.course-creator label > span { color: var(--text-secondary); font-size: var(--font-secondary); font-weight: 600; }
-.course-creator input,
-.course-creator textarea { width: 100%; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 14px; background: rgba(255, 255, 255, .72); font-size: 14px; }
-.course-creator textarea { resize: vertical; line-height: 1.55; }
-.course-creator input:focus,
-.course-creator textarea:focus { border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.course-creator-form { display: grid; gap: 18px; }
+.creator-kicker { color: var(--accent); font-size: var(--font-caption); font-weight: 600; }
+.course-creator-form label { display: grid; gap: 6px; }
+.course-creator-form label > span { color: var(--text-secondary); font-size: var(--font-secondary); font-weight: 600; }
+.course-creator-form input,
+.course-creator-form textarea { width: 100%; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 14px; background: rgba(255, 255, 255, .72); font-size: 14px; }
+.course-creator-form textarea { resize: vertical; line-height: 1.55; }
+.course-creator-form input:focus,
+.course-creator-form textarea:focus { border-color: var(--accent); box-shadow: var(--shadow-focus); }
 .creator-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(120px, .7fr); gap: 12px; }
-.course-creator footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 3px; }
+.course-creator-form footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 3px; }
 .creator-cancel,
 .creator-submit { min-height: 44px; padding: 0 18px; border-radius: 13px; font-size: 14px; font-weight: 600; }
 .creator-cancel { color: var(--text-secondary); border: 1px solid var(--border-strong); background: rgba(255, 255, 255, .65); }
@@ -255,7 +240,7 @@ onMounted(async () => {
 
 @media (max-width: 520px) {
   .creator-grid { grid-template-columns: 1fr; }
-  .course-creator footer { flex-direction: column-reverse; }
+  .course-creator-form footer { flex-direction: column-reverse; }
   .creator-cancel,
   .creator-submit { width: 100%; }
 }

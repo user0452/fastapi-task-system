@@ -23,6 +23,10 @@ export function getTodayLearning(courseId) {
   return request(`/api/v1/study/today?course_id=${courseId}`)
 }
 
+export function getTodayOverview() {
+  return request('/api/v1/study/today-overview')
+}
+
 export function startLearningSession(sessionId) {
   return request(`/api/v1/study/sessions/${sessionId}/start`, { method: 'POST' })
 }

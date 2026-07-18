@@ -440,15 +440,39 @@ def _persist_evaluation_and_update_mastery(
         assessment_score = sum(scores) / len(scores)
         existing = repository.get_mastery(cursor, user_id, course_id, point_id)
         before = float(existing["mastery"]) if existing else 0.0
-        after = assessment_score if initial or existing is None else before * 0.7 + assessment_score * 0.3
+        # Short-interval repeats contribute less so a single weak point can't be
+        # farmed for mastery. Initial/diagnostic still takes the raw score.
+        weight = 0.3
+        if not initial and existing is not None:
+            # recent_count includes prior updates (e.g. diagnostic). Attenuate only
+            # when the same point is scored repeatedly within the window.
+            recent_count = repository.count_recent_mastery_changes(
+                cursor,
+                user_id,
+                course_id,
+                point_id,
+                hours=6,
+            )
+            if recent_count >= 3:
+                weight = 0.15
+            elif recent_count >= 2:
+                weight = 0.22
+        if initial or existing is None:
+            after = assessment_score
+            formula = "initial"
+            reason = f"诊断得分 {assessment_score:.1f}，建立初始掌握度"
+        else:
+            after = before * (1.0 - weight) + assessment_score * weight
+            formula = f"before×{1.0 - weight:.2f}+score×{weight:.2f}"
+            reason = (
+                f"原掌握度 {before:.1f} × {1.0 - weight:.2f} + "
+                f"本次得分 {assessment_score:.1f} × {weight:.2f}"
+            )
+            if weight < 0.3:
+                reason += "（短时间内重复练习，更新权重已衰减）"
         after = round(max(0.0, min(100.0, after)), 2)
         old_streak = int(existing["low_score_streak"]) if existing else 0
         low_score_streak = old_streak + 1 if assessment_score < 60 else 0
-        reason = (
-            f"诊断得分 {assessment_score:.1f}，建立初始掌握度"
-            if initial or existing is None
-            else f"原掌握度 {before:.1f} × 0.7 + 本次得分 {assessment_score:.1f} × 0.3"
-        )
         record = repository.save_mastery(
             cursor,
             user_id,
@@ -474,6 +498,8 @@ def _persist_evaluation_and_update_mastery(
                 "before": before,
                 "after": after,
                 "reason": reason,
+                "formula": formula,
+                "weight": weight,
                 "evaluation_id": evaluation_id,
                 "low_score_streak": low_score_streak,
             }
@@ -753,6 +779,45 @@ def get_today_learning(user_id: int, course_id: int) -> dict | None:
         return hydrated
 
 
+def get_today_overview(user_id: int) -> dict:
+    """Aggregate today sessions for all active courses in one request."""
+    today = get_user_local_date(user_id)
+    with get_cursor() as cursor:
+        courses = course_repository.list_courses(cursor, user_id, include_archived=False)
+        roadmap_service.attach_summaries(cursor, user_id, courses)
+        rows = []
+        total_minutes = 0
+        total_items = 0
+        completed = 0
+        for course in courses:
+            session = repository.get_today_session(cursor, user_id, course["id"], today)
+            hydrated = _hydrate_session_questions(cursor, session, user_id) if session else None
+            if hydrated:
+                total_minutes += int(hydrated.get("estimated_minutes") or 0)
+                total_items += len(hydrated.get("items") or [])
+                if hydrated.get("status") in {"completed", "evaluated"}:
+                    completed += 1
+            rows.append({"course": course, "session": hydrated})
+        record_audit(
+            user_id,
+            "COURSE_TODAY_OVERVIEW_VIEWED",
+            "course",
+            detail={"count": len(rows), "completed": completed},
+            cursor=cursor,
+        )
+    return {
+        "date": today.isoformat(),
+        "items": rows,
+        "summary": {
+            "course_count": len(rows),
+            "total_minutes": total_minutes,
+            "total_items": total_items,
+            "completed": completed,
+            "with_session": sum(1 for row in rows if row["session"]),
+        },
+    }
+
+
 def start_learning_session(user_id: int, session_id: int) -> dict:
     with get_cursor() as cursor:
         session = repository.get_session(cursor, session_id, user_id)
@@ -808,7 +873,7 @@ def _adapt_next_session(
     if after < 60:
         reason = f"{point_name}掌握度为 {after:.1f}，次日增加复习、基础讲解和基础题"
         item_specs = [
-            ("review", f"重点复习：{point_name}", {"mode": "review"}, -40),
+            ("review", f"重点复习：{point_name}", {"mode": "review", "spaced_review": True}, -40),
             ("explanation", f"基础讲解：{point_name}", {"mode": "basic"}, -30),
             (
                 "practice",

@@ -20,6 +20,7 @@ from app.modules.learning.service import (
     get_practice_statistics,
     get_study_plan,
     get_today_learning,
+    get_today_overview,
     get_wrong_answers,
     reschedule_learning_session,
     start_learning_session,
@@ -73,6 +74,11 @@ def evaluate_diagnostic(
 @router.get("/study/today")
 def today_learning(course_id: int, user=Depends(get_current_user)):
     return success(data=get_today_learning(user["id"], course_id))
+
+
+@router.get("/study/today-overview")
+def today_overview(user=Depends(get_current_user)):
+    return success(data=get_today_overview(user["id"]))
 
 
 @router.post("/study/sessions/{session_id}/start")
