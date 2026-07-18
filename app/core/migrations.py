@@ -517,6 +517,8 @@ def _upgrade_course_agent_foundation(cursor) -> None:
             memory_type VARCHAR(40) NOT NULL DEFAULT 'course_preference',
             content_json JSON NOT NULL,
             source_message_id INT NULL,
+            source_type VARCHAR(30) NOT NULL DEFAULT 'manual',
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
             status VARCHAR(30) NOT NULL DEFAULT 'active',
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1358,6 +1360,28 @@ def _upgrade_learning_roadmaps(cursor) -> None:
     )
 
 
+def _upgrade_memory_transparency(cursor) -> None:
+    """Expose memory origin and user-controlled inclusion without deleting history."""
+    _add_column(
+        cursor,
+        "course_agent_memories",
+        "source_type",
+        "VARCHAR(30) NOT NULL DEFAULT 'manual'",
+    )
+    _add_column(
+        cursor,
+        "course_agent_memories",
+        "enabled",
+        "BOOLEAN NOT NULL DEFAULT TRUE",
+    )
+    _add_index(
+        cursor,
+        "course_agent_memories",
+        "idx_course_agent_memories_visibility",
+        "user_id, course_id, status, enabled, memory_type",
+    )
+
+
 MIGRATIONS = [
     Migration("0001", "non_destructive_baseline", _upgrade_baseline),
     Migration("0002", "course_learning_foundation", _upgrade_course_learning_foundation),
@@ -1381,6 +1405,7 @@ MIGRATIONS = [
     Migration("0020", "durable_agent_actions", _upgrade_durable_agent_actions),
     Migration("0021", "general_agent_run_idempotency", _upgrade_general_agent_run_idempotency),
     Migration("0022", "learning_roadmaps", _upgrade_learning_roadmaps),
+    Migration("0023", "memory_transparency", _upgrade_memory_transparency),
 ]
 
 

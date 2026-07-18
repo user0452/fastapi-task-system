@@ -36,6 +36,30 @@ export function saveCourseAgentMemory(courseId, payload) {
   })
 }
 
+export function getCourseAgentMemories(courseId) {
+  return request(`/api/v1/agent/courses/${courseId}/memories`)
+}
+
+export function updateCourseAgentMemory(courseId, memoryId, payload) {
+  return request(`/api/v1/agent/courses/${courseId}/memories/${memoryId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })
+}
+
+export function toggleCourseAgentMemoryType(courseId, memoryType, enabled) {
+  return request(`/api/v1/agent/courses/${courseId}/memory-types/${encodeURIComponent(memoryType)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled })
+  })
+}
+
+export function deleteCourseAgentMemory(courseId, memoryId) {
+  return request(`/api/v1/agent/courses/${courseId}/memories/${memoryId}`, {
+    method: 'DELETE'
+  })
+}
+
 export function createAgentSession(payload = {}) {
   return request('/api/v1/agent/sessions', {
     method: 'POST',

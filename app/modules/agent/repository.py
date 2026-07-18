@@ -41,6 +41,7 @@ def _memory_row(entity: Any | None) -> dict | None:
     row = _row(entity)
     if row is not None:
         row["content"] = _json_loads(row.pop("content_json", None), {})
+        row["enabled"] = bool(row.get("enabled", True))
     return row
 
 
@@ -167,18 +168,47 @@ def touch_course_agent(cursor, agent_id: int, user_id: int) -> None:
         agent.last_active_at = utc_now_naive()
 
 
-def list_course_memories(cursor, agent_id: int, user_id: int) -> list[dict]:
+def list_course_memories(
+    cursor,
+    agent_id: int,
+    user_id: int,
+    *,
+    include_disabled: bool = False,
+) -> list[dict]:
     CourseMemory = reflected_model("course_agent_memories")
+    conditions = [
+        CourseMemory.agent_id == agent_id,
+        CourseMemory.user_id == user_id,
+        CourseMemory.status == "active",
+    ]
+    if not include_disabled:
+        conditions.append(CourseMemory.enabled.is_(True))
     memories = cursor.session.scalars(
         select(CourseMemory)
-        .where(
-            CourseMemory.agent_id == agent_id,
-            CourseMemory.user_id == user_id,
-            CourseMemory.status == "active",
-        )
+        .where(*conditions)
         .order_by(CourseMemory.updated_at.desc(), CourseMemory.id.desc())
     )
     return [row for memory in memories if (row := _memory_row(memory)) is not None]
+
+
+def get_course_memory(
+    cursor,
+    memory_id: int,
+    user_id: int,
+    course_id: int,
+    *,
+    for_update: bool = False,
+) -> dict | None:
+    CourseMemory = reflected_model("course_agent_memories")
+    statement = select(CourseMemory).where(
+        CourseMemory.id == memory_id,
+        CourseMemory.user_id == user_id,
+        CourseMemory.course_id == course_id,
+        CourseMemory.status == "active",
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    return _memory_row(cursor.session.scalar(statement))
 
 
 def upsert_course_memory(
@@ -190,6 +220,7 @@ def upsert_course_memory(
     memory_type: str,
     content: dict,
     source_message_id: int | None = None,
+    source_type: str = "manual",
     embedding_json: str | None = None,
     embedding_model: str | None = None,
     embedding_hash: str | None = None,
@@ -209,6 +240,8 @@ def upsert_course_memory(
         "memory_type": memory_type,
         "content_json": _json_dumps(content),
         "source_message_id": source_message_id,
+        "source_type": source_type,
+        "enabled": True,
         "embedding_json": embedding_json,
         "embedding_model": embedding_model,
         "embedding_hash": embedding_hash,
@@ -228,6 +261,85 @@ def upsert_course_memory(
             setattr(memory, field, value)
     session.flush()
     return _memory_row(memory) or {}
+
+
+def update_course_memory(
+    cursor,
+    memory_id: int,
+    user_id: int,
+    course_id: int,
+    values: dict[str, Any],
+) -> dict | None:
+    CourseMemory = reflected_model("course_agent_memories")
+    memory = cursor.session.scalar(
+        select(CourseMemory)
+        .where(
+            CourseMemory.id == memory_id,
+            CourseMemory.user_id == user_id,
+            CourseMemory.course_id == course_id,
+            CourseMemory.status == "active",
+        )
+        .with_for_update()
+    )
+    if memory is None:
+        return None
+    for field, value in values.items():
+        setattr(memory, field, value)
+    cursor.session.flush()
+    return _memory_row(memory)
+
+
+def set_course_memory_type_enabled(
+    cursor,
+    agent_id: int,
+    user_id: int,
+    course_id: int,
+    memory_type: str,
+    enabled: bool,
+) -> int:
+    CourseMemory = reflected_model("course_agent_memories")
+    memories = list(
+        cursor.session.scalars(
+            select(CourseMemory)
+            .where(
+                CourseMemory.agent_id == agent_id,
+                CourseMemory.user_id == user_id,
+                CourseMemory.course_id == course_id,
+                CourseMemory.memory_type == memory_type,
+                CourseMemory.status == "active",
+            )
+            .with_for_update()
+        )
+    )
+    for memory in memories:
+        memory.enabled = enabled
+    cursor.session.flush()
+    return len(memories)
+
+
+def delete_course_memory(
+    cursor,
+    memory_id: int,
+    user_id: int,
+    course_id: int,
+) -> bool:
+    CourseMemory = reflected_model("course_agent_memories")
+    memory = cursor.session.scalar(
+        select(CourseMemory)
+        .where(
+            CourseMemory.id == memory_id,
+            CourseMemory.user_id == user_id,
+            CourseMemory.course_id == course_id,
+            CourseMemory.status == "active",
+        )
+        .with_for_update()
+    )
+    if memory is None:
+        return False
+    memory.status = "deleted"
+    memory.enabled = False
+    cursor.session.flush()
+    return True
 
 
 def claim_agent_run(

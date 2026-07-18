@@ -30,6 +30,39 @@ def test_agent_v1_routes_delegate_and_keep_response_envelope(api_client, monkeyp
         },
     )
     monkeypatch.setattr(agent_router, "save_course_agent_memory", lambda user_id, course_id, request: {"user_id": user_id, "course_id": course_id, "key": request.memory_key})
+    monkeypatch.setattr(
+        agent_router,
+        "list_course_agent_memories",
+        lambda user_id, course_id: {"items": [], "user_id": user_id, "course_id": course_id},
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "update_course_agent_memory",
+        lambda user_id, course_id, memory_id, request: {
+            "id": memory_id,
+            "user_id": user_id,
+            "course_id": course_id,
+            "enabled": request.enabled,
+        },
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "set_course_agent_memory_type_enabled",
+        lambda user_id, course_id, memory_type, enabled: {
+            "user_id": user_id,
+            "course_id": course_id,
+            "memory_type": memory_type,
+            "enabled": enabled,
+        },
+    )
+    deleted_memories = []
+    monkeypatch.setattr(
+        agent_router,
+        "delete_course_agent_memory",
+        lambda user_id, course_id, memory_id: deleted_memories.append(
+            (user_id, course_id, memory_id)
+        ),
+    )
     monkeypatch.setattr(agent_router, "create_chat_session", lambda user_id, request: {"id": 41, "user_id": user_id, "title": request.title})
     monkeypatch.setattr(agent_router, "get_chat_session", lambda user_id, session_id, before_id, size: {"user_id": user_id, "session_id": session_id, "before_id": before_id, "size": size})
     archived = []
@@ -55,6 +88,22 @@ def test_agent_v1_routes_delegate_and_keep_response_envelope(api_client, monkeyp
         json={"memory_key": "style", "memory_type": "preference", "content": {"brief": True}},
     )
     assert memory.json()["data"]["key"] == "style"
+    memory_list = api_client.get("/api/v1/agent/courses/13/memories").json()["data"]
+    assert memory_list["course_id"] == 13
+    patched = api_client.patch(
+        "/api/v1/agent/courses/13/memories/8",
+        json={"enabled": False},
+    ).json()["data"]
+    assert patched["id"] == 8
+    assert patched["course_id"] == 13
+    assert patched["enabled"] is False
+    type_state = api_client.patch(
+        "/api/v1/agent/courses/13/memory-types/weak_point",
+        json={"enabled": False},
+    ).json()["data"]
+    assert type_state["memory_type"] == "weak_point"
+    assert api_client.delete("/api/v1/agent/courses/13/memories/8").status_code == 200
+    assert deleted_memories and deleted_memories[0][1:] == (13, 8)
     created = api_client.post("/api/v1/agent/sessions", json={"course_id": 13, "title": "Review"})
     assert created.status_code == 201
     assert created.json()["code"] == 201

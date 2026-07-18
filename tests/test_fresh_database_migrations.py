@@ -51,9 +51,9 @@ def test_alembic_upgrade_head_builds_a_fresh_database():
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260718_05"
+                assert cursor.fetchone()["version_num"] == "20260718_06"
                 cursor.execute("SELECT COUNT(*) AS total FROM schema_migrations")
-                assert cursor.fetchone()["total"] >= 22
+                assert cursor.fetchone()["total"] >= 23
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total
@@ -87,12 +87,12 @@ def test_alembic_upgrades_a_previously_stamped_historical_database():
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260718_05"
+                assert cursor.fetchone()["version_num"] == "20260718_06"
                 cursor.execute(
                     "SELECT COUNT(*) AS total FROM schema_migrations "
-                    "WHERE version IN ('0018', '0019', '0020', '0021', '0022')"
+                    "WHERE version IN ('0018', '0019', '0020', '0021', '0022', '0023')"
                 )
-                assert cursor.fetchone()["total"] == 5
+                assert cursor.fetchone()["total"] == 6
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total
@@ -106,10 +106,14 @@ def test_alembic_upgrades_a_previously_stamped_historical_database():
                             table_name = 'agent_chat_messages'
                             AND column_name = 'idempotency_key'
                         )
+                        OR (
+                            table_name = 'course_agent_memories'
+                            AND column_name IN ('source_type', 'enabled')
+                        )
                       )
                     """
                 )
-                assert cursor.fetchone()["total"] == 4
+                assert cursor.fetchone()["total"] == 6
                 cursor.execute(
                     """
                     SELECT column_name AS name, is_nullable AS nullable

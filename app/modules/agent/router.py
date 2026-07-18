@@ -4,7 +4,7 @@ import os
 from contextlib import suppress
 from threading import Event
 
-from fastapi import Depends, Query, Request, status
+from fastapi import Depends, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.core.responses import V1APIRouter, success
@@ -12,19 +12,25 @@ from app.modules.agent.schemas import (
     ActionDecision,
     AgentChatRequest,
     ChatSessionCreate,
+    CourseAgentMemoryPatch,
+    CourseAgentMemoryTypeToggle,
     CourseAgentMemoryUpsert,
 )
 from app.modules.agent.service import (
     archive_chat_session,
     create_chat_session,
     decide_action,
+    delete_course_agent_memory,
     get_chat_session,
     get_course_agent_workspace,
     list_agent_tools,
     list_chat_sessions,
+    list_course_agent_memories,
     run_native_tool_agent_chat,
     run_native_tool_agent_chat_async,
     save_course_agent_memory,
+    set_course_agent_memory_type_enabled,
+    update_course_agent_memory,
 )
 from app.modules.auth.dependencies import get_current_user
 
@@ -67,7 +73,7 @@ def course_agent_workspace(
 
 
 @router.put("/courses/{course_id}/memories")
-def update_course_agent_memory(
+def put_course_agent_memory(
     course_id: int,
     request: CourseAgentMemoryUpsert,
     user=Depends(get_current_user),
@@ -76,6 +82,57 @@ def update_course_agent_memory(
         data=save_course_agent_memory(user["id"], course_id, request),
         message="课程助手记忆已更新",
     )
+
+
+@router.get("/courses/{course_id}/memories")
+def course_agent_memories(course_id: int, user=Depends(get_current_user)):
+    return success(data=list_course_agent_memories(user["id"], course_id))
+
+
+@router.patch("/courses/{course_id}/memories/{memory_id}")
+def patch_course_agent_memory(
+    course_id: int,
+    memory_id: int,
+    request: CourseAgentMemoryPatch,
+    user=Depends(get_current_user),
+):
+    return success(
+        data=update_course_agent_memory(user["id"], course_id, memory_id, request),
+        message="课程助手记忆已更新",
+    )
+
+
+@router.patch("/courses/{course_id}/memory-types/{memory_type}")
+def toggle_course_agent_memory_type(
+    course_id: int,
+    request: CourseAgentMemoryTypeToggle,
+    memory_type: str = Path(
+        ...,
+        min_length=1,
+        max_length=40,
+        pattern=r"^[a-zA-Z0-9_.-]+$",
+    ),
+    user=Depends(get_current_user),
+):
+    return success(
+        data=set_course_agent_memory_type_enabled(
+            user["id"],
+            course_id,
+            memory_type,
+            request.enabled,
+        ),
+        message="记忆类型状态已更新",
+    )
+
+
+@router.delete("/courses/{course_id}/memories/{memory_id}")
+def remove_course_agent_memory(
+    course_id: int,
+    memory_id: int,
+    user=Depends(get_current_user),
+):
+    delete_course_agent_memory(user["id"], course_id, memory_id)
+    return success(message="课程助手记忆已删除")
 
 
 @router.post("/sessions", status_code=status.HTTP_201_CREATED)
