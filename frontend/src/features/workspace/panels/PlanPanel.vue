@@ -301,4 +301,67 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
   .spinning { animation: none; }
   .stage-progress i { transition: none; }
 }
+
+/* Learning OS visual layer */
+.plan-panel { gap: 36px; }
+.panel-state { font-size: 14px; }
+.panel-empty strong { color: var(--text-primary); font-size: 17px; }
+.panel-empty p { max-width: 340px; color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+.panel-empty button { min-height: 42px; padding: 0 15px; border-radius: 12px; background: var(--accent); font-size: 13px; font-weight: 600; }
+.roadmap-section,
+.daily-section { gap: 18px; }
+.roadmap-header,
+.daily-heading { padding-bottom: 15px; border-bottom-color: var(--border-subtle); }
+.roadmap-header div > span,
+.daily-heading div > span { color: var(--accent); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.roadmap-header strong,
+.daily-heading strong { color: var(--text-primary); font-size: 22px; font-weight: 630; letter-spacing: -.025em; }
+.daily-heading > p { color: var(--text-tertiary); font-size: 12px; }
+.roadmap-status { padding: 4px 8px; border-radius: 999px; color: var(--text-secondary); background: var(--surface-tertiary); font-size: 11px; font-weight: 600; }
+.roadmap-status.ready { color: var(--success); background: rgba(36, 138, 61, .1); }
+.roadmap-status.failed { color: var(--danger); background: rgba(215, 0, 21, .08); }
+.roadmap-state { min-height: 104px; gap: 12px; padding: 16px; border: 0; border-radius: 16px; color: #2858a6; background: var(--accent-softer); }
+.roadmap-state strong { font-size: 14px; }
+.roadmap-state p { color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.roadmap-state button { min-height: 38px; border-radius: 11px; font-size: 12px; }
+.roadmap-overview { gap: 6px 16px; color: var(--text-secondary); font-size: 12px; }
+.roadmap-overview strong { color: var(--accent); }
+.roadmap-stage { grid-template-columns: 34px minmax(0, 1fr); gap: 12px; padding-bottom: 20px; }
+.roadmap-stage:not(:last-child)::before { left: 16px; top: 32px; background: var(--border-strong); }
+.stage-marker { width: 33px; height: 33px; border-color: var(--border-subtle); color: var(--text-secondary); background: var(--surface-tertiary); font-size: 12px; font-weight: 650; }
+.roadmap-stage.active .stage-marker { border: 0; color: #fff; background: var(--gradient-brand); box-shadow: 0 7px 18px rgba(79, 124, 255, .22); }
+.roadmap-stage.completed .stage-marker { color: var(--success); border-color: rgba(36, 138, 61, .2); background: rgba(36, 138, 61, .09); }
+.stage-body { gap: 10px; padding-top: 3px; }
+.roadmap-stage.active .stage-body { margin-top: -5px; padding: 18px; border: 1px solid rgba(52, 120, 246, .1); border-radius: 20px; background: linear-gradient(135deg, rgba(52, 120, 246, .12), rgba(109, 93, 252, .07)); }
+.roadmap-stage.planned { opacity: .64; }
+.stage-heading span { color: var(--text-tertiary); font-size: 11px; }
+.stage-heading strong { color: var(--text-primary); font-size: 15px; font-weight: 620; }
+.stage-heading > strong { color: var(--accent); font-size: 13px; }
+.stage-progress { height: 5px; border-radius: 999px; background: rgba(52, 120, 246, .1); }
+.stage-progress i { border-radius: inherit; background: var(--gradient-blue-cyan); }
+.stage-goal { color: var(--text-secondary); font-size: 13px; line-height: 1.68; }
+.roadmap-stage summary { gap: 5px; color: var(--accent); font-size: 12px; }
+.roadmap-stage dl { gap: 8px; margin-top: 11px; padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, .68); }
+.roadmap-stage dl > div { grid-template-columns: 68px minmax(0, 1fr); }
+.roadmap-stage dt { color: var(--text-tertiary); font-size: 11px; }
+.roadmap-stage dd { color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+.stage-evidence > span,
+.roadmap-stage details > small { color: var(--text-tertiary); font-size: 11px; }
+.stage-evidence button,
+.recommended-content span { padding: 5px 8px; border-radius: 9px; color: var(--accent); background: var(--accent-soft); font-size: 11px; }
+.daily-section { padding-top: 30px; border-top-color: var(--border-subtle); }
+.daily-summary strong { color: var(--text-primary); font-size: 14px; }
+.daily-summary span { color: var(--text-tertiary); font-size: 12px; }
+.session-list { position: relative; }
+.session-list article { gap: 6px; padding: 16px 8px 16px 18px; border-bottom-color: var(--border-subtle); border-left-color: var(--border-strong); }
+.session-date { color: var(--accent); font-size: 12px; font-weight: 600; }
+.session-heading strong { color: var(--text-primary); font-size: 14px; }
+.session-heading span { padding: 3px 7px; border-radius: 999px; color: var(--text-secondary); background: var(--surface-tertiary); font-size: 11px; }
+.session-list article > p { color: var(--text-secondary); font-size: 12px; }
+.session-list small { color: var(--warning); font-size: 12px; line-height: 1.55; }
+.session-actions button { min-height: 36px; padding: 0 10px; border-radius: 10px; color: var(--accent); font-size: 12px; }
+.session-actions button:hover { background: var(--accent-soft); }
+.schedule-editor { grid-template-columns: minmax(0, 1fr) 38px; }
+.schedule-editor input { height: 38px; padding: 0 10px; border-color: var(--border-strong); border-radius: 11px; font-size: 13px; }
+.schedule-editor button { border-radius: 11px; background: var(--accent); }
 </style>

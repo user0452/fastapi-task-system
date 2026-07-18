@@ -30,18 +30,29 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'change-panel', 'prompt', 'data-changed'])
 
-const tabs = [
-  { id: 'overview', label: '概览', icon: LayoutDashboard, component: OverviewPanel },
-  { id: 'today', label: '今日', icon: CalendarCheck2, component: TodayPage },
-  { id: 'diagnostic', label: '诊断', icon: ClipboardCheck, component: DiagnosticWorkspace },
-  { id: 'knowledge', label: '知识点', icon: Network, component: KnowledgePanel },
-  { id: 'plan', label: '计划', icon: CalendarRange, component: PlanPanel },
-  { id: 'practice', label: '练习', icon: ChartNoAxesColumn, component: PracticePanel },
-  { id: 'wrong', label: '错题', icon: CircleX, component: WrongAnswersPanel },
-  { id: 'memory', label: '记忆', icon: Brain, component: MemoryPanel },
-  { id: 'materials', label: '资料', icon: BookOpen, component: MaterialsResourcesPanel }
+const groups = [
+  {
+    label: '学习',
+    tabs: [
+      { id: 'overview', label: '概览', icon: LayoutDashboard, component: OverviewPanel },
+      { id: 'today', label: '今日', icon: CalendarCheck2, component: TodayPage },
+      { id: 'plan', label: '路线', icon: CalendarRange, component: PlanPanel },
+      { id: 'practice', label: '练习', icon: ChartNoAxesColumn, component: PracticePanel }
+    ]
+  },
+  {
+    label: '知识',
+    tabs: [
+      { id: 'diagnostic', label: '诊断', icon: ClipboardCheck, component: DiagnosticWorkspace },
+      { id: 'knowledge', label: '知识点', icon: Network, component: KnowledgePanel },
+      { id: 'wrong', label: '错题', icon: CircleX, component: WrongAnswersPanel }
+    ]
+  },
+  { label: '资料', tabs: [{ id: 'materials', label: '资料库', icon: BookOpen, component: MaterialsResourcesPanel }] },
+  { label: '系统', tabs: [{ id: 'memory', label: '长期记忆', icon: Brain, component: MemoryPanel }] }
 ]
 
+const tabs = groups.flatMap(group => group.tabs)
 const current = computed(() => tabs.find(tab => tab.id === props.activePanel) || tabs[0])
 </script>
 
@@ -54,20 +65,25 @@ const current = computed(() => tabs.find(tab => tab.id === props.activePanel) ||
       </div>
       <button type="button" title="关闭课程面板" aria-label="关闭课程面板" @click="$emit('close')"><X :size="18" /></button>
     </header>
-    <div class="inspector-tabs" role="tablist" aria-label="课程二级视图">
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        type="button"
-        role="tab"
-        :aria-selected="activePanel === tab.id"
-        :title="tab.label"
-        :class="{ active: activePanel === tab.id }"
-        @click="$emit('change-panel', tab.id)"
-      >
-        <component :is="tab.icon" :size="15" />
-        <span>{{ tab.label }}</span>
-      </button>
+    <div class="inspector-tabs" aria-label="课程二级视图">
+      <section v-for="group in groups" :key="group.label" class="inspector-tab-group">
+        <span>{{ group.label }}</span>
+        <div role="tablist" :aria-label="group.label">
+          <button
+            v-for="tab in group.tabs"
+            :key="tab.id"
+            type="button"
+            role="tab"
+            :aria-selected="activePanel === tab.id"
+            :title="tab.label"
+            :class="{ active: activePanel === tab.id }"
+            @click="$emit('change-panel', tab.id)"
+          >
+            <component :is="tab.icon" :size="15" />
+            <span>{{ tab.label }}</span>
+          </button>
+        </div>
+      </section>
     </div>
     <div class="inspector-content">
       <KeepAlive>
@@ -87,22 +103,27 @@ const current = computed(() => tabs.find(tab => tab.id === props.activePanel) ||
 </template>
 
 <style scoped>
-.course-inspector { width: 410px; height: 100dvh; display: grid; grid-template-rows: 58px 48px minmax(0, 1fr); overflow: hidden; background: #f8faf8; border-left: 1px solid #dce2de; box-shadow: -8px 0 24px rgba(31, 43, 37, .035); }
-.inspector-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px 0 15px; border-bottom: 1px solid #e0e4e1; background: #fff; }
-.inspector-header > div { display: grid; gap: 1px; }
-.inspector-header span { color: #858e89; font-size: 9px; }
-.inspector-header strong { color: #34413a; font-size: 13px; }
-.inspector-header button { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 6px; color: #68736d; }
-.inspector-header button:hover { color: #176b58; background: #edf1ee; }
-.inspector-tabs { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); padding: 4px 6px 0; border-bottom: 1px solid #dfe4e1; background: #fff; }
-.inspector-tabs button { min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: #7a847f; border-bottom: 2px solid transparent; font-size: 9px; }
-.inspector-tabs button:hover { color: #3f6f60; }
-.inspector-tabs button.active { color: #176b58; border-bottom-color: #176b58; }
-.inspector-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 15px 28px; }
+.course-inspector { width: 460px; height: 100dvh; display: grid; grid-template-rows: 78px auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--border-subtle); background: rgba(250, 250, 252, .96); box-shadow: -14px 0 44px rgba(0, 0, 0, .08); backdrop-filter: blur(24px); }
+.inspector-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px 0 22px; border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, .84); }
+.inspector-header > div { display: grid; gap: 3px; }
+.inspector-header span { color: var(--text-tertiary); font-size: 12px; }
+.inspector-header strong { color: var(--text-primary); font-size: 21px; font-weight: 640; letter-spacing: -.02em; }
+.inspector-header button { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; color: var(--text-secondary); }
+.inspector-header button:hover { color: var(--accent); background: var(--accent-soft); }
+.inspector-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, .72); }
+.inspector-tab-group { min-width: 0; display: grid; gap: 6px; }
+.inspector-tab-group > span { color: var(--text-tertiary); font-size: 11px; font-weight: 600; }
+.inspector-tab-group > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.inspector-tabs button { min-width: 0; min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 8px; border-radius: 10px; color: var(--text-secondary); font-size: 12px; font-weight: 550; }
+.inspector-tabs button:hover { color: var(--text-primary); background: rgba(0, 0, 0, .04); }
+.inspector-tabs button.active { color: var(--accent); background: var(--accent-soft); }
+.inspector-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 20px 36px; }
 @media (max-width: 1180px) {
   .course-inspector { box-shadow: -12px 0 36px rgba(25, 35, 30, .12); }
 }
 @media (max-width: 820px) {
-  .course-inspector { width: 100vw; height: calc(100dvh - 52px); }
+  .course-inspector { width: 100vw; height: calc(100dvh - 52px); border-left: 0; }
+  .inspector-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .inspector-content { padding: 20px 16px 32px; }
 }
 </style>

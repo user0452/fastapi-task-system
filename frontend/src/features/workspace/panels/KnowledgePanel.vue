@@ -18,7 +18,7 @@ const KnowledgeGraphCanvas = defineAsyncComponent(() => import('../components/Kn
 
 
 const props = defineProps({ courseId: { type: Number, required: true }, refreshKey: { type: Number, default: 0 } })
-const emit = defineEmits(['prompt'])
+const emit = defineEmits(['prompt', 'change-panel'])
 const loading = ref(true)
 const error = ref('')
 const graph = ref({ points: [], relations: [] })
@@ -121,6 +121,7 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
     </div>
     <div v-else-if="!points.length" class="panel-empty">
       <GitBranch :size="27" /><strong>还没有知识点</strong><p>添加课程资料后会提取真实知识点与有证据的关系；这里不会显示演示节点。</p>
+      <button type="button" @click="emit('change-panel', 'materials')">添加课程资料</button>
     </div>
     <template v-else>
       <header class="graph-summary">
@@ -277,4 +278,53 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
 .detail-actions { display: flex; justify-content: flex-end; gap: 5px; }
 .detail-actions button { min-height: 30px; padding: 0 8px; color: #176b58; border: 1px solid #adc5ba; background: #fff; font-size: 9px; }
 @media (max-width: 520px) { .graph-filters { grid-template-columns: 1fr 1fr; }.search-field { grid-column: 1 / -1; } }
+
+/* Learning OS visual layer */
+.knowledge-panel { gap: 16px; }
+.panel-state { font-size: 14px; }
+.panel-empty { min-height: 360px; gap: 10px; }
+.panel-empty svg { color: var(--accent); }
+.panel-empty strong { color: var(--text-primary); font-size: 22px; font-weight: 630; }
+.panel-empty p { max-width: 330px; color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+.panel-empty button,
+.filter-empty button { min-height: 40px; padding: 0 14px; border-radius: 12px; background: var(--accent); font-size: 13px; font-weight: 600; }
+.graph-summary { padding-bottom: 14px; border-bottom-color: var(--border-subtle); }
+.graph-summary span { color: var(--accent); font-size: 12px; font-weight: 600; }
+.graph-summary strong { color: var(--text-primary); font-size: 18px; font-weight: 620; }
+.graph-summary button { width: 40px; height: 40px; border-radius: 12px; color: var(--accent); background: var(--accent-soft); }
+.graph-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 16px; background: rgba(255, 255, 255, .7); }
+.search-field { padding: 0 10px; border-color: var(--border-subtle); border-radius: 11px; background: #fff; }
+.search-field input { height: 38px; font-size: 13px; }
+.graph-filters select { height: 40px; padding: 0 9px; border-color: var(--border-subtle); border-radius: 11px; color: var(--text-secondary); background: #fff; font-size: 12px; }
+.knowledge-legend { gap: 8px 14px; }
+.knowledge-legend span { gap: 6px; color: var(--text-secondary); font-size: 12px; }
+.knowledge-legend i { width: 8px; height: 8px; }
+.high { background: #3d9a5a; }.medium { background: #d0a33e; }.low { background: #d96b66; }.empty { background: #aeb3bc; }
+.graph-toolbar { gap: 7px 10px; color: var(--text-secondary); font-size: 11px; }
+.graph-toolbar button { min-height: 34px; padding: 0 9px; border-radius: 10px; color: var(--accent); background: var(--accent-soft); }
+.performance-note { padding: 10px 11px; border-radius: 10px; color: var(--text-secondary); background: var(--surface-tertiary); font-size: 11px; }
+.knowledge-list { max-height: 500px; border-top-color: var(--border-subtle); }
+.knowledge-list article { gap: 7px; padding: 13px 10px; border-bottom-color: var(--border-subtle); }
+.knowledge-list article.selected { border-radius: 12px; background: var(--accent-softer); }
+.knowledge-list article span,
+.point-detail header span { padding: 3px 7px; border-radius: 999px; font-size: 10px; }
+.knowledge-list article strong { color: var(--text-primary); font-size: 14px; }
+.knowledge-list article b { color: var(--text-secondary); font-size: 12px; }
+.knowledge-list article p { color: var(--text-secondary); font-size: 12px; }
+.point-detail { gap: 13px; padding: 18px; border: 1px solid var(--border-subtle); border-left: 0; border-radius: 18px; background: rgba(255, 255, 255, .82); box-shadow: var(--shadow-small); }
+.point-detail header strong { color: var(--text-primary); font-size: 17px; }
+.point-detail header b { color: var(--accent); font-size: 15px; }
+.point-detail > p { color: var(--text-secondary); font-size: 13px; line-height: 1.68; }
+.point-detail dl > div { gap: 4px; padding: 10px; border-radius: 11px; background: var(--surface-secondary); }
+.point-detail dt { color: var(--text-tertiary); font-size: 11px; }
+.point-detail dd { color: var(--text-secondary); font-size: 12px; }
+.evidence-list > strong,
+.detail-relations > strong { color: var(--text-primary); font-size: 13px; }
+.evidence-list article { gap: 5px; padding: 11px; border-radius: 11px; background: var(--surface-secondary); }
+.evidence-list article span { color: var(--accent); font-size: 11px; }
+.evidence-list article p { color: var(--text-secondary); font-size: 12px; line-height: 1.58; }
+.muted { color: var(--text-tertiary); font-size: 12px; }
+.detail-relations > p { color: var(--text-secondary); font-size: 12px; }
+.detail-relations small { color: var(--text-tertiary); font-size: 11px; }
+.detail-actions button { min-height: 38px; padding: 0 12px; border-color: rgba(52, 120, 246, .24); border-radius: 11px; color: var(--accent); font-size: 12px; }
 </style>

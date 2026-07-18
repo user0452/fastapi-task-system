@@ -180,18 +180,18 @@ async function handleRegister() {
 
 <style scoped>
 .login-page {
-  --login-ink: #172236;
-  --login-muted: #647287;
-  --login-teal: #0b9277;
-  --login-teal-deep: #087761;
-  --login-blue: #3e7ce8;
-  --login-surface: rgba(255, 255, 255, 0.84);
+  --login-ink: var(--text-primary);
+  --login-muted: var(--text-secondary);
+  --login-teal: var(--accent);
+  --login-teal-deep: var(--accent-hover);
+  --login-blue: var(--accent);
+  --login-surface: rgba(255, 255, 255, 0.88);
 
   position: relative;
   isolation: isolate;
   overflow: hidden;
   min-height: 100svh;
-  background: #f7faf9;
+  background: var(--gradient-soft-page);
 }
 
 .login-page::before,
@@ -209,7 +209,7 @@ async function handleRegister() {
   aspect-ratio: 1;
   top: -26rem;
   left: -22rem;
-  background: rgba(67, 206, 168, 0.14);
+  background: rgba(79, 124, 255, 0.13);
 }
 
 .login-page::after {
@@ -217,7 +217,7 @@ async function handleRegister() {
   aspect-ratio: 1;
   right: -18rem;
   bottom: -20rem;
-  background: rgba(66, 127, 238, 0.09);
+  background: rgba(75, 190, 196, 0.1);
 }
 
 .login-hero,
@@ -238,7 +238,7 @@ async function handleRegister() {
   margin-bottom: 1.15rem;
   color: var(--login-ink);
   font-size: clamp(3rem, 5.1vw, 4.9rem);
-  font-weight: 800;
+  font-weight: 670;
   line-height: 1.04;
   letter-spacing: -0.065em;
 }
@@ -256,11 +256,11 @@ async function handleRegister() {
   max-width: 100%;
   gap: 0.5rem 1.45rem;
   padding: 0.75rem 1rem;
-  border: 1px solid rgba(11, 146, 119, 0.14);
-  border-left: 3px solid var(--login-teal);
+  border: 1px solid rgba(52, 120, 246, 0.12);
+  border-left: 3px solid var(--accent);
   border-radius: 0 1rem 1rem 0;
-  background: rgba(231, 246, 242, 0.72);
-  box-shadow: 0 10px 28px rgba(23, 95, 80, 0.06);
+  background: rgba(52, 120, 246, 0.07);
+  box-shadow: var(--shadow-small);
 }
 
 .login-flow span {
@@ -275,13 +275,13 @@ async function handleRegister() {
   width: 0.25rem;
   height: 0.25rem;
   border-radius: 999px;
-  background: #72c8b5;
+  background: #7ea5f2;
 }
 
 .login-form-container {
   padding: clamp(2rem, 5.5vw, 5rem);
   border-left: 1px solid rgba(23, 34, 54, 0.07);
-  background: #f2f7f5;
+  background: rgba(245, 245, 247, .7);
 }
 
 .login-card {
@@ -292,8 +292,8 @@ async function handleRegister() {
   background: var(--login-surface);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.86) inset,
-    0 24px 65px rgba(30, 61, 72, 0.14),
-    0 4px 14px rgba(30, 61, 72, 0.05);
+    0 24px 65px rgba(36, 44, 67, 0.13),
+    0 4px 14px rgba(36, 44, 67, 0.05);
   animation: login-card-reveal 680ms 80ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -301,7 +301,7 @@ async function handleRegister() {
   margin-bottom: 0.4rem;
   color: var(--login-ink);
   font-size: clamp(1.65rem, 2.3vw, 2rem);
-  font-weight: 750;
+  font-weight: 640;
   letter-spacing: -0.04em;
 }
 
@@ -318,7 +318,7 @@ async function handleRegister() {
   padding: 0.3rem;
   border: 1px solid rgba(23, 34, 54, 0.08);
   border-radius: 1rem;
-  background: #edf4f2;
+  background: var(--surface-tertiary);
 }
 
 .login-tab {
@@ -326,7 +326,7 @@ async function handleRegister() {
   border: 0;
   border-radius: 0.75rem;
   background: transparent;
-  color: #718095;
+  color: var(--text-secondary);
   font-family: inherit;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -345,7 +345,7 @@ async function handleRegister() {
 .login-tab.active {
   color: var(--login-teal-deep);
   background: #fff;
-  box-shadow: 0 5px 15px rgba(23, 75, 67, 0.11);
+  box-shadow: var(--shadow-small);
 }
 
 .login-tab:focus-visible,
@@ -387,8 +387,8 @@ async function handleRegister() {
 }
 
 .login-card .form-input:hover {
-  border-color: rgba(11, 146, 119, 0.42);
-  border-bottom-color: rgba(11, 146, 119, 0.42);
+  border-color: rgba(52, 120, 246, 0.42);
+  border-bottom-color: rgba(52, 120, 246, 0.42);
 }
 
 .login-card .form-input:focus {
@@ -396,20 +396,20 @@ async function handleRegister() {
   border-bottom-color: var(--login-teal);
   border-bottom-width: 1px;
   background: #fff;
-  box-shadow: 0 0 0 4px rgba(11, 146, 119, 0.12);
+  box-shadow: var(--shadow-focus);
 }
 
 .login-card .btn-primary {
   min-height: 3.35rem;
   margin-top: 0.35rem;
   border: 1px solid transparent;
-  border-radius: 999px;
-  background: var(--login-teal-deep);
+  border-radius: 14px;
+  background: var(--gradient-brand);
   box-shadow:
-    0 12px 24px rgba(8, 119, 97, 0.22),
+    0 12px 24px rgba(79, 124, 255, 0.23),
     0 1px 0 rgba(255, 255, 255, 0.2) inset;
   color: #fff;
-  font-weight: 750;
+  font-weight: 620;
   letter-spacing: 0.02em;
   transition:
     transform 180ms ease,
@@ -419,16 +419,16 @@ async function handleRegister() {
 
 .login-card .btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
-  background: var(--login-teal);
+  background: var(--gradient-brand);
   box-shadow:
-    0 16px 30px rgba(8, 119, 97, 0.25),
+    0 16px 30px rgba(79, 124, 255, 0.26),
     0 0 0 4px rgba(62, 124, 232, 0.08),
     0 1px 0 rgba(255, 255, 255, 0.2) inset;
 }
 
 .login-card .btn-primary:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: 0 8px 16px rgba(8, 119, 97, 0.2);
+  box-shadow: 0 8px 16px rgba(79, 124, 255, 0.2);
 }
 
 .login-card .btn-primary:disabled {

@@ -40,10 +40,10 @@ function escapeHtml(value) {
 }
 
 function masteryStyle(mastery) {
-  if (mastery >= 80) return { color: '#23735a', border: '#155b47' }
-  if (mastery >= 60) return { color: '#77906f', border: '#536f4d' }
-  if (mastery > 0) return { color: '#b46b5f', border: '#8f4e45' }
-  return { color: '#a7b0ab', border: '#77827c' }
+  if (mastery >= 80) return { color: '#3d9a5a', border: '#29753f' }
+  if (mastery >= 60) return { color: '#d0a33e', border: '#9a7423' }
+  if (mastery > 0) return { color: '#d96b66', border: '#a64a46' }
+  return { color: '#aeb3bc', border: '#7f8691' }
 }
 
 function option() {
@@ -53,9 +53,9 @@ function option() {
     tooltip: {
       trigger: 'item',
       confine: true,
-      backgroundColor: '#fff',
-      borderColor: '#cfd8d3',
-      textStyle: { color: '#33403a', fontSize: 11 },
+      backgroundColor: 'rgba(255,255,255,.96)',
+      borderColor: 'rgba(0,0,0,.1)',
+      textStyle: { color: '#1d1d1f', fontSize: 12 },
       formatter(params) {
         if (params.dataType === 'edge') {
           const relation = params.data.raw
@@ -81,15 +81,15 @@ function option() {
           draggable: true,
           itemStyle: {
             color: style.color,
-            borderColor: selected ? '#173f34' : style.border,
+            borderColor: selected ? '#3478f6' : style.border,
             borderWidth: selected ? 4 : 1.5,
             shadowBlur: selected ? 8 : 0,
-            shadowColor: 'rgba(23, 63, 52, .22)'
+            shadowColor: 'rgba(52, 120, 246, .28)'
           },
           label: {
             show: props.showLabels && !compact,
-            color: '#27342e',
-            fontSize: 9,
+            color: '#34343a',
+            fontSize: 11,
             width: 82,
             overflow: 'truncate',
             position: 'bottom',
@@ -103,7 +103,7 @@ function option() {
         raw: relation,
         lineStyle: {
           width: 1 + Number(relation.confidence || 0) * 1.5,
-          color: relation.relation_type === 'prerequisite' ? '#7b9b8e' : '#a9b4ae',
+          color: relation.relation_type === 'prerequisite' ? '#7f8ba2' : '#b6bac2',
           opacity: .72,
           curveness: .08
         }
@@ -113,10 +113,10 @@ function option() {
       edgeLabel: {
         show: props.showLabels && props.relations.length <= 40,
         formatter: params => params.data.raw.relation_type,
-        color: '#6f7a74',
-        fontSize: 8,
-        backgroundColor: 'rgba(248,250,248,.82)',
-        padding: [1, 2]
+        color: '#6e6e73',
+        fontSize: 10,
+        backgroundColor: 'rgba(251,251,253,.86)',
+        padding: [2, 4]
       },
       roam: true,
       scaleLimit: { min: .35, max: 3 },
@@ -187,6 +187,6 @@ defineExpose({ resetView, relayout })
 </template>
 
 <style scoped>
-.graph-canvas { width: 100%; height: 390px; min-height: 320px; background: #f5f7f5; border: 1px solid #dce2de; }
-@media (max-width: 820px) { .graph-canvas { height: 360px; } }
+.graph-canvas { width: 100%; height: 470px; min-height: 360px; border: 1px solid var(--border-subtle); border-radius: 20px; background: #f7f7f9; }
+@media (max-width: 820px) { .graph-canvas { height: min(520px, 58dvh); } }
 </style>
