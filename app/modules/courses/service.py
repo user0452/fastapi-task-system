@@ -9,6 +9,7 @@ from app.modules.agent import repository as agent_repository
 from app.modules.audit.service import record_audit
 from app.modules.courses import repository
 from app.modules.courses.schemas import CourseCreate, CourseUpdate
+from app.modules.roadmaps import service as roadmap_service
 
 COURSE_STATUS_TRANSITIONS = {
     "draft": {"preparing", "archived"},
@@ -87,6 +88,7 @@ def reconcile_course_after_material_processing(
 def list_user_courses(user_id: int, include_archived: bool = False) -> list[dict]:
     with get_cursor() as cursor:
         courses = repository.list_courses(cursor, user_id, include_archived)
+        roadmap_service.attach_summaries(cursor, user_id, courses)
         record_audit(
             user_id,
             "COURSES_LISTED",
@@ -102,6 +104,7 @@ def get_user_course(user_id: int, course_id: int) -> dict:
         course = repository.get_course(cursor, course_id, user_id)
         if course is None:
             raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        roadmap_service.attach_summary(cursor, user_id, course)
         record_audit(user_id, "COURSE_VIEWED", "course", course_id, cursor=cursor)
         return course
 
@@ -109,6 +112,8 @@ def get_user_course(user_id: int, course_id: int) -> dict:
 def get_user_current_course(user_id: int) -> dict | None:
     with get_cursor() as cursor:
         course = repository.get_current_course(cursor, user_id)
+        if course is not None:
+            roadmap_service.attach_summary(cursor, user_id, course)
         record_audit(
             user_id,
             "CURRENT_COURSE_VIEWED",
@@ -133,6 +138,8 @@ def create_user_course(user_id: int, request: CourseCreate) -> dict:
             is_current=current is None,
         )
         agent_repository.ensure_course_agent(cursor, user_id, course)
+        roadmap_service.initialize_course_roadmap(cursor, user_id, course)
+        roadmap_service.attach_summary(cursor, user_id, course)
         record_audit(
             user_id,
             "COURSE_CREATED",
@@ -163,6 +170,13 @@ def update_user_course(user_id: int, course_id: int, request: CourseUpdate) -> d
         if course is None:
             raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
         agent_repository.ensure_course_agent(cursor, user_id, course)
+        roadmap_service.refresh_course_snapshot(
+            cursor,
+            user_id,
+            course,
+            set(request.model_fields_set),
+        )
+        roadmap_service.attach_summary(cursor, user_id, course)
         record_audit(
             user_id,
             "COURSE_UPDATED",
@@ -182,6 +196,7 @@ def select_user_course(user_id: int, course_id: int) -> dict:
         if course is None:
             raise AppError("课程不存在、已归档或无访问权限", 404, "COURSE_NOT_FOUND")
         agent_repository.ensure_course_agent(cursor, user_id, course)
+        roadmap_service.attach_summary(cursor, user_id, course)
         record_audit(user_id, "COURSE_SELECTED", "course", course_id, cursor=cursor)
         return course
 

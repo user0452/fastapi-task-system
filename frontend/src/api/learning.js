@@ -42,6 +42,17 @@ export function getStudyPlan(courseId) {
   return request(`/api/v1/courses/${courseId}/study-plan`)
 }
 
+export function getLearningRoadmap(courseId) {
+  return request(`/api/v1/courses/${courseId}/roadmap`)
+}
+
+export function retryLearningRoadmap(courseId, reason = '用户在计划面板手动重试') {
+  return request(`/api/v1/courses/${courseId}/roadmap/retry`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+  })
+}
+
 export function rescheduleLearningSession(sessionId, payload) {
   return request(`/api/v1/study/sessions/${sessionId}/schedule`, {
     method: 'PATCH',

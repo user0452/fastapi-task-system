@@ -1204,6 +1204,160 @@ def _upgrade_general_agent_run_idempotency(cursor) -> None:
     _modify_column(cursor, "agent_runs", "course_id", "INT NULL")
 
 
+def _upgrade_learning_roadmaps(cursor) -> None:
+    """Add durable staged roadmaps without replacing the daily study plan."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS learning_roadmaps (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            course_id INT NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            version INT NOT NULL DEFAULT 1,
+            generation_method VARCHAR(60) NOT NULL DEFAULT 'rules_v1',
+            goal_snapshot VARCHAR(500) NOT NULL DEFAULT '',
+            target_date DATE NULL,
+            daily_minutes INT NOT NULL DEFAULT 30,
+            last_error TEXT NULL,
+            generated_at DATETIME NULL,
+            last_adjusted_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_learning_roadmaps_user_course (user_id, course_id),
+            INDEX idx_learning_roadmaps_status (user_id, status),
+            CONSTRAINT fk_learning_roadmaps_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_learning_roadmaps_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS roadmap_generation_jobs (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            roadmap_id BIGINT NOT NULL,
+            user_id INT NOT NULL,
+            course_id INT NOT NULL,
+            idempotency_key VARCHAR(160) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            attempt INT NOT NULL DEFAULT 1,
+            error_message TEXT NULL,
+            started_at DATETIME NULL,
+            completed_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_roadmap_generation_job_key (user_id, idempotency_key),
+            INDEX idx_roadmap_generation_jobs_status (status, updated_at),
+            CONSTRAINT fk_roadmap_generation_jobs_roadmap FOREIGN KEY (roadmap_id)
+                REFERENCES learning_roadmaps(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_generation_jobs_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_generation_jobs_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS learning_roadmap_stages (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            roadmap_id BIGINT NOT NULL,
+            user_id INT NOT NULL,
+            course_id INT NOT NULL,
+            position INT NOT NULL,
+            name VARCHAR(160) NOT NULL,
+            goal VARCHAR(500) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            progress DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+            estimated_days INT NOT NULL DEFAULT 1,
+            completion_condition VARCHAR(500) NOT NULL,
+            recommended_content_json LONGTEXT NULL,
+            adaptation_reason VARCHAR(500) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_learning_roadmap_stage_position (roadmap_id, position),
+            INDEX idx_learning_roadmap_stages_course (user_id, course_id, status),
+            CONSTRAINT fk_learning_roadmap_stages_roadmap FOREIGN KEY (roadmap_id)
+                REFERENCES learning_roadmaps(id) ON DELETE CASCADE,
+            CONSTRAINT fk_learning_roadmap_stages_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_learning_roadmap_stages_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS roadmap_stage_points (
+            stage_id BIGINT NOT NULL,
+            knowledge_point_id INT NOT NULL,
+            user_id INT NOT NULL,
+            course_id INT NOT NULL,
+            sort_order INT NOT NULL DEFAULT 0,
+            required_mastery DECIMAL(5,2) NOT NULL DEFAULT 70.00,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (stage_id, knowledge_point_id),
+            INDEX idx_roadmap_stage_points_course (user_id, course_id),
+            CONSTRAINT fk_roadmap_stage_points_stage FOREIGN KEY (stage_id)
+                REFERENCES learning_roadmap_stages(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_stage_points_knowledge FOREIGN KEY (knowledge_point_id)
+                REFERENCES knowledge_points(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_stage_points_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_stage_points_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS roadmap_stage_sessions (
+            stage_id BIGINT NOT NULL,
+            study_session_id INT NOT NULL,
+            user_id INT NOT NULL,
+            course_id INT NOT NULL,
+            link_reason VARCHAR(255) NOT NULL DEFAULT 'daily_plan',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (stage_id, study_session_id),
+            INDEX idx_roadmap_stage_sessions_course (user_id, course_id),
+            CONSTRAINT fk_roadmap_stage_sessions_stage FOREIGN KEY (stage_id)
+                REFERENCES learning_roadmap_stages(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_stage_sessions_session FOREIGN KEY (study_session_id)
+                REFERENCES study_sessions(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_stage_sessions_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_stage_sessions_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS roadmap_adjustments (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            roadmap_id BIGINT NOT NULL,
+            user_id INT NOT NULL,
+            course_id INT NOT NULL,
+            trigger_type VARCHAR(40) NOT NULL,
+            trigger_id BIGINT NULL,
+            idempotency_key VARCHAR(160) NOT NULL,
+            reason VARCHAR(500) NOT NULL,
+            details_json LONGTEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_roadmap_adjustment_key (user_id, idempotency_key),
+            INDEX idx_roadmap_adjustments_course (user_id, course_id, created_at),
+            CONSTRAINT fk_roadmap_adjustments_roadmap FOREIGN KEY (roadmap_id)
+                REFERENCES learning_roadmaps(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_adjustments_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_roadmap_adjustments_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
 MIGRATIONS = [
     Migration("0001", "non_destructive_baseline", _upgrade_baseline),
     Migration("0002", "course_learning_foundation", _upgrade_course_learning_foundation),
@@ -1226,6 +1380,7 @@ MIGRATIONS = [
     Migration("0019", "user_timezone", _upgrade_user_timezone),
     Migration("0020", "durable_agent_actions", _upgrade_durable_agent_actions),
     Migration("0021", "general_agent_run_idempotency", _upgrade_general_agent_run_idempotency),
+    Migration("0022", "learning_roadmaps", _upgrade_learning_roadmaps),
 ]
 
 

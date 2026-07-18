@@ -15,6 +15,7 @@ from app.modules.audit.service import record_audit
 from app.modules.courses import repository as course_repository
 from app.modules.courses.service import get_user_course
 from app.modules.learning import repository
+from app.modules.roadmaps import service as roadmap_service
 
 
 def _public_quiz(quiz: dict) -> dict:
@@ -645,7 +646,20 @@ def submit_diagnostic(
                 evaluation,
                 initial=True,
             )
-            result = {"evaluation": evaluation, "mastery_changes": changes}
+            roadmap_adjusted = roadmap_service.adjust_roadmap_for_evaluation(
+                cursor,
+                user_id=user_id,
+                course_id=quiz["course_id"],
+                trigger_type="diagnostic",
+                trigger_id=evaluation["id"],
+                evaluation=evaluation,
+                mastery_changes=changes,
+            )
+            result = {
+                "evaluation": evaluation,
+                "mastery_changes": changes,
+                "roadmap_adjusted": roadmap_adjusted,
+            }
             public_result = _public_submission_result(result)
             repository.mark_evaluation_attempt_evaluated(
                 cursor,
@@ -678,6 +692,7 @@ def submit_diagnostic(
         return planning_attempt["result"]
     try:
         plan = plan_provider(user_id, quiz["course_id"], quiz)
+        roadmap_service.sync_course_links(user_id, quiz["course_id"])
     except Exception as exc:
         with get_cursor() as cursor:
             repository.fail_evaluation_attempt(
@@ -971,6 +986,15 @@ def submit_learning_session(
             )
             for change in changes
         ]
+        roadmap_adjusted = roadmap_service.adjust_roadmap_for_evaluation(
+            cursor,
+            user_id=user_id,
+            course_id=session["course_id"],
+            trigger_type="study_session",
+            trigger_id=evaluation["id"],
+            evaluation=evaluation,
+            mastery_changes=changes,
+        )
         record_audit(
             user_id,
             "COURSE_SESSION_SUBMITTED",
@@ -988,6 +1012,7 @@ def submit_learning_session(
             "evaluation": evaluation,
             "mastery_changes": changes,
             "adaptations": adaptations,
+            "roadmap_adjusted": roadmap_adjusted,
         }
         public_result = _public_submission_result(result)
         repository.finish_evaluation_attempt(
@@ -1150,10 +1175,20 @@ def submit_practice(
             )
             for change in changes
         ]
+        roadmap_adjusted = roadmap_service.adjust_roadmap_for_evaluation(
+            cursor,
+            user_id=user_id,
+            course_id=quiz["course_id"],
+            trigger_type="practice",
+            trigger_id=evaluation["id"],
+            evaluation=evaluation,
+            mastery_changes=changes,
+        )
         result = {
             "evaluation": evaluation,
             "mastery_changes": changes,
             "adaptations": adaptations,
+            "roadmap_adjusted": roadmap_adjusted,
         }
         public_result = _public_submission_result(result)
         repository.persist_practice_result_in_agent_message(

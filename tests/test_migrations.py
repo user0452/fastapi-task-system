@@ -25,6 +25,12 @@ REQUIRED_TABLES = {
     "external_resources",
     "resource_interactions",
     "knowledge_point_relations",
+    "learning_roadmaps",
+    "roadmap_generation_jobs",
+    "learning_roadmap_stages",
+    "roadmap_stage_points",
+    "roadmap_stage_sessions",
+    "roadmap_adjustments",
     "schema_migrations",
 }
 
@@ -56,6 +62,7 @@ def test_expected_migration_versions_are_registered():
         "0019",
         "0020",
         "0021",
+        "0022",
     ]
 
 

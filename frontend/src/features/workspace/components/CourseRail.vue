@@ -22,6 +22,15 @@ function tone(index) {
 function initial(name) {
   return String(name || '课').trim().slice(0, 1).toUpperCase()
 }
+
+function roadmapLine(course) {
+  const summary = course.roadmap_summary
+  if (!summary) return `${course.daily_minutes} 分钟/天 · 持续学习`
+  if (summary.status === 'failed') return '路线生成失败 · 可在计划页重试'
+  if (['pending', 'generating'].includes(summary.status)) return '正在生成长期学习路线'
+  if (!summary.current_stage_name) return '长期路线已完成'
+  return `${summary.current_stage_name} · ${Math.round(summary.current_stage_progress || 0)}%`
+}
 </script>
 
 <template>
@@ -68,7 +77,18 @@ function initial(name) {
           <span class="course-glyph" :class="tone(index)">{{ initial(course.name) }}</span>
           <span class="course-copy">
             <strong>{{ course.name }}</strong>
-            <small>{{ course.daily_minutes }} 分钟/天 · {{ course.status === 'draft' ? '待添加资料' : '持续学习' }}</small>
+            <small>{{ roadmapLine(course) }}</small>
+            <span
+              v-if="course.roadmap_summary?.status === 'ready'"
+              class="course-progress"
+              role="progressbar"
+              :aria-label="`${course.name} 当前路线阶段进度`"
+              :aria-valuenow="Math.round(course.roadmap_summary.current_stage_progress || 0)"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <i :style="{ width: `${course.roadmap_summary.current_stage_progress || 0}%` }"></i>
+            </span>
           </span>
         </router-link>
       </div>
@@ -121,7 +141,7 @@ function initial(name) {
 .rail-icon { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 30px; border-radius: 6px; color: #69736e; }
 .rail-icon:hover { color: #176b58; background: #e4eae6; }
 .course-links { display: grid; gap: 3px; }
-.course-link { min-height: 51px; gap: 9px; padding: 6px 8px; }
+.course-link { min-height: 56px; gap: 9px; padding: 7px 8px; }
 .course-link:hover { background: #e9edea; }
 .course-link.selected { background: #dde8e2; }
 .course-glyph { width: 30px; height: 30px; flex: 0 0 30px; display: grid; place-items: center; border-radius: 6px; font-size: 10px; font-weight: 820; }
@@ -136,6 +156,8 @@ function initial(name) {
 .course-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .course-copy strong { color: #33403a; font-size: 12px; font-weight: 720; }
 .course-copy small { color: #848c88; font-size: 10px; }
+.course-progress { width: 100%; height: 2px; overflow: hidden; background: #d9e0dc; }
+.course-progress i { display: block; height: 100%; background: #26755f; transition: width 180ms ease; }
 .course-link.selected .course-copy strong { color: #0f5947; }
 .rail-state { padding: 18px 10px; color: #87908b; font-size: 10px; text-align: center; }
 .rail-error { color: #b35b54; }
