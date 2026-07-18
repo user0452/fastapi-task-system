@@ -139,6 +139,12 @@ function updateActiveMessage() {
     activeMessageId.value = null
     return
   }
+  const reachedBottom = viewport.value.scrollHeight - viewport.value.scrollTop - viewport.value.clientHeight <= 4
+  if (reachedBottom) {
+    const lastId = targets.at(-1)?.dataset.messageId
+    if (String(activeMessageId.value) !== String(lastId)) activeMessageId.value = lastId
+    return
+  }
   const viewportTop = viewport.value.getBoundingClientRect().top + 28
   let closest = targets[0]
   let closestDistance = Number.POSITIVE_INFINITY

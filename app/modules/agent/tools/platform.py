@@ -392,8 +392,12 @@ class SandboxExecutor:
                             break
                         sleep(0.02)
                     return_code = process.returncode
-                if limit_error is not None and os.name == "nt":
-                    sleep(0.05)
+            # Windows may keep redirected file handles briefly after the child
+            # exits. Wait only after the parent-side handles above are closed;
+            # otherwise TemporaryDirectory cleanup can mask the intended limit
+            # error with WinError 32.
+            if limit_error is not None and os.name == "nt":
+                sleep(0.1)
             stdout_bytes = stdout_path.read_bytes()
             stderr_bytes = stderr_path.read_bytes()
             if limit_error is None and (

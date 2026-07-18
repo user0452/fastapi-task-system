@@ -39,6 +39,57 @@ function Invoke-Checked {
     }
 }
 
+function Invoke-BackendTestBatches {
+    param([bool]$WithCoverage)
+
+    # A fresh-database migration test starts its own interpreter. Running the whole
+    # suite in one Windows process can otherwise retain SQLite/worker resources for
+    # long enough that the OS terminates pytest before it reports a result. Keep the
+    # public verification command deterministic while preserving aggregate coverage.
+    $testFiles = @(
+        Get-ChildItem (Join-Path $root "tests") -File -Filter "test_*.py" |
+            Sort-Object Name |
+            Select-Object -ExpandProperty FullName
+    )
+    $freshDatabaseTest = $testFiles | Where-Object { (Split-Path -Leaf $_) -eq "test_fresh_database_migrations.py" }
+    $remainingTests = $testFiles | Where-Object { $_ -notin $freshDatabaseTest }
+    $orderedTests = @($freshDatabaseTest) + @($remainingTests)
+    $batchSize = 7
+
+    if ($WithCoverage) {
+        Invoke-Checked "Reset backend coverage data" { Invoke-Python @("-m", "coverage", "erase") }
+    }
+
+    for ($offset = 0; $offset -lt $orderedTests.Count; $offset += $batchSize) {
+        $lastIndex = [Math]::Min($offset + $batchSize - 1, $orderedTests.Count - 1)
+        $batch = @($orderedTests[$offset..$lastIndex])
+        $batchNumber = [Math]::Floor($offset / $batchSize) + 1
+        $arguments = @("-m", "pytest", "-q") + $batch
+
+        if ($WithCoverage) {
+            $arguments += @(
+                "--cov=app.modules.courses.service",
+                "--cov=app.modules.materials.service",
+                "--cov=app.modules.learning.service",
+                "--cov=app.modules.agent.service",
+                "--cov=app.modules.agent.native_tool_agent",
+                "--cov=app.modules.agent.router",
+                "--cov=app.jobs.material_index_job",
+                "--cov-append",
+                "--cov-report="
+            )
+        }
+
+        Invoke-Checked "Backend tests batch $batchNumber" { Invoke-Python $arguments }
+    }
+
+    if ($WithCoverage) {
+        Invoke-Checked "Backend aggregate core coverage" {
+            Invoke-Python @("-m", "coverage", "report", "--fail-under=70", "--show-missing")
+        }
+    }
+}
+
 Push-Location $root
 try {
     Invoke-Checked "Database migrations" { Invoke-Python @("-m", "alembic", "upgrade", "head") }
@@ -48,26 +99,7 @@ try {
     Invoke-Checked "Backend lint" { Invoke-Python @("-m", "ruff", "check", "app", "tests") }
     Invoke-Checked "Backend type check" { Invoke-Python @("-m", "mypy", "app") }
 
-    if ($SkipCoverage) {
-        Invoke-Checked "Backend tests" { Invoke-Python @("-m", "pytest", "-q") }
-    }
-    else {
-        Invoke-Checked "Backend tests and core coverage" {
-            Invoke-Python @(
-                "-m", "pytest",
-                "--cov=app.modules.courses.service",
-                "--cov=app.modules.materials.service",
-                "--cov=app.modules.learning.service",
-                "--cov=app.modules.agent.service",
-                "--cov=app.modules.agent.native_tool_agent",
-                "--cov=app.modules.agent.router",
-                "--cov=app.jobs.material_index_job",
-                "--cov-fail-under=70",
-                "--cov-report=term-missing",
-                "-q"
-            )
-        }
-    }
+    Invoke-BackendTestBatches -WithCoverage (-not $SkipCoverage)
 
     Push-Location (Join-Path $root "frontend")
     try {

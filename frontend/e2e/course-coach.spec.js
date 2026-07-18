@@ -173,7 +173,7 @@ test('聊天内做题后更新掌握度、错题和后续计划', async ({ page 
   await page.getByRole('tab', { name: '知识点', exact: true }).click()
   await page.getByRole('button', { name: '切换为可访问列表', exact: true }).click()
   await expect(page.locator('.knowledge-list article').filter({ hasText: '边界值分析' }).first()).toBeVisible()
-  await page.getByRole('tab', { name: '计划', exact: true }).click()
+  await page.getByRole('tab', { name: '路线', exact: true }).click()
   await expect(page.locator('.roadmap-section')).toBeVisible()
   await expect(page.locator('.roadmap-status')).toHaveText('已就绪')
   await expect.poll(() => page.locator('.roadmap-stage').count()).toBeGreaterThanOrEqual(1)
@@ -190,7 +190,7 @@ test('聊天内做题后更新掌握度、错题和后续计划', async ({ page 
   await page.locator('form').getByRole('button', { name: '登录', exact: true }).click()
   await expect(page).toHaveURL(/#\/learn\/\d+\?.*panel=plan/)
   await expect(page.locator('.course-inspector')).toBeVisible()
-  await expect(page.getByRole('tab', { name: '计划', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: '路线', exact: true })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('button', { name: '关闭课程面板', exact: true }).click()
   await expect(page.locator('.practice-card').last()).toContainText('个知识点已更新')
 })
@@ -286,6 +286,54 @@ test('新版工作台可完成诊断并提交今日学习', async ({ page }, tes
   await expect(today.locator('.completion-view')).toBeVisible()
 })
 
+test('同一会话消息目录可跳转、滚动跟随、刷新恢复并支持移动抽屉', async ({ page }, testInfo) => {
+  await login(page, testInfo)
+  await openSeedCourse(page)
+  const marker = Date.now().toString(36).slice(-5)
+  const prompts = [
+    `目录第一问 ${marker}`,
+    `目录第二问 ${marker}`,
+    `目录第三问 ${marker}`
+  ]
+
+  for (const prompt of prompts) await sendMessage(page, prompt)
+
+  const outline = page.locator('.message-anchor-rail')
+  await expect(outline).toBeVisible()
+  for (const prompt of prompts) await expect(outline.getByRole('button', { name: prompt, exact: true })).toBeVisible()
+
+  const firstMessage = page.locator('.chat-message-anchor[data-message-role="user"]').filter({ hasText: prompts[0] }).last()
+  await outline.getByRole('button', { name: prompts[0], exact: true }).click()
+  await expect(outline.getByRole('button', { name: prompts[0], exact: true })).toHaveAttribute('aria-current', 'location')
+  await expect.poll(async () => {
+    return firstMessage.evaluate(element => {
+      const viewport = element.closest('.chat-viewport').getBoundingClientRect()
+      return Math.round(element.getBoundingClientRect().top - viewport.top)
+    })
+  }).toBeLessThan(40)
+
+  const thirdMessage = page.locator('.chat-message-anchor[data-message-role="user"]').filter({ hasText: prompts[2] }).last()
+  await thirdMessage.evaluate(element => {
+    const viewport = element.closest('.chat-viewport')
+    const viewportRect = viewport.getBoundingClientRect()
+    const targetRect = element.getBoundingClientRect()
+    const top = viewport.scrollTop + targetRect.top - viewportRect.top - 24
+    viewport.scrollTo({ top, behavior: 'auto' })
+  })
+  await expect(outline.getByRole('button', { name: prompts[2], exact: true })).toHaveAttribute('aria-current', 'location')
+
+  await page.reload()
+  await expect(page.locator('.chat-message-anchor[data-message-role="user"]').filter({ hasText: prompts[0] })).toBeVisible()
+  await expect(page.locator('.message-anchor-rail').getByRole('button', { name: prompts[0], exact: true })).toBeVisible()
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: '打开本次对话目录', exact: true }).click()
+  const mobileOutline = page.locator('.message-anchor-slot.mobile-open')
+  await expect(mobileOutline).toBeVisible()
+  await mobileOutline.getByRole('button', { name: prompts[1], exact: true }).click()
+  await expect(page.locator('.message-anchor-slot.mobile-open')).toHaveCount(0)
+})
+
 test('历史会话可切换、刷新恢复并归档', async ({ page }, testInfo) => {
   await login(page, testInfo)
   await openSeedCourse(page)
@@ -293,18 +341,20 @@ test('历史会话可切换、刷新恢复并归档', async ({ page }, testInfo)
   const secondMarker = `第二段会话 ${Date.now().toString(36)}`
 
   await sendMessage(page, firstMarker)
-  const firstSession = new URL(page.url()).hash.match(/[?&]session=(\d+)/)?.[1]
-  expect(firstSession).toBeTruthy()
-
-  await page.getByRole('button', { name: '新建会话', exact: true }).click()
-  await expect.poll(() => new URL(page.url()).hash.match(/[?&]session=(\d+)/)?.[1]).not.toBe(firstSession)
+  await page.getByRole('button', { name: '打开历史对话', exact: true }).click()
+  await expect(page.locator('.session-item').filter({ hasText: firstMarker })).toBeVisible()
+  await page.getByRole('button', { name: '新建对话', exact: true }).click()
+  await expect.poll(() => new URL(page.url()).hash.match(/[?&]session=(\d+)/)?.[1]).toBeTruthy()
   const secondSession = new URL(page.url()).hash.match(/[?&]session=(\d+)/)?.[1]
   await sendMessage(page, secondMarker)
 
-  await page.getByRole('button', { name: '展开历史会话', exact: true }).click()
+  await page.getByRole('button', { name: '打开历史对话', exact: true }).click()
   const firstItem = page.locator('.session-item').filter({ hasText: firstMarker })
   await expect(firstItem).toBeVisible()
   await firstItem.locator('.session-select').click()
+  await expect.poll(() => new URL(page.url()).hash.match(/[?&]session=(\d+)/)?.[1]).not.toBe(secondSession)
+  const firstSession = new URL(page.url()).hash.match(/[?&]session=(\d+)/)?.[1]
+  expect(firstSession).toBeTruthy()
   await expect(page).toHaveURL(new RegExp(`session=${firstSession}`))
   await expect(page.locator('.message-list')).toContainText(firstMarker)
   await expect(page.locator('.message-list')).not.toContainText(secondMarker)
@@ -313,11 +363,12 @@ test('历史会话可切换、刷新恢复并归档', async ({ page }, testInfo)
   await expect(page).toHaveURL(new RegExp(`session=${firstSession}`))
   await expect(page.locator('.message-list')).toContainText(firstMarker)
 
-  await page.getByRole('button', { name: '展开历史会话', exact: true }).click()
+  await page.getByRole('button', { name: '打开历史对话', exact: true }).click()
   const secondItem = page.locator('.session-item').filter({ hasText: secondMarker })
   await expect(secondItem).toBeVisible()
   page.once('dialog', dialog => dialog.accept())
-  await secondItem.locator('.archive-action').click()
+  await secondItem.locator('.session-menu-trigger').click()
+  await secondItem.getByRole('menuitem').click()
   await expect(page.locator('.session-item').filter({ hasText: secondMarker })).toHaveCount(0)
   await expect(page).toHaveURL(new RegExp(`session=${firstSession}`))
   expect(secondSession).toBeTruthy()
@@ -327,7 +378,7 @@ test('课程记忆可添加、修正、暂停、刷新恢复并删除', async ({
   await login(page, testInfo)
   await openSeedCourse(page)
   await page.getByRole('button', { name: '打开课程面板', exact: true }).click()
-  await page.getByRole('tab', { name: '记忆', exact: true }).click()
+  await page.getByRole('tab', { name: '长期记忆', exact: true }).click()
   await expect(page).toHaveURL(/panel=memory/)
 
   const marker = `先举例再定义 ${Date.now().toString(36)}`

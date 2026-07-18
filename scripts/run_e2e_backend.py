@@ -34,7 +34,8 @@ def main() -> None:
 
     import uvicorn
 
-    uvicorn.run("main:app", host="127.0.0.1", port=8011)
+    port = int(os.environ.get("A3_E2E_BACKEND_PORT", "8021"))
+    uvicorn.run("main:app", host="127.0.0.1", port=port)
 
 
 if __name__ == "__main__":

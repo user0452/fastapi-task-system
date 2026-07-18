@@ -140,7 +140,7 @@ Playwright 验收实际启动了：
 
 | SHA | 提交 | 主要范围 |
 | --- | --- | --- |
-| `46fddac` | `feat: add course-scoped session navigation` | 多会话创建、切换、归档、URL 恢复与悬浮会话轨道 |
+| `46fddac` | `feat: add course-scoped session navigation` | 多会话创建、切换、归档与 URL 恢复；当时的悬浮历史轨道已在 2026-07-18 视觉升级中被当前会话消息目录替换 |
 | `1c0357a` | `feat: add adaptive course roadmaps` | 四阶段长期路线、真实任务关联、失败重试与幂等自适应调整 |
 | `1777a66` | `feat: add evidence-backed knowledge graph` | 可交互知识图谱、关系证据、资料摘录与可访问列表回退 |
 | `dbfdb89` | `feat: unify agent tool execution` | 统一工具注册、策略守卫、受限执行与回答依据摘要 |
@@ -158,10 +158,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_all.ps1
 - Alembic：升级并保持 `20260718_06 (head)`；
 - Python 编译、Ruff、前端 ESLint：通过；
 - Mypy：`Success: no issues found in 92 source files`；
-- 后端 pytest：`197 passed in 44.83s`，总覆盖率 `83.13%`；
-- Vitest：16 个测试文件、`46 passed`；
-- Vite：`2410 modules transformed`，生产构建成功；
-- Playwright：bundled Chromium，`9 passed (1.0m)`；
+- 后端 pytest：5 个隔离批次共 `214 passed`，核心模块聚合覆盖率 `83%`；
+- Vitest：19 个测试文件、`60 passed`；
+- Vite：`2412 modules transformed`，生产构建成功；
+- Playwright：bundled Chromium，`11 passed (1.4m)`；
 - 统一脚本最终输出：`All verification checks passed.`。
 
 端到端流程覆盖注册与资料处理、三课程隔离、内部/外部来源、知识图谱、路线调整、回答依据、多会话恢复与归档、记忆完整生命周期、练习闭环和 390×844 移动端九面板。
