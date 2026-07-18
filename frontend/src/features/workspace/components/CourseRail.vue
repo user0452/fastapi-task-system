@@ -29,7 +29,8 @@ function roadmapLine(course) {
   if (summary.status === 'failed') return '路线生成失败 · 可在计划页重试'
   if (['pending', 'generating'].includes(summary.status)) return '正在生成长期学习路线'
   if (!summary.current_stage_name) return '长期路线已完成'
-  return `${summary.current_stage_name} · ${Math.round(summary.current_stage_progress || 0)}%`
+  const overall = Math.round(summary.overall_progress ?? summary.current_stage_progress ?? 0)
+  return `${summary.current_stage_name} · 总进度 ${overall}%`
 }
 </script>
 
@@ -83,11 +84,11 @@ function roadmapLine(course) {
               class="course-progress"
               role="progressbar"
               :aria-label="`${course.name} 当前路线阶段进度`"
-              :aria-valuenow="Math.round(course.roadmap_summary.current_stage_progress || 0)"
+              :aria-valuenow="Math.round(course.roadmap_summary.overall_progress ?? course.roadmap_summary.current_stage_progress ?? 0)"
               aria-valuemin="0"
               aria-valuemax="100"
             >
-              <i :style="{ width: `${course.roadmap_summary.current_stage_progress || 0}%` }"></i>
+              <i :style="{ width: `${course.roadmap_summary.overall_progress ?? course.roadmap_summary.current_stage_progress ?? 0}%` }"></i>
             </span>
           </span>
         </router-link>

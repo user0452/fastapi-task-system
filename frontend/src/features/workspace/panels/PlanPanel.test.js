@@ -18,6 +18,7 @@ const readyRoadmap = {
   id: 9,
   status: 'ready',
   generation_method: 'rules_v1',
+  overall_progress: 68,
   stages: [
     {
       id: 91,
@@ -77,6 +78,7 @@ describe('PlanPanel', () => {
     expect(wrapper.text()).toContain('长期阶段路线')
     expect(wrapper.text()).toContain('每日执行计划')
     expect(wrapper.text()).toContain('核心知识构建')
+    expect(wrapper.text()).toContain('总进度 68%')
     expect(wrapper.text()).toContain('平均掌握度达到 70%')
     expect(wrapper.text()).toContain('已关联 1 个真实每日学习单元')
     expect(wrapper.text()).toContain('边界值练习')

@@ -8,6 +8,7 @@ import {
   getStudyPlan,
   getTodayLearning
 } from '../../../api/learning'
+import { calculateRoadmapProgress } from '../roadmapProgress'
 
 
 const props = defineProps({ courseId: { type: Number, required: true }, refreshKey: { type: Number, default: 0 } })
@@ -24,12 +25,7 @@ const averageMastery = computed(() => {
   return points.length ? Math.round(points.reduce((sum, point) => sum + Number(point.mastery), 0) / points.length) : 0
 })
 const nextSession = computed(() => plan.value?.sessions?.find(item => !['completed', 'evaluated'].includes(item.status)) || null)
-const roadmapProgress = computed(() => {
-  const stages = roadmap.value?.stages || []
-  return stages.length
-    ? Math.round(stages.reduce((sum, stage) => sum + Number(stage.progress || 0), 0) / stages.length)
-    : 0
-})
+const roadmapProgress = computed(() => calculateRoadmapProgress(roadmap.value))
 const currentStage = computed(() => (
   roadmap.value?.stages?.find(stage => stage.status === 'active')
   || roadmap.value?.stages?.find(stage => stage.status !== 'completed')

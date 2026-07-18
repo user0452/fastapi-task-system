@@ -17,6 +17,7 @@ import {
   retryLearningRoadmap
 } from '../../../api/learning'
 import { showToast } from '../../../components/common/toast'
+import { calculateRoadmapProgress } from '../roadmapProgress'
 
 
 const props = defineProps({ courseId: { type: Number, required: true }, refreshKey: { type: Number, default: 0 } })
@@ -31,9 +32,7 @@ const saving = ref(false)
 const retrying = ref(false)
 
 const overallProgress = computed(() => {
-  const stages = roadmap.value?.stages || []
-  if (!stages.length) return 0
-  return Math.round(stages.reduce((sum, stage) => sum + Number(stage.progress || 0), 0) / stages.length)
+  return calculateRoadmapProgress(roadmap.value)
 })
 
 function statusLabel(status) {

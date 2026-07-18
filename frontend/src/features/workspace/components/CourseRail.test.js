@@ -24,14 +24,15 @@ describe('CourseRail roadmap summaries', () => {
       roadmap_summary: {
         status: 'ready',
         current_stage_name: '核心知识构建',
-        current_stage_progress: 62
+        current_stage_progress: 62,
+        overall_progress: 48
       }
     }])
 
-    expect(wrapper.text()).toContain('核心知识构建 · 62%')
+    expect(wrapper.text()).toContain('核心知识构建 · 总进度 48%')
     const progress = wrapper.get('[role="progressbar"]')
-    expect(progress.attributes('aria-valuenow')).toBe('62')
-    expect(progress.get('i').attributes('style')).toContain('width: 62%')
+    expect(progress.attributes('aria-valuenow')).toBe('48')
+    expect(progress.get('i').attributes('style')).toContain('width: 48%')
   })
 
   it('surfaces failed generation instead of displaying a fabricated stage', () => {

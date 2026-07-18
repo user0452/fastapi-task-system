@@ -395,6 +395,39 @@ def update_stage(
     )
 
 
+def update_stage_blueprint(
+    cursor,
+    stage: dict,
+    spec: dict,
+    *,
+    adaptation_reason: str,
+) -> None:
+    if stage.get("status") == "completed":
+        cursor.execute(
+            "UPDATE learning_roadmap_stages SET estimated_days = %s WHERE id = %s",
+            (spec["estimated_days"], stage["id"]),
+        )
+        return
+    cursor.execute(
+        """
+        UPDATE learning_roadmap_stages
+        SET name = %s, goal = %s, estimated_days = %s,
+            completion_condition = %s, recommended_content_json = %s,
+            adaptation_reason = %s
+        WHERE id = %s
+        """,
+        (
+            spec["name"],
+            spec["goal"],
+            spec["estimated_days"],
+            spec["completion_condition"],
+            json.dumps(spec["recommended_content"], ensure_ascii=False),
+            adaptation_reason[:500],
+            stage["id"],
+        ),
+    )
+
+
 def touch_adjusted(cursor, roadmap_id: int) -> None:
     cursor.execute(
         """
@@ -456,3 +489,28 @@ def summaries_for_courses(
             row["current_stage_progress"] = _number(row["current_stage_progress"])
         summaries[row["course_id"]] = row
     return summaries
+
+
+def progress_inputs_for_roadmaps(cursor, roadmap_ids: list[int]) -> dict[int, list[dict]]:
+    if not roadmap_ids:
+        return {}
+    placeholders = ",".join(["%s"] * len(roadmap_ids))
+    cursor.execute(
+        f"""
+        SELECT stage.roadmap_id, stage.progress, stage.estimated_days,
+               COALESCE(SUM(session.estimated_minutes), 0) AS unit_minutes
+        FROM learning_roadmap_stages stage
+        LEFT JOIN roadmap_stage_sessions link ON link.stage_id = stage.id
+        LEFT JOIN study_sessions session ON session.id = link.study_session_id
+        WHERE stage.roadmap_id IN ({placeholders})
+        GROUP BY stage.id, stage.roadmap_id, stage.progress, stage.estimated_days
+        ORDER BY stage.roadmap_id ASC, stage.position ASC
+        """,
+        tuple(roadmap_ids),
+    )
+    grouped: dict[int, list[dict]] = {}
+    for row in cursor.fetchall():
+        row["progress"] = _number(row.get("progress"))
+        row["unit_minutes"] = _number(row.get("unit_minutes"))
+        grouped.setdefault(row["roadmap_id"], []).append(row)
+    return grouped

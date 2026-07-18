@@ -159,22 +159,32 @@ def update_user_course(user_id: int, course_id: int, request: CourseUpdate) -> d
             get_user_timezone(user_id),
         )
     with get_cursor() as cursor:
-        if repository.get_course(cursor, course_id, user_id) is None:
+        previous_course = repository.get_course_for_update(cursor, course_id, user_id)
+        if previous_course is None:
             raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
-        course = repository.update_course(
-            cursor,
-            course_id,
-            user_id,
-            changes,
-        )
-        if course is None:
-            raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        changed_fields = {
+            field
+            for field, value in changes.items()
+            if previous_course.get(field) != value
+        }
+        if changed_fields:
+            course = repository.update_course(
+                cursor,
+                course_id,
+                user_id,
+                {field: changes[field] for field in changed_fields},
+            )
+            if course is None:
+                raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+        else:
+            course = previous_course
         agent_repository.ensure_course_agent(cursor, user_id, course)
         roadmap_service.refresh_course_snapshot(
             cursor,
             user_id,
             course,
-            set(request.model_fields_set),
+            changed_fields,
+            previous_course,
         )
         roadmap_service.attach_summary(cursor, user_id, course)
         record_audit(
@@ -182,7 +192,7 @@ def update_user_course(user_id: int, course_id: int, request: CourseUpdate) -> d
             "COURSE_UPDATED",
             "course",
             course_id,
-            {"fields": sorted(request.model_fields_set)},
+            {"fields": sorted(changed_fields)},
             cursor=cursor,
         )
         return course

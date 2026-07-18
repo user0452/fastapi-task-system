@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from math import ceil
+from math import floor
 
 from app.core.database import get_cursor
 from app.core.errors import AppError
@@ -26,15 +26,37 @@ def _target_date(user_id: int, course: dict) -> date | None:
         return None
 
 
+STAGE_SHARES = (0.15, 0.4, 0.3, 0.15)
+
+
+def _allocate_stage_days(total_days: int) -> list[int]:
+    total_days = max(1, int(total_days))
+    stage_count = len(STAGE_SHARES)
+    if total_days < stage_count:
+        return [1 if position < total_days else 0 for position in range(stage_count)]
+
+    days = [1] * stage_count
+    remaining = total_days - stage_count
+    quotas = [remaining * share / sum(STAGE_SHARES) for share in STAGE_SHARES]
+    allocated = [floor(quota) for quota in quotas]
+    for index, value in enumerate(allocated):
+        days[index] += value
+    leftover = remaining - sum(allocated)
+    priority = sorted(
+        range(stage_count),
+        key=lambda index: (-(quotas[index] - allocated[index]), index),
+    )
+    for index in priority[:leftover]:
+        days[index] += 1
+    if sum(days) != total_days:
+        raise RuntimeError("路线阶段天数分配失败")
+    return days
+
+
 def _stage_days(user_id: int, target_date: date | None) -> list[int]:
     today = get_user_local_date(user_id)
-    total_days = max(7, (target_date - today).days) if target_date else 28
-    shares = (0.15, 0.4, 0.3, 0.15)
-    days = [max(1, ceil(total_days * share)) for share in shares]
-    overflow = sum(days) - total_days
-    if overflow > 0 and days[1] > overflow + 1:
-        days[1] -= overflow
-    return days
+    total_days = max(1, (target_date - today).days) if target_date else 28
+    return _allocate_stage_days(total_days)
 
 
 def _stage_specs(user_id: int, course: dict) -> list[dict]:
@@ -177,6 +199,10 @@ def get_learning_roadmap(user_id: int, course_id: int) -> dict:
         roadmap = initialize_course_roadmap(cursor, user_id, course)
         _sync_links(cursor, roadmap)
         result = repository.get_details(cursor, roadmap)
+        result["overall_progress"] = calculate_overall_progress(
+            result["stages"],
+            int(roadmap.get("daily_minutes") or 30),
+        )
         record_audit(
             user_id,
             "LEARNING_ROADMAP_VIEWED",
@@ -217,7 +243,12 @@ def retry_learning_roadmap(user_id: int, course_id: int, reason: str) -> dict:
             {"course_id": course_id, "reason": reason, "version": next_version},
             cursor=cursor,
         )
-        return repository.get_details(cursor, roadmap)
+        result = repository.get_details(cursor, roadmap)
+        result["overall_progress"] = calculate_overall_progress(
+            result["stages"],
+            int(roadmap.get("daily_minutes") or 30),
+        )
+        return result
 
 
 def attach_summaries(cursor, user_id: int, courses: list[dict]) -> list[dict]:
@@ -228,8 +259,18 @@ def attach_summaries(cursor, user_id: int, courses: list[dict]) -> list[dict]:
         user_id,
         [course["id"] for course in courses],
     )
+    progress_inputs = repository.progress_inputs_for_roadmaps(
+        cursor,
+        [summary["id"] for summary in summaries.values()],
+    )
     for course in courses:
-        course["roadmap_summary"] = summaries.get(course["id"])
+        summary = summaries.get(course["id"])
+        if summary is not None:
+            summary["overall_progress"] = calculate_overall_progress(
+                progress_inputs.get(summary["id"], []),
+                int(course.get("daily_minutes") or 30),
+            )
+        course["roadmap_summary"] = summary
     return courses
 
 
@@ -242,6 +283,7 @@ def refresh_course_snapshot(
     user_id: int,
     course: dict,
     changed_fields: set[str],
+    previous_course: dict | None = None,
 ) -> None:
     roadmap = initialize_course_roadmap(cursor, user_id, course)
     course_with_target = {
@@ -254,6 +296,49 @@ def refresh_course_snapshot(
         return
     reason = "课程设置已更新：" + "、".join(sorted(relevant))
     key = f"course-update:{course['id']}:{course.get('updated_at')}:{','.join(sorted(relevant))}"
+    current_stages = repository.stage_map(cursor, roadmap["id"])
+    next_stages = _stage_specs(user_id, course)
+    before = {
+        "goal": (previous_course or {}).get("goal", roadmap.get("goal_snapshot") or ""),
+        "target_date": roadmap.get("target_date"),
+        "daily_minutes": (previous_course or {}).get(
+            "daily_minutes",
+            roadmap.get("daily_minutes") or 30,
+        ),
+        "stages": [
+            {
+                "position": stage["position"],
+                "status": stage["status"],
+                "progress": stage["progress"],
+                "estimated_days": stage["estimated_days"],
+            }
+            for stage in current_stages.values()
+        ],
+    }
+    for spec in next_stages:
+        stage = current_stages.get(spec["position"])
+        if stage is None:
+            raise RuntimeError(f"路线缺少第 {spec['position']} 阶段")
+        repository.update_stage_blueprint(
+            cursor,
+            stage,
+            spec,
+            adaptation_reason=f"{reason}；{spec['adaptation_reason']}",
+        )
+    after = {
+        "goal": course.get("goal") or "",
+        "target_date": course_with_target["roadmap_target_date"],
+        "daily_minutes": course.get("daily_minutes") or 30,
+        "stages": [
+            {
+                "position": spec["position"],
+                "status": current_stages[spec["position"]]["status"],
+                "progress": current_stages[spec["position"]]["progress"],
+                "estimated_days": spec["estimated_days"],
+            }
+            for spec in next_stages
+        ],
+    }
     repository.create_adjustment(
         cursor,
         roadmap,
@@ -261,9 +346,39 @@ def refresh_course_snapshot(
         trigger_id=course["id"],
         idempotency_key=key,
         reason=reason,
-        details={"changed_fields": sorted(relevant)},
+        details={"changed_fields": sorted(relevant), "before": before, "after": after},
     )
     repository.touch_adjusted(cursor, roadmap["id"])
+
+
+def calculate_overall_progress(stages: list[dict], daily_minutes: int = 30) -> float:
+    if not stages:
+        return 0.0
+    weighted_total = 0.0
+    total_weight = 0.0
+    minutes_per_day = max(1, int(daily_minutes or 30))
+    for stage in stages:
+        progress = max(0.0, min(float(stage.get("progress") or 0), 100.0))
+        if "unit_minutes" in stage:
+            unit_minutes = max(0.0, float(stage.get("unit_minutes") or 0))
+        else:
+            unit_minutes = sum(
+                max(0.0, float(item.get("estimated_minutes") or 0))
+                for item in (stage.get("daily_sessions") or [])
+            )
+        estimated_days = max(0, int(stage.get("estimated_days") or 0))
+        weight = unit_minutes or estimated_days * minutes_per_day
+        if weight <= 0:
+            continue
+        weighted_total += progress * weight
+        total_weight += weight
+    if total_weight <= 0:
+        return round(
+            sum(max(0.0, min(float(stage.get("progress") or 0), 100.0)) for stage in stages)
+            / len(stages),
+            2,
+        )
+    return round(max(0.0, min(weighted_total / total_weight, 100.0)), 2)
 
 
 def _mastery_average(stage: dict | None) -> float:

@@ -47,6 +47,7 @@ describe('OverviewPanel', () => {
       code: 200,
       data: {
         status: 'ready',
+        overall_progress: 61,
         stages: [
           { id: 1, name: '核心机制', status: 'active', progress: 50, goal: '掌握核心原理' },
           { id: 2, name: '综合练习', status: 'completed', progress: 100, goal: '完成综合题' }
@@ -64,7 +65,7 @@ describe('OverviewPanel', () => {
     await flushPromises()
 
     expect(learningApi.getTodayLearning).toHaveBeenCalledWith(7)
-    expect(wrapper.text()).toContain('路线进度75%')
+    expect(wrapper.text()).toContain('路线进度61%')
     expect(wrapper.text()).toContain('今日学习已完成')
     expect(wrapper.text()).toContain('核心机制')
     expect(wrapper.text()).toContain('根据最近练习提高事务章节优先级')
