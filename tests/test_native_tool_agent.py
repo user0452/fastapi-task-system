@@ -69,6 +69,12 @@ def _build_agent(monkeypatch, *, course=True, latest_diagnostic_id=91):
             "resources": [{"title": request.topic}]
         },
         delete_owned_task=lambda _user_id, task_id: task_id == 33,
+        calculate=lambda expression: {"expression": expression, "result": 42},
+        run_python=lambda code: {"status": "completed", "stdout": code},
+        get_integration_status=lambda: {
+            "status": "available",
+            "integrations": {"mcp": {"status": "unconfigured"}},
+        },
         checkpointer="durable-checkpointer",
     )
     tools = {item.name: item for item in captured["tools"]}
@@ -81,7 +87,7 @@ def test_native_agent_registers_tools_human_approval_and_checkpointer(monkeypatc
     assert agent == {"kind": "fake-agent"}
     assert captured["model"] == "fake-model"
     assert captured["checkpointer"] == "durable-checkpointer"
-    assert len(tools) == 12
+    assert len(tools) == 16
     assert len(captured["middleware"]) == 1
     assert isinstance(captured["middleware"][0], HumanInTheLoopMiddleware)
     assert "prompt_context" not in captured["system_prompt"]
@@ -116,6 +122,8 @@ def test_native_agent_registers_tools_human_approval_and_checkpointer(monkeypatc
     outline = json.loads(tools["list_course_material_outline"].invoke({"material_id": 5}))
     assert len(outline["materials"]) == 12
     assert len(outline["materials"][0]["sections"]) == 60
+    files = json.loads(tools["list_course_files"].invoke({}))
+    assert len(files["files"]) == 15
 
     section = json.loads(
         tools["read_course_section"].invoke({"material_id": 5, "heading_path": "1/2"})
@@ -149,6 +157,9 @@ def test_native_agent_registers_tools_human_approval_and_checkpointer(monkeypatc
     }
     deleted = json.loads(tools["delete_task"].invoke({"task_id": 33}))
     assert deleted == {"task_id": 33, "deleted": True}
+    assert json.loads(tools["calculator"].invoke({"expression": "6 * 7"}))["result"] == 42
+    assert json.loads(tools["python_sandbox"].invoke({"code": "print(42)"}))["stdout"] == "print(42)"
+    assert json.loads(tools["integration_status"].invoke({}))["integrations"]["mcp"]["status"] == "unconfigured"
 
     called_names = {name for name, _risk, _args in calls}
     assert {
@@ -159,10 +170,14 @@ def test_native_agent_registers_tools_human_approval_and_checkpointer(monkeypatc
         "search_course_knowledge",
         "read_course_evidence",
         "list_course_material_outline",
+        "list_course_files",
         "read_course_section",
         "search_external_resources",
         "generate_practice",
         "get_or_generate_diagnostic",
+        "calculator",
+        "python_sandbox",
+        "integration_status",
         "delete_task",
     } == called_names
     assert next(risk for name, risk, _args in calls if name == "delete_task") == "destructive"

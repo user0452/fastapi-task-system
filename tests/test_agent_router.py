@@ -6,6 +6,11 @@ from app.modules.agent import router as agent_router
 def test_agent_v1_routes_delegate_and_keep_response_envelope(api_client, monkeypatch):
     monkeypatch.setattr(
         agent_router,
+        "list_agent_tools",
+        lambda: {"items": [{"name": "calculator"}]},
+    )
+    monkeypatch.setattr(
+        agent_router,
         "list_chat_sessions",
         lambda user_id, page, size, course_id: {
             "user_id": user_id,
@@ -32,6 +37,9 @@ def test_agent_v1_routes_delegate_and_keep_response_envelope(api_client, monkeyp
     monkeypatch.setattr(agent_router, "run_native_tool_agent_chat", lambda user_id, request, **_kwargs: {"user_id": user_id, "reply": request.message})
     monkeypatch.setattr(agent_router, "decide_action", lambda user_id, action_id, confirmed: {"user_id": user_id, "action_id": action_id, "confirmed": confirmed})
 
+    assert api_client.get("/api/v1/agent/tools").json()["data"]["items"][0] == {
+        "name": "calculator"
+    }
     sessions = api_client.get(
         "/api/v1/agent/sessions?page=2&size=5&course_id=13"
     ).json()["data"]

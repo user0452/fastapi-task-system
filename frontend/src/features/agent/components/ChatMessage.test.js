@@ -69,4 +69,29 @@ describe('ChatMessage', () => {
     expect(wrapper.text()).not.toContain('⭐')
     expect(wrapper.find('script').exists()).toBe(false)
   })
+
+  it('renders the persisted execution summary for assistant messages', () => {
+    const wrapper = mount(ChatMessage, {
+      props: {
+        message: {
+          ...baseMessage,
+          tool_calls: {
+            ...baseMessage.tool_calls,
+            execution_summary: {
+              tools: [{ name: 'calculator', status: 'completed', duration_ms: 3 }],
+              internal_sources: [],
+              external_sources: [],
+              context_used: { memory_count: 1 },
+              updates: {},
+              note: '仅展示可验证记录。'
+            }
+          }
+        }
+      }
+    })
+
+    expect(wrapper.get('.execution-summary summary').text()).toContain('本次回答依据')
+    expect(wrapper.text()).toContain('calculator')
+    expect(wrapper.text()).toContain('长期记忆 1 条')
+  })
 })

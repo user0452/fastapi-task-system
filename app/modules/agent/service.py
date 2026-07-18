@@ -35,6 +35,14 @@ from app.modules.agent.context_manager import (
 )
 from app.modules.agent.native_tool_agent import build_course_tool_agent
 from app.modules.agent.schemas import AgentChatRequest, ChatSessionCreate, CourseAgentMemoryUpsert
+from app.modules.agent.tools import (
+    SandboxExecutor,
+    ToolExecutionContext,
+    ToolExecutor,
+    build_default_tool_registry,
+    calculate_expression,
+    integration_status,
+)
 from app.modules.audit.service import record_audit
 from app.modules.courses import repository as course_repository
 from app.modules.learning import repository as learning_repository
@@ -55,6 +63,10 @@ from app.modules.materials.service import (
 )
 from app.modules.resources.schemas import ExternalResourceSearchRequest
 from app.modules.resources.service import search_external_resources
+
+TOOL_REGISTRY = build_default_tool_registry()
+TOOL_EXECUTOR = ToolExecutor(TOOL_REGISTRY)
+PYTHON_SANDBOX = SandboxExecutor()
 
 
 def _utc_now() -> datetime:
@@ -757,6 +769,99 @@ def _execute_tool(
     return result
 
 
+def _execute_registered_tool(
+    user_id: int,
+    context: dict,
+    tool_name: str,
+    risk_level: str,
+    arguments: dict,
+    callback: Callable,
+):
+    executions = context.setdefault("tool_executions", [])
+    execution = TOOL_EXECUTOR.execute(
+        name=tool_name,
+        requested_risk=risk_level,
+        arguments=arguments,
+        execution_context=ToolExecutionContext(
+            user_id=user_id,
+            course_id=context["course"]["id"] if context.get("course") else None,
+            request_id=context.get("run", {}).get("request_id"),
+            confirmation_granted=tool_name in context.get("confirmed_tools", set()),
+        ),
+        callback=callback,
+        durable_execute=lambda name, risk, args, execute: _execute_tool(
+            user_id,
+            context,
+            name,
+            risk,
+            args,
+            execute,
+        ),
+        record_sink=lambda record: executions.append(record) if len(executions) < 30 else None,
+    )
+    return execution.value
+
+
+def list_agent_tools() -> dict:
+    return {
+        "items": [definition.public() for definition in TOOL_REGISTRY.list()],
+        "integrations": integration_status()["integrations"],
+    }
+
+
+def _execution_summary(
+    context: dict,
+    citations: list[dict],
+    resources: list[dict],
+) -> dict:
+    internal_sources = []
+    seen_chunks = set()
+    for item in citations:
+        chunk_id = item.get("chunk_id")
+        if chunk_id is None or int(chunk_id) in seen_chunks:
+            continue
+        seen_chunks.add(int(chunk_id))
+        internal_sources.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "chunk_id",
+                    "material_id",
+                    "material_title",
+                    "filename",
+                    "page_number",
+                    "heading_path",
+                )
+                if item.get(key) is not None
+            }
+        )
+    external_sources = [
+        {
+            key: item.get(key)
+            for key in ("id", "title", "url", "resource_type", "provider")
+            if item.get(key) is not None
+        }
+        for item in resources[:12]
+    ]
+    report = context.get("context_report") or {}
+    return {
+        "tools": list(context.get("tool_executions") or []),
+        "internal_sources": internal_sources[:20],
+        "external_sources": external_sources,
+        "context_used": {
+            "memory_count": int(report.get("memory_count") or 0),
+            "weak_point_count": int(report.get("weak_point_count") or 0),
+            "recent_turns": int(report.get("recent_turns") or 0),
+        },
+        "updates": {
+            "memory": list(context.get("memory_updates") or []),
+            "roadmap": list(context.get("roadmap_updates") or []),
+            "mastery": list(context.get("mastery_updates") or []),
+        },
+        "note": "仅展示可验证的调用与数据依据，不包含模型内部推理过程。",
+    }
+
+
 def _fail_run(user_id: int, context: dict, exc: Exception) -> None:
     run = context.get("run")
     if run is None:
@@ -834,6 +939,7 @@ def _persist_assistant_in_transaction(
         "actions": actions,
         "confirmation": confirmation,
         "context": context_report,
+        "execution_summary": _execution_summary(context, citations, resources),
     }
     server_time_utc = _utc_now().isoformat(timespec="milliseconds") + "Z"
     # Keep the same lock order as _prepare_context: agent before session.
@@ -876,6 +982,7 @@ def _persist_assistant_in_transaction(
                 "course_id": course["id"] if course else None,
                 "citation_count": len(citations),
                 "resource_count": len(resources),
+                "tool_execution_count": len(context.get("tool_executions") or []),
                 "agent_run_id": context["run"]["id"] if context.get("run") else None,
                 "confirmation_id": confirmation.get("id") if confirmation else None,
                 "client_time_hint": context["user_message"].get("client_time_hint"),
@@ -1528,7 +1635,7 @@ def _build_native_agent(user_id: int, context: dict):
     return build_course_tool_agent(
         user_id=user_id,
         context=context,
-        run_tool=lambda name, risk, args, callback: _execute_tool(
+        run_tool=lambda name, risk, args, callback: _execute_registered_tool(
             user_id, context, name, risk, args, callback
         ),
         get_today=get_today_learning,
@@ -1545,12 +1652,20 @@ def _build_native_agent(user_id: int, context: dict):
         read_material_section=read_course_material_section,
         search_external=search_external_resources,
         delete_owned_task=_native_delete_task,
+        calculate=calculate_expression,
+        run_python=lambda code: PYTHON_SANDBOX.execute(
+            code,
+            user_id=user_id,
+            course_id=context["course"]["id"],
+        ),
+        get_integration_status=integration_status,
         checkpointer=get_mysql_checkpointer(),
     )
 
 
 def _resume_native_action(user_id: int, action: dict, confirmed: bool) -> dict:
     context = _load_native_resume_context(user_id, action)
+    context["confirmed_tools"] = {action["tool_name"]} if confirmed else set()
     agent, artifacts = _build_native_agent(user_id, context)
     checkpoint = action["checkpoint"]
     config = {

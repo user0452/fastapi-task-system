@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { Bot, UserRound } from 'lucide-vue-next'
 import SourceBubbles from './SourceBubbles.vue'
+import ExecutionSummary from './ExecutionSummary.vue'
 import ConfirmationBar from './ConfirmationBar.vue'
 import PracticeCard from './PracticeCard.vue'
 import { renderAssistantMarkdown } from '../markdown'
@@ -31,6 +32,10 @@ function confirmation() {
 
 function resources() {
   return props.message.tool_calls?.resources || []
+}
+
+function executionSummary() {
+  return props.message.tool_calls?.execution_summary || null
 }
 
 function triggerAction(action) {
@@ -78,6 +83,7 @@ function triggerAction(action) {
       />
 
       <SourceBubbles :citations="message.sources || []" :resources="resources()" :course-id="courseId" />
+      <ExecutionSummary :summary="executionSummary()" />
 
       <div v-if="actions().length" class="message-actions">
         <button v-for="action in actions()" :key="`${action.panel || ''}-${action.to || action.label}`" type="button" @click="triggerAction(action)">{{ action.label }}</button>

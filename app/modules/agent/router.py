@@ -20,6 +20,7 @@ from app.modules.agent.service import (
     decide_action,
     get_chat_session,
     get_course_agent_workspace,
+    list_agent_tools,
     list_chat_sessions,
     run_native_tool_agent_chat,
     run_native_tool_agent_chat_async,
@@ -31,6 +32,12 @@ router = V1APIRouter(prefix="/agent", tags=["course-agent"])
 MAX_CONCURRENT_STREAMS = max(1, int(os.getenv("AGENT_MAX_CONCURRENT_STREAMS", "8")))
 STREAM_TIMEOUT_SECONDS = max(10.0, float(os.getenv("AGENT_STREAM_TIMEOUT_SECONDS", "180")))
 _stream_slots = asyncio.Semaphore(MAX_CONCURRENT_STREAMS)
+
+
+@router.get("/tools")
+def tools_catalog(user=Depends(get_current_user)):
+    _ = user
+    return success(data=list_agent_tools())
 
 
 def _event(event_type: str, **payload) -> str:
