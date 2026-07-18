@@ -155,7 +155,7 @@ onBeforeUnmount(clearCloseTimer)
 .session-marker span { width: 12px; height: 2px; border-radius: 1px; background: #a9b5af; transition: width 170ms ease, background-color 170ms ease; }
 .session-marker:hover span { width: 18px; background: #71827a; }
 .session-marker.active span { width: 23px; height: 3px; background: #176b58; }
-.expanded-session-panel { position: absolute; inset: 0 auto 0 0; z-index: 2; width: 280px; overflow: hidden; border-right: 1px solid #cfd8d3; background: #f2f4f2; box-shadow: 10px 0 28px rgba(31, 58, 47, .12); }
+.expanded-session-panel { position: absolute; inset: 0 auto 0 38px; z-index: 2; width: 280px; overflow: hidden; border-right: 1px solid #cfd8d3; background: #f2f4f2; box-shadow: 10px 0 28px rgba(31, 58, 47, .12); }
 .expanded-session-panel :deep(.session-panel) { height: 100%; }
 .session-popover-enter-active,
 .session-popover-leave-active { transition: opacity 180ms ease, transform 180ms ease; }
@@ -169,7 +169,7 @@ onBeforeUnmount(clearCloseTimer)
   .hover-session-rail { width: min(300px, 88vw); transform: translateX(-101%); border-right-color: #cfd8d3; transition: transform 190ms ease; }
   .mobile-open .hover-session-rail { transform: translateX(0); }
   .collapsed-rail { display: none; }
-  .expanded-session-panel { width: 100%; box-shadow: none; }
+  .expanded-session-panel { inset: 0; width: 100%; box-shadow: none; }
   .session-drawer-scrim { position: absolute; inset: 0; display: block; width: 100%; background: rgba(31, 45, 38, .28); }
 }
 

@@ -3,7 +3,7 @@
 ## 1. 通用约定
 
 - V1 前缀：`/api/v1`
-- 鉴权：`Authorization: Bearer <token>`
+- 鉴权：V1 默认使用 HttpOnly Cookie；前端请求启用 credentials，不把令牌暴露给 JavaScript。
 - 时间：客户端发送的当前时间只作为时区提示；审计统一使用服务端 UTC。
 - 分页：所有分页接口限制 `size <= 100`。
 - 权限：课程、资料、诊断、计划、会话和动作都用当前 `user_id` 过滤。
@@ -70,6 +70,8 @@
 | `POST` | `/api/v1/study/sessions/{id}/submit` | 提交练习并自适应后续计划 |
 | `GET` | `/api/v1/courses/{id}/progress` | 掌握度、计划、变化原因和完成率 |
 | `GET` | `/api/v1/courses/{id}/study-plan` | 完整计划与后续单元 |
+| `GET` | `/api/v1/courses/{id}/roadmap` | 四阶段长期路线、真实关联、生成任务和调整记录 |
+| `POST` | `/api/v1/courses/{id}/roadmap/retry` | 仅对失败路线创建新版幂等生成任务 |
 | `PATCH` | `/api/v1/study/sessions/{id}/schedule` | 调整计划单元时间 |
 | `POST` | `/api/v1/courses/{id}/practices` | 按课程/知识点生成聊天内练习 |
 | `POST` | `/api/v1/practices/{id}/submit` | 批改练习、更新掌握度并调整计划 |
@@ -83,13 +85,21 @@
 | `GET` | `/api/v1/agent/sessions` | 后端会话列表 |
 | `POST` | `/api/v1/agent/sessions` | 创建课程会话 |
 | `GET` | `/api/v1/agent/sessions/{id}` | 恢复历史消息、引用和动作 |
-| `GET` | `/api/v1/agent/courses/{id}/workspace` | 恢复课程助手、唯一主会话、消息和课程记忆 |
-| `PUT` | `/api/v1/agent/courses/{id}/memories` | 更新当前课程助手记忆 |
+| `POST` | `/api/v1/agent/sessions/{id}/archive` | 归档本人课程会话 |
+| `GET` | `/api/v1/agent/courses/{id}/workspace?session_id={sid}` | 恢复指定课程会话、消息、引用、动作和执行摘要 |
+| `GET` | `/api/v1/agent/tools` | 工具名称、风险、确认、超时与可用状态目录 |
+| `GET` | `/api/v1/agent/courses/{id}/memories` | 可公开的课程记忆、来源、更新时间和启用状态 |
+| `PUT` | `/api/v1/agent/courses/{id}/memories` | 添加或按键幂等保存课程记忆 |
+| `PATCH` | `/api/v1/agent/courses/{id}/memories/{memoryId}` | 修正内容或切换单条记忆状态 |
+| `PATCH` | `/api/v1/agent/courses/{id}/memory-types/{type}` | 按记忆类型统一启用或暂停 |
+| `DELETE` | `/api/v1/agent/courses/{id}/memories/{memoryId}` | 软删除本人课程记忆 |
 | `POST` | `/api/v1/agent/chat` | 非流式请求 |
 | `POST` | `/api/v1/agent/chat/stream` | NDJSON 流式请求 |
 | `POST` | `/api/v1/agent/actions/{id}/decision` | 确认或拒绝破坏性动作 |
 
 课程聊天请求应显式携带 `course_id`。`current_time` 使用本地时间和 UTC 偏移，精确到分钟，仅用于回答语境；服务端审计时间仍以 UTC 为准。若 `session_id` 属于另一门课程，接口返回 `409 SESSION_COURSE_MISMATCH`。
+
+消息中的 `execution_summary` 只保存可验证的工具状态、耗时、课程/外部来源、使用的学习上下文数量和业务更新，不保存隐藏推理。MCP 与图片工具若未接入执行适配器，配置状态为 `unconfigured` 或 `misconfigured`，不会伪造成功结果。
 
 ### 外部资源
 
@@ -138,6 +148,8 @@ after = before * 0.7 + assessment_score * 0.3
 
 每次变化保存 `before_value`、`after_value`、`reason` 和 `evaluation_id`。业务 service 根据阈值调整后续计划，LLM 不直接修改掌握度或计划状态。
 
+长期路线状态为 `pending -> generating -> ready`，异常进入 `failed`，只允许通过 retry API 生成新版本任务。每个阶段保存目标、完成条件、预计天数、真实知识点/每日单元关联和 `adaptation_reason`；每次诊断或练习调整另存幂等 `roadmap_adjustments`。
+
 ## 5. Agent 动作分级
 
 | 风险 | 行为 |
@@ -158,7 +170,7 @@ after = before * 0.7 + assessment_score * 0.3
 
 ## 7. 持久化与审计
 
-- `course_agents.course_id` 唯一，保证一门课程只有一个助手和一个主会话。
+- `course_agents.course_id` 唯一，保证一门课程只有一个助手；该助手可拥有多条按课程隔离、可归档的历史会话。
 - 每次课程聊天写入 `agent_runs`；每个工具写入 `agent_tool_calls`，包含课程、风险、参数、结果和状态。
 - 资料、课程、学习、Agent 与资源操作都写入 `operation_logs`，并在读取和写入前校验 `user_id + course_id` 所有权。
 - 数据库上下文使用显式事务，断线不会透明丢弃未提交消息；并发死锁只重试已完整回滚的幂等事务段。

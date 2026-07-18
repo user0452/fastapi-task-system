@@ -191,12 +191,7 @@ async function handleRegister() {
   isolation: isolate;
   overflow: hidden;
   min-height: 100svh;
-  background-color: #f7faf9;
-  background-image:
-    linear-gradient(rgba(28, 112, 96, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(28, 112, 96, 0.055) 1px, transparent 1px),
-    linear-gradient(118deg, rgba(20, 159, 130, 0.09), transparent 42%);
-  background-size: 42px 42px, 42px 42px, auto;
+  background: #f7faf9;
 }
 
 .login-page::before,
@@ -214,7 +209,7 @@ async function handleRegister() {
   aspect-ratio: 1;
   top: -26rem;
   left: -22rem;
-  background: radial-gradient(circle, rgba(67, 206, 168, 0.2), rgba(67, 206, 168, 0) 70%);
+  background: rgba(67, 206, 168, 0.14);
 }
 
 .login-page::after {
@@ -222,7 +217,7 @@ async function handleRegister() {
   aspect-ratio: 1;
   right: -18rem;
   bottom: -20rem;
-  background: radial-gradient(circle, rgba(66, 127, 238, 0.13), rgba(66, 127, 238, 0) 70%);
+  background: rgba(66, 127, 238, 0.09);
 }
 
 .login-hero,
@@ -246,10 +241,6 @@ async function handleRegister() {
   font-weight: 800;
   line-height: 1.04;
   letter-spacing: -0.065em;
-  background: linear-gradient(112deg, var(--login-ink) 0 66%, var(--login-teal) 82%, var(--login-blue) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
 }
 
 .login-hero p {
@@ -290,7 +281,7 @@ async function handleRegister() {
 .login-form-container {
   padding: clamp(2rem, 5.5vw, 5rem);
   border-left: 1px solid rgba(23, 34, 54, 0.07);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.56), rgba(255, 255, 255, 0.2));
+  background: #f2f7f5;
 }
 
 .login-card {
@@ -303,7 +294,6 @@ async function handleRegister() {
     0 1px 0 rgba(255, 255, 255, 0.86) inset,
     0 24px 65px rgba(30, 61, 72, 0.14),
     0 4px 14px rgba(30, 61, 72, 0.05);
-  backdrop-filter: blur(14px);
   animation: login-card-reveal 680ms 80ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -414,7 +404,7 @@ async function handleRegister() {
   margin-top: 0.35rem;
   border: 1px solid transparent;
   border-radius: 999px;
-  background: linear-gradient(108deg, var(--login-teal-deep), var(--login-teal) 72%, #1aa98f);
+  background: var(--login-teal-deep);
   box-shadow:
     0 12px 24px rgba(8, 119, 97, 0.22),
     0 1px 0 rgba(255, 255, 255, 0.2) inset;
@@ -429,7 +419,7 @@ async function handleRegister() {
 
 .login-card .btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
-  background: linear-gradient(108deg, var(--login-teal-deep), var(--login-teal) 68%, var(--login-blue) 140%);
+  background: var(--login-teal);
   box-shadow:
     0 16px 30px rgba(8, 119, 97, 0.25),
     0 0 0 4px rgba(62, 124, 232, 0.08),

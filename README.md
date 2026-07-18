@@ -11,6 +11,11 @@
 - 上下文管理：明确 token 预算、增量滚动摘要、语义长期记忆和最近消息分层装配。
 - 可靠异步任务：资料处理 job、原子 claim、lease、heartbeat、重试、worker owner 和启动恢复。
 - 学习闭环：诊断、练习、LLM 事务外评估、幂等 attempt、掌握度和后续计划调整。
+- 课程级工作台：悬浮历史会话轨道、URL 会话恢复、九个课程面板，以及按课程隔离的草稿与历史。
+- 长期学习路线：课程创建时生成四阶段路线，关联真实知识点和每日学习单元，并根据诊断、练习与掌握度保存调整原因。
+- 可交互知识图谱：缩放、拖拽、筛选、列表替代视图、资料证据和从节点直接发起讲解或练习。
+- 统一工具平台：工具注册、策略守卫、超时、确认、审计、受限计算器与 Python 沙箱；回答可展开查看工具、来源、上下文和数据更新摘要。
+- 透明长期记忆：展示来源与更新时间，支持逐条添加、修正、暂停、恢复、删除和按类型停用。
 - 可观测性：JSON 日志、请求 ID，以及 HTTP、数据库、LLM、工具和资料任务指标。
 
 ## 目录
@@ -21,7 +26,7 @@ app/
   core/                   配置、数据库、迁移、认证响应、日志、指标
   integrations/           LLM、Embedding、FAISS、文件与文档解析
   jobs/                   持久化资料任务 worker
-  modules/                account/auth/courses/materials/learning/agent/resources
+  modules/                account/auth/courses/materials/learning/roadmaps/agent/resources
 frontend/src/
   features/               当前产品页面与组件
   api/                    仅调用 /api/v1
@@ -81,9 +86,17 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=your-model
 LLM_TIMEOUT_SECONDS=30
 LLM_MAX_RETRIES=2
+
+# 可选外部能力；未配置时会明确返回 unconfigured，不会模拟成功
+A3_MCP_ENABLED=false
+A3_MCP_ENDPOINT=
+A3_IMAGE_TOOL_ENABLED=false
+A3_IMAGE_TOOL_ENDPOINT=
 ```
 
 自动化或离线演示可使用 `A3_MOCK_LLM=true` 和 `A3_MOCK_EMBEDDING=true`。生产环境必须使用足够长的随机 `SECRET_KEY`，保持 `ENABLE_LEGACY_ROUTES=false`，并通过 HTTPS 提供服务。
+
+MCP 与图片工具当前只完成统一注册、策略和配置状态接口，尚未实现对外部 MCP Server 或图片服务的真实请求执行；只有在后续接入执行适配器后才应启用上述开关。Tavily、YouTube 和真实 LLM 则需要各自密钥，缺失或调用失败时按可控降级处理。
 
 ## 资料限制
 

@@ -9,6 +9,14 @@ describe('safePostLoginRoute', () => {
     )
   })
 
+  it('restores the active session and every current workspace panel', () => {
+    for (const panel of ['overview', 'today', 'diagnostic', 'knowledge', 'plan', 'practice', 'wrong', 'memory', 'materials']) {
+      expect(safePostLoginRoute(`/learn/42?session=17&panel=${panel}`)).toBe(
+        `/learn/42?panel=${panel}&session=17`
+      )
+    }
+  })
+
   it('drops unknown parameters and invalid panels', () => {
     expect(safePostLoginRoute('/learn/42?panel=admin&next=https://example.com')).toBe('/learn/42')
   })

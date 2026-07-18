@@ -128,6 +128,14 @@ def _generate(
 
 
 def initialize_course_roadmap(cursor, user_id: int, course: dict) -> dict:
+    locked_course = course_repository.get_course_for_update(
+        cursor,
+        course["id"],
+        user_id,
+    )
+    if locked_course is None:
+        raise AppError("课程不存在或无访问权限", 404, "COURSE_NOT_FOUND")
+    course = locked_course
     roadmap = repository.get_roadmap(cursor, user_id, course["id"], for_update=True)
     if roadmap is None:
         roadmap = repository.create_roadmap(

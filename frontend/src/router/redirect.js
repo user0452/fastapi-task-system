@@ -1,4 +1,6 @@
-const VALID_PANELS = new Set(['overview', 'knowledge', 'plan', 'practice', 'wrong', 'materials'])
+const VALID_PANELS = new Set([
+  'overview', 'today', 'diagnostic', 'knowledge', 'plan', 'practice', 'wrong', 'memory', 'materials'
+])
 
 
 export function safePostLoginRoute(value) {
@@ -11,7 +13,7 @@ export function safePostLoginRoute(value) {
   const incoming = new URLSearchParams(match[2] || '')
   const panel = incoming.get('panel')
   if (VALID_PANELS.has(panel)) result.set('panel', panel)
-  for (const key of ['material_id', 'chunk']) {
+  for (const key of ['session', 'material_id', 'chunk']) {
     const field = incoming.get(key)
     if (field && /^\d+$/.test(field)) result.set(key, field)
   }

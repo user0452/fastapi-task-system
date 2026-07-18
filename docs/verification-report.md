@@ -133,3 +133,41 @@ Playwright 验收实际启动了：
 - [x] 实现提交已按后端、前端、CI 三个逻辑范围拆分。
 - [x] push 当前分支并确认 GitHub Actions `verify` 成功。
 - [ ] PR 审核时重点检查真实生产数据库备份、历史时间数据和生产 secrets。
+
+## 9. 2026-07-18 课程级个人学习操作系统升级
+
+本轮在既有安全基线上完成五个阶段实现提交：
+
+| SHA | 提交 | 主要范围 |
+| --- | --- | --- |
+| `46fddac` | `feat: add course-scoped session navigation` | 多会话创建、切换、归档、URL 恢复与悬浮会话轨道 |
+| `1c0357a` | `feat: add adaptive course roadmaps` | 四阶段长期路线、真实任务关联、失败重试与幂等自适应调整 |
+| `1777a66` | `feat: add evidence-backed knowledge graph` | 可交互知识图谱、关系证据、资料摘录与可访问列表回退 |
+| `dbfdb89` | `feat: unify agent tool execution` | 统一工具注册、策略守卫、受限执行与回答依据摘要 |
+| `d6a3bb7` | `feat: make learning memory transparent` | 课程记忆来源、编辑、暂停、恢复、软删除与类型开关 |
+
+最终统一命令：
+
+```powershell
+$env:A3_PYTHON = (Resolve-Path .\.venv\Scripts\python.exe).Path
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_all.ps1
+```
+
+本机实测结果：
+
+- Alembic：升级并保持 `20260718_06 (head)`；
+- Python 编译、Ruff、前端 ESLint：通过；
+- Mypy：`Success: no issues found in 92 source files`；
+- 后端 pytest：`197 passed in 44.83s`，总覆盖率 `83.13%`；
+- Vitest：16 个测试文件、`46 passed`；
+- Vite：`2410 modules transformed`，生产构建成功；
+- Playwright：bundled Chromium，`9 passed (1.0m)`；
+- 统一脚本最终输出：`All verification checks passed.`。
+
+端到端流程覆盖注册与资料处理、三课程隔离、内部/外部来源、知识图谱、路线调整、回答依据、多会话恢复与归档、记忆完整生命周期、练习闭环和 390×844 移动端九面板。
+
+本轮验证边界：
+
+1. 浏览器验收使用 Mock LLM/Mock Embedding，真实 LLM、Embedding、Tavily 和 YouTube 调用仍需要外部配置与网络可用性。
+2. MCP 与图片工具目前完成注册、策略和配置状态接口；MCP Server 与外部图片生成服务的真实执行适配器尚未实现，未用模拟成功掩盖该边界。
+3. 上述结果是本地分支验证；本轮推送后的远端 GitHub Actions 结果应单独记录，不在本节预先宣称成功。

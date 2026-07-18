@@ -109,7 +109,7 @@ watch(() => courses.current?.id, (next, previous) => {
           <div class="section-heading">
             <div>
               <h2>知识点掌握度</h2>
-              <p>低于 60 优先复习，60–80 继续巩固，高于 80 进入进阶。</p>
+              <p>低于 60 优先复习，60 到 80 继续巩固，高于 80 进入进阶。</p>
             </div>
           </div>
           <div class="mastery-list">

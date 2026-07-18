@@ -12,7 +12,7 @@ const courses = useCourseStore()
 const chat = ref(null)
 const refreshKey = ref(0)
 const validPanels = new Set([
-  'overview', 'today', 'diagnostic', 'knowledge', 'plan', 'practice', 'wrong', 'materials'
+  'overview', 'today', 'diagnostic', 'knowledge', 'plan', 'practice', 'wrong', 'materials', 'memory'
 ])
 
 const courseId = computed(() => Number(route.params.courseId))

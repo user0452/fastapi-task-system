@@ -43,7 +43,7 @@ def get_roadmap(
 def create_roadmap(cursor, user_id: int, course: dict, target_date) -> dict:
     cursor.execute(
         """
-        INSERT INTO learning_roadmaps
+        INSERT IGNORE INTO learning_roadmaps
             (user_id, course_id, status, generation_method, goal_snapshot,
              target_date, daily_minutes)
         VALUES (%s, %s, 'pending', 'rules_v1', %s, %s, %s)
@@ -446,6 +446,7 @@ def summaries_for_courses(
              WHERE candidate.roadmap_id = lr.id AND candidate.status <> 'completed'
          )
         WHERE lr.user_id = %s AND lr.course_id IN ({placeholders})
+        FOR UPDATE
         """,
         (user_id, *course_ids),
     )

@@ -1,4 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 from app.core.database import get_cursor
+from app.modules.courses.service import get_user_current_course, list_user_courses
 from app.modules.roadmaps.service import (
     adjust_roadmap_for_evaluation,
     get_learning_roadmap,
@@ -44,6 +48,46 @@ def test_course_creation_generates_idempotent_staged_roadmap(api_client):
     listed = api_client.get("/api/v1/courses").json()["data"]["items"]
     listed_course = next(item for item in listed if item["id"] == course["id"])
     assert listed_course["roadmap_summary"]["current_stage_name"] == "目标定标与基础诊断"
+
+
+def test_course_list_and_current_initialize_missing_roadmap_concurrently(
+    api_client,
+    two_users,
+):
+    user, _ = two_users
+    course = _create_course(api_client, "并发初始化路线图")
+    with get_cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM learning_roadmaps WHERE user_id = %s AND course_id = %s",
+            (user["id"], course["id"]),
+        )
+
+    both_requests_ready = Barrier(2)
+
+    def list_courses_after_barrier():
+        both_requests_ready.wait(timeout=5)
+        return list_user_courses(user["id"])
+
+    def get_current_after_barrier():
+        both_requests_ready.wait(timeout=5)
+        return get_user_current_course(user["id"])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        listed_future = executor.submit(list_courses_after_barrier)
+        current_future = executor.submit(get_current_after_barrier)
+        listed = listed_future.result(timeout=10)
+        current = current_future.result(timeout=10)
+
+    listed_course = next(item for item in listed if item["id"] == course["id"])
+    assert current["id"] == course["id"]
+    assert listed_course["roadmap_summary"]["status"] == "ready"
+    assert current["roadmap_summary"]["status"] == "ready"
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT COUNT(*) AS total FROM learning_roadmaps WHERE course_id = %s",
+            (course["id"],),
+        )
+        assert cursor.fetchone()["total"] == 1
 
 
 def test_roadmap_access_is_course_and_user_scoped(api_client, two_users):

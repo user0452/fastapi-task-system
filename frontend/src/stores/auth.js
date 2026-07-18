@@ -45,8 +45,9 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
-    if (authenticated.value) await apiLogout()
+    const shouldRevoke = authenticated.value
     clearSession()
+    if (shouldRevoke) await apiLogout()
   }
 
   function clearSession() {

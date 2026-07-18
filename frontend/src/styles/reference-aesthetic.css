@@ -13,12 +13,9 @@
   --a3-mint: #e7f7f2;
   --a3-blue: #397cf6;
   --a3-canvas: #f7fbfa;
-  --a3-surface: rgba(255, 255, 255, 0.88);
+  --a3-surface: #ffffff;
   --a3-line: rgba(29, 76, 82, 0.12);
   --a3-line-strong: rgba(9, 132, 109, 0.28);
-  --a3-grid:
-    linear-gradient(rgba(16, 129, 111, 0.037) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(16, 129, 111, 0.037) 1px, transparent 1px);
   --a3-shadow-sm: 0 8px 22px rgba(20, 59, 55, 0.07);
   --a3-shadow: 0 18px 46px rgba(20, 59, 55, 0.11);
 
@@ -134,7 +131,6 @@ button:disabled {
   color: var(--a3-ink);
   background: rgba(255, 255, 255, 0.94);
   box-shadow: var(--a3-shadow);
-  backdrop-filter: blur(14px);
   animation: reference-toast-in 220ms ease-out both;
 }
 
@@ -209,7 +205,7 @@ button:disabled {
   border: 0 !important;
   border-radius: 999px !important;
   color: #ffffff !important;
-  background: linear-gradient(120deg, var(--a3-teal), #159e8d 62%, var(--a3-blue)) !important;
+  background: var(--a3-teal-deep) !important;
   box-shadow: 0 9px 18px rgba(7, 151, 125, 0.2) !important;
 }
 
@@ -225,11 +221,7 @@ button:disabled {
 
 /* Shared authenticated app canvas */
 .ai-shell {
-  background-color: var(--a3-canvas) !important;
-  background-image:
-    radial-gradient(circle at 74% 9%, rgba(108, 213, 192, 0.13), transparent 28rem),
-    var(--a3-grid) !important;
-  background-size: auto, 56px 56px !important;
+  background: var(--a3-canvas) !important;
 }
 
 .ai-main {
@@ -241,7 +233,6 @@ button:disabled {
   background: rgba(252, 255, 254, 0.88) !important;
   border-right-color: var(--a3-line) !important;
   box-shadow: 8px 0 30px rgba(22, 66, 60, 0.035) !important;
-  backdrop-filter: blur(16px);
 }
 
 .rail-brand {
@@ -250,7 +241,7 @@ button:disabled {
 
 .brand-mark {
   border-radius: 11px !important;
-  background: linear-gradient(135deg, var(--a3-teal), #15a792 65%, var(--a3-blue)) !important;
+  background: var(--a3-teal) !important;
   box-shadow: 0 7px 16px rgba(7, 151, 125, 0.23) !important;
 }
 
@@ -285,7 +276,7 @@ button:disabled {
 .settings-link.active,
 .course-link.selected {
   color: var(--a3-teal-deep) !important;
-  background: linear-gradient(90deg, rgba(207, 244, 233, 0.96), rgba(231, 247, 242, 0.62)) !important;
+  background: #dff3ec !important;
   box-shadow: inset 3px 0 0 var(--a3-teal);
 }
 
@@ -405,7 +396,7 @@ button:disabled {
 .day-course-icon {
   border-radius: 11px !important;
   color: var(--a3-teal-deep) !important;
-  background: linear-gradient(145deg, #d9f5ed, #eaf8fb) !important;
+  background: #dff3ec !important;
 }
 
 .day-course-copy > span {
@@ -430,13 +421,12 @@ button:disabled {
 .chat-composer {
   border-color: var(--a3-line) !important;
   background: rgba(255, 255, 255, 0.77) !important;
-  backdrop-filter: blur(14px);
 }
 
 .course-icon {
   border-radius: 10px !important;
   color: var(--a3-teal-deep) !important;
-  background: linear-gradient(145deg, #d9f5ed, #e8f4ff) !important;
+  background: #dff3ec !important;
 }
 
 .course-identity strong,
@@ -468,11 +458,7 @@ button:disabled {
 }
 
 .chat-viewport {
-  background-color: var(--a3-canvas) !important;
-  background-image:
-    radial-gradient(circle at 50% 0, rgba(123, 226, 204, 0.1), transparent 30rem),
-    var(--a3-grid) !important;
-  background-size: auto, 52px 52px !important;
+  background: var(--a3-canvas) !important;
 }
 
 .course-welcome > svg,
@@ -520,7 +506,7 @@ button:disabled {
 
 .send-action {
   border-radius: 11px !important;
-  background: linear-gradient(135deg, var(--a3-teal), #159e8d 60%, var(--a3-blue)) !important;
+  background: var(--a3-teal-deep) !important;
   box-shadow: 0 6px 14px rgba(7, 151, 125, 0.2);
 }
 
@@ -542,7 +528,7 @@ button:disabled {
 .chat-message.user .message-body {
   border-color: transparent !important;
   border-radius: 15px 15px 4px 15px !important;
-  background: linear-gradient(135deg, var(--a3-teal), #159c8a 66%, var(--a3-blue)) !important;
+  background: var(--a3-teal-deep) !important;
   box-shadow: 0 9px 21px rgba(7, 151, 125, 0.15);
 }
 
@@ -555,9 +541,7 @@ button:disabled {
 /* The inspector is a light, floating workspace rather than a hard gray sidebar. */
 .course-inspector {
   border-left-color: var(--a3-line) !important;
-  background:
-    radial-gradient(circle at 100% 0, rgba(107, 214, 192, 0.11), transparent 20rem),
-    rgba(249, 253, 252, 0.96) !important;
+  background: #f9fdfc !important;
   box-shadow: -12px 0 34px rgba(20, 59, 55, 0.07) !important;
 }
 
@@ -565,7 +549,6 @@ button:disabled {
 .inspector-tabs {
   border-color: var(--a3-line) !important;
   background: rgba(255, 255, 255, 0.76) !important;
-  backdrop-filter: blur(12px);
 }
 
 .inspector-header strong {
@@ -671,17 +654,17 @@ button:disabled {
 
 .schedule-editor button {
   border-radius: 10px !important;
-  background: linear-gradient(135deg, var(--a3-teal), var(--a3-blue)) !important;
+  background: var(--a3-teal-deep) !important;
 }
 
 .trend-chart {
   border-color: var(--a3-line) !important;
-  background-image: repeating-linear-gradient(to top, transparent 0, transparent 26px, rgba(18, 120, 104, 0.08) 27px) !important;
+  background: #f7faf9 !important;
 }
 
 .trend-chart span,
 .score-track i {
-  background: linear-gradient(180deg, #38ad98, var(--a3-teal)) !important;
+  background: var(--a3-teal) !important;
 }
 
 .score-track,
@@ -706,7 +689,7 @@ button:disabled {
 
 .section-heading {
   color: var(--a3-teal-deep) !important;
-  background: linear-gradient(90deg, rgba(226, 247, 239, 0.56), rgba(255, 255, 255, 0)) !important;
+  background: #eef8f4 !important;
 }
 
 .section-heading h2,
@@ -723,7 +706,7 @@ button:disabled {
 
 .account-avatar {
   color: var(--a3-teal-deep) !important;
-  background: linear-gradient(145deg, #d9f5ed, #e8f4ff) !important;
+  background: #dff3ec !important;
 }
 
 .secondary-button {
@@ -747,7 +730,7 @@ button:disabled {
 }
 
 .toggle-row input:checked + i {
-  background: linear-gradient(90deg, var(--a3-teal), var(--a3-blue)) !important;
+  background: var(--a3-teal) !important;
 }
 
 @keyframes reference-rise {

@@ -27,6 +27,7 @@ app/
     courses/            课程、目标、考试时间、每日时长
     materials/          上传、解析、索引、知识点来源
     learning/           诊断、掌握度、计划、今日学习、评估
+    roadmaps/           长期阶段路线、生成任务、真实关联和调整依据
     agent/              课程助手、会话、记忆、运行、工具策略和确认
     resources/          外部资源 Provider、缓存、去重、有效性和交互
     audit/              操作日志和 AI 调用审计
@@ -34,7 +35,7 @@ app/
   jobs/                 可替换的后台任务入口
 ```
 
-每个业务模块采用 `router.py`、`schemas.py`、`service.py`、`repository.py`。现阶段继续使用 PyMySQL，repository 负责隔离 SQL，service 负责事务和业务规则。
+每个业务模块采用 `router.py`、`schemas.py`、`service.py`、`repository.py`。数据库访问以 SQLAlchemy 2.x Session、ORM 表达式和反射模型为主；仍需复杂 MySQL 语句的仓储通过同一事务游标适配层执行，service 负责事务边界、锁顺序和业务规则。
 
 ## 3. 关键状态机
 
@@ -57,6 +58,17 @@ draft -> preparing -> diagnostic_pending -> active -> completed
 planned -> in_progress -> completed -> evaluated -> adapted
 ```
 
+### 长期学习路线
+
+```text
+pending -> generating -> ready
+                     \-> failed -> retry -> generating
+
+stage: pending -> active -> completed
+```
+
+路线创建、生成任务和调整记录均使用幂等键。缺失路线由课程行锁串行初始化，避免课程列表与当前课程并发读取时重复创建。
+
 状态只允许通过 service 中的显式规则迁移，并保存失败原因和更新时间。
 
 ## 4. 核心实体
@@ -70,6 +82,9 @@ planned -> in_progress -> completed -> evaluated -> adapted
 - `study_plans`：课程计划的生命周期和时间范围。
 - `study_sessions`：每天可执行的学习单元。
 - `study_session_items`：讲解、例题、练习和复习项目。
+- `learning_roadmaps` / `learning_roadmap_stages`：课程目标快照、四阶段路线、进度和调整原因。
+- `roadmap_generation_jobs` / `roadmap_adjustments`：可重试生成任务及诊断、练习触发的幂等调整依据。
+- `roadmap_stage_points` / `roadmap_stage_sessions`：阶段与真实知识点、每日学习单元的关联。
 - `chat_sessions`：按课程组织的后端会话。
 - `agent_chat_messages`：会话消息、工具结果和引用。
 - `course_agents`：每门课程唯一的助手及主会话。
@@ -121,13 +136,23 @@ new_mastery = old_mastery * 0.7 + assessment_score * 0.3
 - 课程会话与请求课程不一致时返回 `409 SESSION_COURSE_MISMATCH`。
 - 每个数据库事务显式 `begin/commit/rollback`；课程聊天统一锁顺序，并对已完整回滚的死锁事务段有限重试。
 
+工具平台使用注册表声明名称、类别、风险、课程要求、确认要求、可用状态和超时。执行前由策略守卫校验，执行后把状态、耗时、来源、学习上下文和业务更新保存为结构化摘要。摘要只展示可验证的调用与数据依据，不暴露模型内部推理过程。
+
+- 计算器只接受基础算术 AST。
+- Python 沙箱在隔离进程中执行，禁止导入、文件、网络和子进程，并限制时长、内存和输出。
+- MCP 与图片工具当前是预留适配器：注册与配置状态已完成，真实外部执行尚未实现。
+
 ## 9. 前端结构
 
-一级入口只有跨课程 Today、左侧课程 AI 列表和设置。进入课程后，聊天占主区域，右侧二级面板提供六个视图：概览、知识点、计划、练习、错题、资料资源。
+一级入口只有跨课程 Today、左侧课程 AI 列表和设置。进入课程后，悬浮会话轨道与聊天占主区域，右侧二级面板提供九个视图：概览、今日、诊断、知识点、计划、练习、错题、记忆、资料。
 
 - Today 是登录后的跨课程总览。
 - 资料上传后自动显示处理状态，不暴露 RAG 和 Embedding 操作。
 - AI 回答显示可跳转的内部引用和可操作的外部视频卡片。
+- 每条回答可展开“本次回答依据”，区分工具执行、课程资料、外部来源、学习上下文和本次更新。
+- 知识图谱支持图形与列表双视图、缩放、拖拽、筛选、证据详情和节点快捷提问。
+- 长期记忆展示来源与更新时间，允许用户逐条或按类型控制是否进入后续回答。
+- URL 同时保存课程、面板和会话标识，刷新与重新登录后恢复到同一学习现场。
 - 出题、答题、批改和掌握度变化在聊天内完成，面板显示完整统计。
 - 面板开关、课程切换、刷新和重新登录都不丢聊天草稿与持久状态。
 - 桌面使用 236px 课程栏与 410px 检查器；移动端使用抽屉课程栏和全宽二级面板。

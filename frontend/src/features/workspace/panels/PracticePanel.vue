@@ -83,7 +83,7 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
 .trend-section header strong,
 .distribution-section header strong { color: #35413b; font-size: 12px; }
 .trend-section header span { margin-left: auto; color: #838c87; font-size: 10px; }
-.trend-chart { height: 110px; display: flex; align-items: end; gap: 5px; padding: 9px 5px 0; border-bottom: 1px solid #cfd6d2; background: repeating-linear-gradient(to top, transparent 0, transparent 26px, #edf0ee 27px); }
+.trend-chart { height: 110px; display: flex; align-items: end; gap: 5px; padding: 9px 5px 0; border-bottom: 1px solid #cfd6d2; background: #f7f9f7; }
 .trend-chart span { min-width: 5px; flex: 1; border-radius: 3px 3px 0 0; background: #4a8875; transition: height 180ms ease; }
 .trend-chart span:hover { background: #176b58; }
 .trend-section > p,
