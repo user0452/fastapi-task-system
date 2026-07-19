@@ -16,6 +16,7 @@
 - 可交互知识图谱：缩放、拖拽、筛选、列表替代视图、资料证据和从节点直接发起讲解或练习。
 - 统一工具平台：工具注册、策略守卫、超时、确认、审计、受限计算器与实验性的受限 Python 执行器；回答可展开查看工具、来源、上下文和数据更新摘要。
 - 透明长期记忆：展示来源与更新时间，支持逐条添加、修正、暂停、恢复、删除和按类型停用。
+- 用户级模型配置：设置页可填写任意 OpenAI Chat Completions 兼容的 Base URL、模型和 API Key，支持连接测试、加密存储、掩码回显和服务端默认模型回退。
 - 可观测性：JSON 日志、请求 ID，以及 HTTP、数据库、LLM、工具和资料任务指标。
 
 ## 目录
@@ -25,7 +26,7 @@ app/
   api/v1/                 V1 API 聚合
   core/                   配置、数据库、迁移、认证响应、日志、指标
   integrations/           LLM、Embedding、FAISS、文件与文档解析
-  jobs/                   持久化资料任务 worker
+  jobs/                   持久化资料与学习记忆任务 worker
   modules/                account/auth/courses/materials/learning/roadmaps/agent/resources
 frontend/src/
   features/               当前产品页面与组件
@@ -38,20 +39,26 @@ scripts/verify_all.ps1    完整本地验收
 
 根目录的 `routers/`、`agents/` 和 `services/` 仅用于旧客户端迁移。生产环境默认不注册这些路由；设置 `ENABLE_LEGACY_ROUTES=true` 才会临时启用。
 
-## 本地启动
+## 全新 clone 后启动
 
 要求 Python 3.13、Node.js 20+、MySQL 8.x 和 `uv`。
 
 ```powershell
+git clone https://github.com/user0452/fastapi-task-system.git
+Set-Location fastapi-task-system
 Copy-Item .env.example .env
-uv sync --dev
+
+# 编辑 .env，至少填写数据库密码和一个稳定的 SECRET_KEY；数据库名可按需修改
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_db2 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+uv sync --locked --dev
 Set-Location frontend
 npm ci
 Set-Location ..
 uv run alembic upgrade head
 ```
 
-Alembic 是唯一迁移入口。`alembic upgrade head` 会自动处理空数据库、尚未 stamp 的历史数据库，以及已停留在旧 Alembic 基线的数据库，不需要手工运行历史迁移或 `stamp`。依赖以 `pyproject.toml` 为声明真源、`uv.lock` 为可复现锁文件，不再维护并行的 `requirements.txt`。
+上面的建库命令使用 `.env.example` 默认库名；若修改 `DATABASE_NAME`，请同步修改命令。数据库账户需要拥有目标库的建库/迁移权限。Alembic 是唯一迁移入口，`alembic upgrade head` 会自动处理空数据库、尚未 stamp 的历史数据库，以及已停留在旧 Alembic 基线的数据库，不需要手工运行历史迁移或 `stamp`。依赖以 `pyproject.toml` 为声明真源、`uv.lock` 为可复现锁文件，不再维护并行的 `requirements.txt`。
 
 后端：
 
@@ -96,6 +103,16 @@ A3_IMAGE_TOOL_ENDPOINT=
 
 自动化或离线演示可使用 `A3_MOCK_LLM=true` 和 `A3_MOCK_EMBEDDING=true`。生产环境必须使用足够长的随机 `SECRET_KEY`，保持 `ENABLE_LEGACY_ROUTES=false`，并通过 HTTPS 提供服务。
 
+## OpenAI 兼容 API 设置
+
+注册并登录后访问 `http://127.0.0.1:5175/#/settings`，在“模型服务”中填写：
+
+- Base URL：包含 API 版本前缀，例如 `https://api.openai.com/v1`；应用会在其后调用 `/chat/completions`。
+- 模型：填写提供方支持的模型名称。
+- API Key：仅在保存或更换时输入；服务端加密保存，读取设置时只返回尾号掩码。
+
+可以先“测试连接”再保存。配置启用后仅对当前用户生效；停用或删除后回退到 `.env` 中的 `DEEPSEEK_*` 服务端默认配置。因此个人使用时不必把自己的 API Key 写入仓库或 `.env`。`SECRET_KEY` 同时用于加密已保存的用户 API Key，部署后必须稳定保管；直接更换会导致旧密钥无法解密，需要用户重新保存。
+
 MCP 与图片工具当前只完成统一策略和配置状态接口，尚未实现对外部 MCP Server 或图片服务的真实请求执行。配置开关和 endpoint 后，状态仍为 `configured_not_implemented`，不会被 Agent 或前端当作可调用工具，也不会返回模拟成功结果。只有接入真实执行适配器后才能显示 `available`。Tavily、YouTube 和真实 LLM 则需要各自密钥，缺失或调用失败时按可控降级处理。
 
 受限 Python 执行器在独立进程中运行，并继续限制导入、文件、网络、子进程、执行时长、内存和输出。它只提供应用级限制，未使用容器、cgroup、seccomp 或独立虚拟机，不是生产级绝对安全沙箱，属于实验性能力，不得面向不可信公网用户开放。
@@ -108,6 +125,14 @@ MCP 与图片工具当前只完成统一策略和配置状态接口，尚未实�
 - 扫描版 PDF 暂不支持 OCR。
 
 ## 验证
+
+首次运行完整 E2E 前安装 Playwright Chromium：
+
+```powershell
+Set-Location frontend
+npx playwright install chromium
+Set-Location ..
+```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1

@@ -29,6 +29,14 @@
 
 依赖只在 `pyproject.toml` 中声明，并由 `uv.lock` 锁定。安装和执行统一使用 `uv sync --locked --dev` 与 `uv run ...`，不要再生成或维护独立的 `requirements.txt`。
 
+## 模型提供方与密钥
+
+- `.env` 中的 `DEEPSEEK_*` 是可选的服务端默认模型；未配置时，用户仍可在设置页保存自己的 OpenAI Chat Completions 兼容服务。
+- 用户配置按账户隔离，启用后优先于服务端默认模型；停用或删除后自动回退。
+- Base URL 应包含提供方要求的版本前缀，服务端会追加 `/chat/completions`。
+- 用户 API Key 使用由 `SECRET_KEY` 派生的 Fernet 密钥加密入库，读取接口只返回尾号掩码，日志和前端状态不保存明文。
+- `SECRET_KEY` 必须备份并在实例间保持一致。没有密钥迁移方案时直接轮换会使已保存的用户 API Key 无法解密，需让用户重新保存。
+
 ## 数据库迁移与测试隔离
 
 - 所有环境统一执行 `uv run alembic upgrade head`，不要手工运行 `app.core.migrations` 或 `alembic stamp`。
@@ -54,6 +62,12 @@ SELECT status, COUNT(*) FROM material_processing_jobs GROUP BY status;
 SELECT id, material_id, status, attempts, worker_id, lease_expires_at, last_error
 FROM material_processing_jobs ORDER BY id DESC LIMIT 20;
 ```
+
+## 学习记忆任务
+
+- 用户需先在设置页主动启用自动学习记忆；默认不会替用户开启。
+- `LEARNING_MEMORY_WORKER_ENABLED` 控制持久化 worker，轮询、lease、最大尝试次数和提取阈值由对应 `LEARNING_MEMORY_*`、`AUTO_MEMORY_*` 与 `PROFILE_*` 环境变量配置。
+- 对话后的候选记忆先写入数据库 job，再由 worker 提取和聚合；重启后可继续处理，重复消费由幂等约束保护。
 
 ## RAG 索引
 

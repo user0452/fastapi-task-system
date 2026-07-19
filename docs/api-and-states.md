@@ -32,6 +32,19 @@
 
 ## 2. 核心 V1 API
 
+### 账户与模型配置
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/api/v1/account/llm-config` | 读取当前用户的 OpenAI 兼容配置和密钥尾号掩码 |
+| `PUT` | `/api/v1/account/llm-config` | 保存或更新 Base URL、模型、API Key 与启用状态 |
+| `POST` | `/api/v1/account/llm-config/test` | 使用提交的配置测试 `/chat/completions` 连接；未提交密钥时可复用已保存密钥 |
+| `DELETE` | `/api/v1/account/llm-config` | 删除当前用户配置并回退到服务端默认模型 |
+| `GET` | `/api/v1/account/memory-settings` | 读取当前用户的自动学习记忆设置 |
+| `PATCH` | `/api/v1/account/memory-settings` | 启用或停用自动学习记忆 |
+
+`base_url` 必须是无用户名、密码、查询参数和 fragment 的 HTTP(S) 地址，通常应包含提供方的 API 版本前缀（例如 `/v1`）；服务端会追加 `/chat/completions`。读取配置不会返回明文 API Key，只会返回 `api_key_hint`。用户配置启用后优先于 `.env` 中的服务端默认配置，停用或删除后自动回退。
+
 ### 课程
 
 | 方法 | 路径 | 用途 |
