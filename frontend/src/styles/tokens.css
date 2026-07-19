@@ -2,49 +2,91 @@
   color-scheme: light;
 
   /* Product surfaces */
-  --page-bg: #f5f5f7;
+  --page-bg: #f4f5f8;
   --surface-primary: #ffffff;
-  --surface-secondary: #fbfbfd;
-  --surface-tertiary: #f0f1f4;
-  --surface-elevated: rgba(255, 255, 255, 0.88);
-  --surface-glass: rgba(250, 250, 252, 0.78);
+  --surface-secondary: #f8f9fc;
+  --surface-tertiary: #eef0f5;
+  --surface-elevated: rgba(255, 255, 255, 0.92);
+  --surface-glass: rgba(250, 250, 252, 0.82);
+  --surface-rail: rgba(246, 247, 250, 0.9);
+  --surface-chat: rgba(255, 255, 255, 0.96);
+  --surface-composer: rgba(255, 255, 255, 0.96);
+  --surface-panel: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 248, 252, 0.96));
+  --surface-card: rgba(255, 255, 255, 0.78);
+  --surface-card-solid: #ffffff;
+  --surface-muted: rgba(0, 0, 0, 0.035);
+  --surface-hover: rgba(0, 0, 0, 0.045);
 
   /* Text */
-  --text-primary: #1d1d1f;
-  --text-secondary: #6e6e73;
-  --text-tertiary: #86868b;
+  --text-primary: #17181c;
+  --text-secondary: #5f636e;
+  --text-tertiary: #8b8f99;
   --text-inverse: #ffffff;
+  --text-accent: #1f5ec8;
 
   /* Lines and semantic color */
-  --border-subtle: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.14);
+  --border-subtle: rgba(22, 24, 32, 0.07);
+  --border-strong: rgba(22, 24, 32, 0.12);
+  --border-accent: rgba(52, 120, 246, 0.22);
   --accent: #3478f6;
   --accent-hover: #1769e0;
-  --accent-soft: rgba(52, 120, 246, 0.12);
-  --accent-softer: rgba(52, 120, 246, 0.07);
+  --accent-deep: #1f5ec8;
+  --accent-soft: rgba(52, 120, 246, 0.11);
+  --accent-softer: rgba(52, 120, 246, 0.06);
   --success: #248a3d;
+  --success-soft: rgba(36, 138, 61, 0.1);
   --warning: #a96500;
+  --warning-soft: rgba(169, 101, 0, 0.1);
   --danger: #d70015;
+  --danger-soft: rgba(215, 0, 21, 0.08);
   --info: #3478f6;
+  --info-soft: rgba(52, 120, 246, 0.1);
+
+  /* Course glyph tones */
+  --tone-jade-fg: #397064;
+  --tone-jade-bg: #dfebe8;
+  --tone-blue-fg: #466b86;
+  --tone-blue-bg: #e1ebf2;
+  --tone-amber-fg: #846c3e;
+  --tone-amber-bg: #f2ead8;
+  --tone-coral-fg: #855c58;
+  --tone-coral-bg: #f0e2df;
+  --tone-violet-fg: #6b5e82;
+  --tone-violet-bg: #e9e4f0;
+  --tone-teal-fg: #4d7473;
+  --tone-teal-bg: #dfecec;
 
   /* Restrained gradients */
   --gradient-brand: linear-gradient(135deg, #4f7cff 0%, #6d5dfc 56%, #8b6df4 100%);
   --gradient-blue-cyan: linear-gradient(135deg, #3f8cff 0%, #4bbec4 100%);
+  --gradient-selected: linear-gradient(135deg, rgba(52, 120, 246, 0.14), rgba(109, 93, 252, 0.08));
   --gradient-soft-page:
-    radial-gradient(circle at 14% 4%, rgba(92, 124, 255, 0.12), transparent 30%),
-    radial-gradient(circle at 92% 22%, rgba(75, 190, 196, 0.1), transparent 28%),
-    #f5f5f7;
+    radial-gradient(circle at 12% 0%, rgba(92, 124, 255, 0.11), transparent 28%),
+    radial-gradient(circle at 94% 18%, rgba(75, 190, 196, 0.09), transparent 26%),
+    radial-gradient(circle at 50% 100%, rgba(139, 109, 244, 0.05), transparent 34%),
+    #f4f5f8;
 
   /* Shape and elevation */
-  --radius-small: 10px;
+  --radius-xs: 8px;
+  --radius-small: 12px;
   --radius-medium: 16px;
-  --radius-large: 24px;
-  --radius-hero: 32px;
+  --radius-large: 22px;
+  --radius-hero: 30px;
   --radius-round: 999px;
-  --shadow-small: 0 4px 18px rgba(0, 0, 0, 0.06);
-  --shadow-medium: 0 12px 36px rgba(0, 0, 0, 0.09);
-  --shadow-floating: 0 20px 60px rgba(0, 0, 0, 0.12);
+  --shadow-hairline: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  --shadow-small: 0 4px 16px rgba(18, 22, 34, 0.05);
+  --shadow-medium: 0 14px 40px rgba(18, 22, 34, 0.08);
+  --shadow-floating: 0 22px 64px rgba(18, 22, 34, 0.12);
   --shadow-focus: 0 0 0 4px rgba(52, 120, 246, 0.14);
+  --shadow-brand: 0 10px 24px rgba(79, 124, 255, 0.2);
+  --shadow-panel: -16px 0 48px rgba(18, 22, 34, 0.07);
+
+  /* Control sizes */
+  --control-xs: 32px;
+  --control-sm: 36px;
+  --control-md: 40px;
+  --control-lg: 44px;
+  --control-xl: 48px;
 
   /* Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
@@ -57,6 +99,13 @@
   --font-body: 15px;
   --font-secondary: 13px;
   --font-caption: 12px;
+  --font-micro: 11px;
+  --weight-regular: 400;
+  --weight-medium: 550;
+  --weight-semibold: 620;
+  --weight-bold: 680;
+  --tracking-tight: -0.025em;
+  --tracking-snug: -0.015em;
 
   /* Spacing and motion */
   --space-1: 4px;
@@ -68,11 +117,18 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
-  --duration-fast: 150ms;
-  --duration-normal: 210ms;
-  --duration-slow: 320ms;
+  --duration-fast: 140ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Content widths */
+  --content-chat: 850px;
+  --content-page: 1180px;
+  --rail-width: 264px;
+  --rail-collapsed: 76px;
+  --inspector-width: 460px;
 
   /* Legacy aliases kept while feature surfaces migrate to the new system. */
   --color-primary: var(--accent);
@@ -108,7 +164,7 @@
   --color-surface-container-high: #ebebef;
   --color-surface-container-highest: #e4e4e9;
   --color-surface-strong: var(--surface-tertiary);
-  --color-surface-hover: rgba(0, 0, 0, 0.045);
+  --color-surface-hover: var(--surface-hover);
   --color-on-surface: var(--text-primary);
   --color-on-surface-variant: var(--text-secondary);
   --color-outline: var(--text-tertiary);
@@ -118,7 +174,6 @@
   --color-text: var(--text-primary);
   --color-text-soft: var(--text-secondary);
   --color-muted: var(--text-tertiary);
-  --radius-xs: 6px;
   --radius-sm: var(--radius-small);
   --radius-md: var(--radius-medium);
   --radius-lg: var(--radius-large);

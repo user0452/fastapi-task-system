@@ -18,6 +18,10 @@ from app.core.database import get_conn
 from app.core.errors import AppError, app_error_handler, error_payload
 from app.core.logging import bind_request_id, configure_logging, reset_request_id
 from app.core.metrics import inc_counter, observe, render_prometheus
+from app.jobs.learning_memory_job import (
+    learning_memory_job_worker,
+    recover_pending_learning_memory_jobs,
+)
 from app.jobs.material_index_job import material_job_worker, recover_pending_material_jobs
 
 logger = logging.getLogger(__name__)
@@ -33,16 +37,15 @@ async def lifespan(_: FastAPI):
 
     worker_stop = asyncio.Event()
     recovery_task = asyncio.create_task(asyncio.to_thread(recover_pending_material_jobs))
+    memory_recovery_task = asyncio.create_task(asyncio.to_thread(recover_pending_learning_memory_jobs))
     checkpoint_gc_task = asyncio.create_task(asyncio.to_thread(gc_agent_checkpoints))
     worker_task = asyncio.create_task(material_job_worker(worker_stop))
+    memory_worker_task = asyncio.create_task(learning_memory_job_worker(worker_stop))
     yield
     worker_stop.set()
-    if not recovery_task.done():
-        recovery_task.cancel()
-    if not checkpoint_gc_task.done():
-        checkpoint_gc_task.cancel()
-    if not worker_task.done():
-        worker_task.cancel()
+    for task in (recovery_task, memory_recovery_task, checkpoint_gc_task, worker_task, memory_worker_task):
+        if not task.done():
+            task.cancel()
 
 
 def create_app() -> FastAPI:

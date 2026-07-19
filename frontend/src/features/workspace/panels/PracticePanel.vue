@@ -68,16 +68,42 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
 </template>
 
 <style scoped>
-.practice-panel-view { display: grid; gap: 22px; }
-.panel-state { min-height: 260px; display: grid; place-items: center; color: var(--text-secondary); font-size: 14px; }
-.practice-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 18px; background: rgba(255, 255, 255, .78); box-shadow: var(--shadow-small); }
-.practice-metrics > div { min-width: 0; padding: 16px 12px; border-right: 1px solid var(--border-subtle); }
+.practice-panel-view { display: grid; gap: 14px; }
+.panel-state { min-height: 220px; display: grid; place-items: center; color: var(--text-secondary); font-size: 14px; }
+.practice-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-medium);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-small);
+}
+.practice-metrics > div { min-width: 0; padding: 14px 12px; border-right: 1px solid var(--border-subtle); }
 .practice-metrics > div:last-child { border-right: 0; }
 .practice-metrics span { display: block; color: var(--text-tertiary); font-size: 12px; }
-.practice-metrics strong { display: block; margin-top: 4px; color: var(--text-primary); font-size: 24px; font-weight: 620; }
-.generate-button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 13px; color: #fff; background: var(--gradient-brand); font-size: 13px; font-weight: 600; box-shadow: 0 8px 20px rgba(79, 124, 255, .2); }
+.practice-metrics strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: var(--weight-semibold);
+}
+.generate-button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: var(--radius-small);
+  color: var(--text-inverse);
+  background: var(--gradient-brand);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-brand);
+}
 .trend-section,
-.distribution-section { display: grid; gap: 12px; }
+.distribution-section { display: grid; gap: 10px; }
 .trend-section header,
 .distribution-section header { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; color: var(--accent); border-bottom: 1px solid var(--border-subtle); }
 .trend-section header strong,

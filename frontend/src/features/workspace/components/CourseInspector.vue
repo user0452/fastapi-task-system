@@ -30,61 +30,57 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'change-panel', 'prompt', 'data-changed'])
 
-const groups = [
-  {
-    label: '学习',
-    tabs: [
-      { id: 'overview', label: '概览', icon: LayoutDashboard, component: OverviewPanel },
-      { id: 'today', label: '今日', icon: CalendarCheck2, component: TodayPage },
-      { id: 'plan', label: '路线', icon: CalendarRange, component: PlanPanel },
-      { id: 'practice', label: '练习', icon: ChartNoAxesColumn, component: PracticePanel }
-    ]
-  },
-  {
-    label: '知识',
-    tabs: [
-      { id: 'diagnostic', label: '诊断', icon: ClipboardCheck, component: DiagnosticWorkspace },
-      { id: 'knowledge', label: '知识点', icon: Network, component: KnowledgePanel },
-      { id: 'wrong', label: '错题', icon: CircleX, component: WrongAnswersPanel }
-    ]
-  },
-  { label: '资料', tabs: [{ id: 'materials', label: '资料库', icon: BookOpen, component: MaterialsResourcesPanel }] },
-  { label: '系统', tabs: [{ id: 'memory', label: '长期记忆', icon: Brain, component: MemoryPanel }] }
+// Flat, ordered nav — group labels made the rail noisy without adding path clarity.
+const tabs = [
+  { id: 'overview', label: '概览', icon: LayoutDashboard, component: OverviewPanel },
+  { id: 'today', label: '今日', icon: CalendarCheck2, component: TodayPage },
+  { id: 'plan', label: '路线', icon: CalendarRange, component: PlanPanel },
+  { id: 'practice', label: '练习', icon: ChartNoAxesColumn, component: PracticePanel },
+  { id: 'diagnostic', label: '诊断', icon: ClipboardCheck, component: DiagnosticWorkspace },
+  { id: 'knowledge', label: '知识点', icon: Network, component: KnowledgePanel },
+  { id: 'wrong', label: '错题', icon: CircleX, component: WrongAnswersPanel },
+  { id: 'materials', label: '资料', icon: BookOpen, component: MaterialsResourcesPanel },
+  { id: 'memory', label: '记忆', icon: Brain, component: MemoryPanel }
 ]
 
-const tabs = groups.flatMap(group => group.tabs)
 const current = computed(() => tabs.find(tab => tab.id === props.activePanel) || tabs[0])
 </script>
 
 <template>
   <aside class="course-inspector">
     <header class="inspector-header">
-      <div>
-        <span>课程面板</span>
+      <div class="header-copy">
+        <span class="eyebrow">课程面板</span>
         <strong>{{ current.label }}</strong>
       </div>
-      <button type="button" title="关闭课程面板" aria-label="关闭课程面板" @click="$emit('close')"><X :size="18" /></button>
+      <button
+        type="button"
+        class="close-button"
+        title="关闭课程面板"
+        aria-label="关闭课程面板"
+        @click="$emit('close')"
+      ><X :size="18" /></button>
     </header>
-    <div class="inspector-tabs" aria-label="课程二级视图">
-      <section v-for="group in groups" :key="group.label" class="inspector-tab-group">
-        <span>{{ group.label }}</span>
-        <div role="tablist" :aria-label="group.label">
-          <button
-            v-for="tab in group.tabs"
-            :key="tab.id"
-            type="button"
-            role="tab"
-            :aria-selected="activePanel === tab.id"
-            :title="tab.label"
-            :class="{ active: activePanel === tab.id }"
-            @click="$emit('change-panel', tab.id)"
-          >
-            <component :is="tab.icon" :size="15" />
-            <span>{{ tab.label }}</span>
-          </button>
-        </div>
-      </section>
-    </div>
+
+    <nav class="inspector-nav" aria-label="课程面板导航">
+      <div class="nav-track" role="tablist" aria-label="课程视图">
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          class="nav-item"
+          :aria-selected="activePanel === tab.id"
+          :title="tab.label"
+          :class="{ active: activePanel === tab.id }"
+          @click="$emit('change-panel', tab.id)"
+        >
+          <component :is="tab.icon" :size="15" />
+          <span>{{ tab.label }}</span>
+        </button>
+      </div>
+    </nav>
+
     <div class="inspector-content">
       <KeepAlive>
         <component
@@ -103,27 +99,196 @@ const current = computed(() => tabs.find(tab => tab.id === props.activePanel) ||
 </template>
 
 <style scoped>
-.course-inspector { width: 460px; height: 100dvh; display: grid; grid-template-rows: 78px auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--border-subtle); background: linear-gradient(180deg, rgba(255, 255, 255, .97), rgba(248, 249, 252, .96)); box-shadow: -14px 0 44px rgba(0, 0, 0, .08); backdrop-filter: blur(24px); }
-.inspector-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px 0 22px; border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, .9); }
-.inspector-header > div { display: grid; gap: 3px; }
-.inspector-header span { color: var(--text-tertiary); font-size: 12px; }
-.inspector-header strong { color: var(--text-primary); font-size: 21px; font-weight: 640; letter-spacing: -.02em; }
-.inspector-header button { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; color: var(--text-secondary); }
-.inspector-header button:hover { color: var(--accent); background: var(--accent-soft); }
-.inspector-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, .8); }
-.inspector-tab-group { min-width: 0; display: grid; gap: 6px; }
-.inspector-tab-group > span { color: var(--text-tertiary); font-size: 11px; font-weight: 600; }
-.inspector-tab-group > div { display: flex; flex-wrap: wrap; gap: 4px; }
-.inspector-tabs button { min-width: 0; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; border-radius: 11px; color: var(--text-secondary); font-size: 12px; font-weight: 550; }
-.inspector-tabs button:hover { color: var(--text-primary); background: rgba(0, 0, 0, .04); }
-.inspector-tabs button.active { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(52, 120, 246, .08); }
-.inspector-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 20px 36px; background: radial-gradient(circle at top right, rgba(52, 120, 246, .045), transparent 28%); }
-@media (max-width: 1180px) {
-  .course-inspector { box-shadow: -12px 0 36px rgba(25, 35, 30, .12); }
+.course-inspector {
+  width: var(--inspector-width);
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: 64px 56px minmax(0, 1fr);
+  overflow: hidden;
+  border-left: 1px solid var(--border-subtle);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-panel);
 }
+
+.inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px 0 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-primary);
+}
+
+.header-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.eyebrow {
+  color: var(--text-tertiary);
+  font-size: var(--font-caption);
+  font-weight: 600;
+}
+
+.header-copy strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.close-button {
+  width: var(--control-md);
+  height: var(--control-md);
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--control-md);
+  border-radius: var(--radius-small);
+  color: var(--text-secondary);
+}
+
+.close-button:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.inspector-nav {
+  min-width: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-secondary);
+}
+
+.nav-track {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 0 12px;
+  scrollbar-width: none;
+}
+
+.nav-track::-webkit-scrollbar {
+  display: none;
+}
+
+.nav-item {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border-radius: var(--radius-round);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.nav-item:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.nav-item.active {
+  color: var(--accent);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-small), inset 0 0 0 1px var(--border-accent);
+}
+
+.inspector-content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 16px 28px;
+  background: var(--surface-secondary);
+}
+
+/* Give every nested panel a calmer default rhythm without editing each one. */
+.inspector-content :deep(.overview-panel),
+.inspector-content :deep(.practice-panel-view),
+.inspector-content :deep(.memory-panel),
+.inspector-content :deep(.plan-panel),
+.inspector-content :deep(.knowledge-panel),
+.inspector-content :deep(.materials-panel),
+.inspector-content :deep(.wrong-panel),
+.inspector-content :deep(.today-page),
+.inspector-content :deep(.diagnostic-workspace) {
+  display: grid;
+  gap: 16px;
+}
+
+.inspector-content :deep(.panel-heading h3),
+.inspector-content :deep(.memory-heading h2),
+.inspector-content :deep(h2),
+.inspector-content :deep(h3) {
+  letter-spacing: var(--tracking-snug);
+}
+
+.inspector-content :deep(.metric-band),
+.inspector-content :deep(.practice-metrics),
+.inspector-content :deep(.materials-metrics),
+.inspector-content :deep(.memory-metrics),
+.inspector-content :deep(.next-block) {
+  border-radius: var(--radius-medium);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-small);
+}
+
+.inspector-content :deep(.route-snapshot),
+.inspector-content :deep(.mastery-snapshot),
+.inspector-content :deep(.change-snapshot),
+.inspector-content :deep(.course-rhythm),
+.inspector-content :deep(.trend-section),
+.inspector-content :deep(.distribution-section) {
+  gap: 10px;
+  padding: 14px 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: var(--radius-medium);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-small);
+}
+
+.inspector-content :deep(.status-list) {
+  gap: 6px;
+}
+
+.inspector-content :deep(.status-list button) {
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-medium);
+  background: var(--surface-primary);
+}
+
+.inspector-content :deep(.status-list button:hover) {
+  border-color: var(--border-accent);
+  background: var(--accent-softer);
+}
+
+@media (max-width: 1180px) {
+  .course-inspector {
+    box-shadow: -12px 0 36px rgba(18, 22, 34, .12);
+  }
+}
+
 @media (max-width: 820px) {
-  .course-inspector { width: 100vw; height: calc(100dvh - 52px); border-left: 0; }
-  .inspector-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .inspector-content { padding: 20px 16px 32px; }
+  .course-inspector {
+    width: 100vw;
+    height: calc(100dvh - 52px);
+    border-left: 0;
+  }
+
+  .inspector-content {
+    padding: 16px 14px 24px;
+  }
 }
 </style>

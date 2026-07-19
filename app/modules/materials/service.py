@@ -752,11 +752,19 @@ def process_material(
             stored_chunks = repository.replace_chunks(cursor, material, prepared)
         _processing_checkpoint(user_id, material_id, renew_lease)
 
-        extraction = knowledge_provider(
-            material["course_name"],
-            material["title"],
-            stored_chunks,
-        )
+        if knowledge_provider is extract_knowledge_structure:
+            extraction = knowledge_provider(
+                material["course_name"],
+                material["title"],
+                stored_chunks,
+                user_id=user_id,
+            )
+        else:
+            extraction = knowledge_provider(
+                material["course_name"],
+                material["title"],
+                stored_chunks,
+            )
         if isinstance(extraction, dict):
             extracted = list(extraction.get("knowledge_points") or [])
             extracted_relations = list(extraction.get("relations") or [])

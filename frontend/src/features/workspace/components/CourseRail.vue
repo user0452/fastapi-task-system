@@ -115,66 +115,157 @@ function roadmapLine(course) {
 
 <style scoped>
 .course-rail {
-  width: 264px;
+  width: var(--rail-width);
   height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   color: var(--text-primary);
   border-right: 1px solid var(--border-subtle);
-  background: rgba(247, 247, 249, .84);
+  background: var(--surface-rail);
   backdrop-filter: blur(24px) saturate(1.15);
   transition: width var(--duration-normal) var(--ease-out);
 }
-.course-rail.collapsed { width: 76px; }
+.course-rail.collapsed { width: var(--rail-collapsed); }
 .rail-brand { height: 76px; display: flex; align-items: center; gap: 11px; padding: 0 16px; }
-.brand-mark { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; border-radius: 13px; color: #fff; background: var(--gradient-brand); box-shadow: 0 8px 22px rgba(79, 124, 255, .22); }
+.brand-mark {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  color: var(--text-inverse);
+  background: var(--gradient-brand);
+  box-shadow: var(--shadow-brand);
+}
 .rail-brand > div { min-width: 0; display: grid; gap: 2px; white-space: nowrap; }
-.rail-brand strong { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.rail-brand strong {
+  font-size: 15px;
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-snug);
+}
 .rail-brand span:not(.brand-mark) { color: var(--text-tertiary); font-size: 12px; }
 .rail-brand > .rail-icon { margin-left: auto; }
 .rail-navigation { min-height: 0; flex: 1; overflow-y: auto; padding: 8px 10px 16px; }
 .today-link,
 .course-link,
-.settings-link { display: flex; align-items: center; color: var(--text-secondary); border-radius: 13px; transition: color var(--duration-fast) ease, background var(--duration-fast) ease; }
+.settings-link {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  border-radius: 14px;
+  transition:
+    color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
 .today-link { min-height: 52px; gap: 11px; padding: 7px 11px; }
 .today-link > span { display: grid; min-width: 0; }
-.today-link strong { color: var(--text-primary); font-size: 14px; font-weight: 580; }
+.today-link strong { color: var(--text-primary); font-size: 14px; font-weight: var(--weight-medium); }
 .today-link small { color: var(--text-tertiary); font-size: 12px; }
 .today-link:hover,
 .today-link.active { color: var(--accent); background: var(--accent-soft); }
-.today-link.active strong { color: #1f5ec8; }
-.rail-section-heading { height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 13px 5px 5px 11px; color: var(--text-tertiary); font-size: 12px; font-weight: 600; }
-.rail-icon { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 38px; border-radius: 12px; color: var(--text-secondary); }
+.today-link.active strong { color: var(--text-accent); }
+.rail-section-heading {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 5px 5px 11px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.rail-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  border-radius: 12px;
+  color: var(--text-secondary);
+}
 .rail-icon:hover { color: var(--accent); background: var(--accent-soft); }
-.course-links { display: grid; gap: 3px; }
+.course-links { display: grid; gap: 4px; }
 .course-link { min-height: 64px; gap: 11px; padding: 8px 10px; }
-.course-link:hover { background: rgba(0, 0, 0, .04); }
-.course-link.selected { color: #1f5ec8; background: linear-gradient(135deg, rgba(52, 120, 246, .14), rgba(109, 93, 252, .08)); }
-.course-glyph { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; border-radius: 12px; font-size: 13px; font-weight: 650; }
-.course-glyph.jade { color: #397064; background: #dfebe8; }
-.course-glyph.blue { color: #466b86; background: #e1ebf2; }
-.course-glyph.amber { color: #846c3e; background: #f2ead8; }
-.course-glyph.coral { color: #855c58; background: #f0e2df; }
-.course-glyph.violet { color: #6b5e82; background: #e9e4f0; }
-.course-glyph.teal { color: #4d7473; background: #dfecec; }
+.course-link:hover { background: var(--surface-hover); }
+.course-link.selected {
+  color: var(--text-accent);
+  background: var(--gradient-selected);
+  box-shadow: inset 0 0 0 1px rgba(52, 120, 246, .08);
+}
+.course-glyph {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: var(--weight-bold);
+}
+.course-glyph.jade { color: var(--tone-jade-fg); background: var(--tone-jade-bg); }
+.course-glyph.blue { color: var(--tone-blue-fg); background: var(--tone-blue-bg); }
+.course-glyph.amber { color: var(--tone-amber-fg); background: var(--tone-amber-bg); }
+.course-glyph.coral { color: var(--tone-coral-fg); background: var(--tone-coral-bg); }
+.course-glyph.violet { color: var(--tone-violet-fg); background: var(--tone-violet-bg); }
+.course-glyph.teal { color: var(--tone-teal-fg); background: var(--tone-teal-bg); }
 .course-copy { min-width: 0; flex: 1; display: grid; gap: 3px; }
 .course-copy strong,
 .course-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.course-copy strong { color: var(--text-primary); font-size: 14px; font-weight: 580; }
+.course-copy strong { color: var(--text-primary); font-size: 14px; font-weight: var(--weight-medium); }
 .course-copy small { color: var(--text-tertiary); font-size: 12px; }
-.course-progress { width: 100%; height: 3px; overflow: hidden; border-radius: 999px; background: rgba(52, 120, 246, .13); }
-.course-progress i { display: block; height: 100%; border-radius: inherit; background: var(--gradient-blue-cyan); transition: width var(--duration-normal) var(--ease-out); }
-.course-link.selected .course-copy strong { color: #1f5ec8; }
+.course-progress {
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-round);
+  background: var(--accent-softer);
+}
+.course-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--gradient-blue-cyan);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+.course-link.selected .course-copy strong { color: var(--text-accent); }
 .rail-state { padding: 20px 10px; color: var(--text-tertiary); font-size: 12px; text-align: center; }
 .rail-error { color: var(--danger); }
 .rail-footer { padding: 10px 10px 14px; border-top: 1px solid var(--border-subtle); }
 .settings-link { height: 44px; gap: 11px; padding: 0 11px; font-size: 13px; font-weight: 560; }
 .settings-link:hover,
 .settings-link.active { color: var(--accent); background: var(--accent-soft); }
-.rail-user { min-width: 0; display: grid; grid-template-columns: 36px minmax(0, 1fr) 38px; align-items: center; gap: 9px; margin-top: 7px; padding: 10px 2px 0; border-top: 1px solid var(--border-subtle); }
-.user-avatar { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: #53647d; background: #e4e8ef; font-size: 13px; font-weight: 650; }
-.rail-user strong { overflow: hidden; color: var(--text-secondary); font-size: 13px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.rail-user {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 9px;
+  margin-top: 7px;
+  padding: 10px 2px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--tone-blue-fg);
+  background: var(--tone-blue-bg);
+  font-size: 13px;
+  font-weight: var(--weight-bold);
+}
+.rail-user strong {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .collapsed .rail-brand { justify-content: center; padding-inline: 0; }
 .collapsed .rail-brand > div,
 .collapsed .rail-brand > .rail-icon,

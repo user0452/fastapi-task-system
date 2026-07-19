@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
 from app.core.database import get_cursor
+from app.core.secret_crypto import decrypt_secret
+from app.modules.account.llm_config_service import get_user_llm_config
 from app.modules.account.service import (
     get_user_local_date,
     update_user_timezone,
@@ -86,3 +88,105 @@ def test_malformed_profile_json_returns_controlled_error(api_client, two_users):
 
     assert response.status_code == 422
     assert response.json()["error_code"] == "PROFILE_DATA_INVALID"
+
+
+def test_user_llm_config_is_encrypted_masked_and_user_scoped(api_client, two_users):
+    user, other_user = two_users
+    secret = "sk-user-owned-secret-1234"
+
+    initial = api_client.get("/api/v1/account/llm-config")
+    assert initial.status_code == 200
+    assert initial.json()["data"]["configured"] is False
+
+    saved = api_client.put(
+        "/api/v1/account/llm-config",
+        json={
+            "enabled": True,
+            "base_url": "https://example.ai/v1/",
+            "model": "example-chat",
+            "api_key": secret,
+        },
+    )
+    assert saved.status_code == 200
+    payload = saved.json()["data"]
+    assert payload["enabled"] is True
+    assert payload["base_url"] == "https://example.ai/v1"
+    assert payload["api_key_hint"] == "••••1234"
+    assert "api_key" not in payload
+
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT api_key_ciphertext FROM user_llm_configs WHERE user_id = %s",
+            (user["id"],),
+        )
+        ciphertext = cursor.fetchone()["api_key_ciphertext"]
+    assert secret not in ciphertext
+    assert decrypt_secret(ciphertext) == secret
+
+    retained = api_client.put(
+        "/api/v1/account/llm-config",
+        json={
+            "enabled": False,
+            "base_url": "https://example.ai/v1",
+            "model": "example-chat-v2",
+        },
+    )
+    assert retained.status_code == 200
+    assert retained.json()["data"]["has_api_key"] is True
+    assert retained.json()["data"]["active_source"] == "server_default"
+    assert get_user_llm_config(other_user["id"])["configured"] is False
+
+
+def test_user_llm_config_connection_uses_candidate_without_exposing_key(
+    api_client,
+    two_users,
+    monkeypatch,
+):
+    _user, _other_user = two_users
+    secret = "sk-connection-secret-9876"
+    saved = api_client.put(
+        "/api/v1/account/llm-config",
+        json={
+            "enabled": True,
+            "base_url": "https://gateway.example/v1",
+            "model": "gateway-chat",
+            "api_key": secret,
+        },
+    )
+    assert saved.status_code == 200
+
+    captured = {}
+
+    def fake_probe(config):
+        captured.update(config)
+        return {"ok": True, "model": config["model"], "latency_ms": 12}
+
+    monkeypatch.setattr(
+        "app.modules.account.llm_config_service._probe_openai_compatible",
+        fake_probe,
+    )
+    response = api_client.post(
+        "/api/v1/account/llm-config/test",
+        json={
+            "base_url": "https://gateway.example/v1",
+            "model": "gateway-chat",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {"ok": True, "model": "gateway-chat", "latency_ms": 12}
+    assert captured["api_key"] == secret
+    assert secret not in response.text
+
+
+def test_user_llm_config_rejects_non_http_endpoint(api_client):
+    response = api_client.put(
+        "/api/v1/account/llm-config",
+        json={
+            "enabled": True,
+            "base_url": "file:///etc/passwd",
+            "model": "unsafe-model",
+            "api_key": "sk-test",
+        },
+    )
+    assert response.status_code == 422

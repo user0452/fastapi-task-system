@@ -70,12 +70,26 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
       <section class="metric-band">
         <div><span>掌握度</span><strong>{{ averageMastery }}</strong><small>/100</small></div>
         <div><span>路线进度</span><strong>{{ roadmapProgress }}</strong><small>%</small></div>
-        <div><span>今日学习</span><strong>{{ today ? (todayCompleted ? '已完成' : '待完成') : '无任务' }}</strong></div>
+        <div><span>今日</span><strong>{{ today ? (todayCompleted ? '已完成' : '待完成') : '无任务' }}</strong></div>
         <div><span>完成单元</span><strong>{{ progress?.session_completed || 0 }}</strong><small>/{{ progress?.session_total || 0 }}</small></div>
       </section>
 
+      <section class="next-block">
+        <div class="panel-heading"><Target :size="16" /><h3>下一步</h3></div>
+        <template v-if="nextSession">
+          <span>{{ nextSession.scheduled_date }}</span>
+          <strong>{{ nextSession.items?.[0]?.title || '课程学习单元' }}</strong>
+          <p>{{ nextSession.adaptation_reason || '按照当前计划继续学习。' }}</p>
+          <button type="button" @click="$emit('change-panel', 'today')">进入今日学习 <ArrowRight :size="14" /></button>
+        </template>
+        <template v-else>
+          <p>当前没有待完成单元。</p>
+          <button type="button" @click="$emit('change-panel', 'diagnostic')">开始入门诊断 <ArrowRight :size="14" /></button>
+        </template>
+      </section>
+
       <section class="route-snapshot">
-        <div class="panel-heading"><Route :size="16" /><h3>当前学习阶段</h3></div>
+        <div class="panel-heading"><Route :size="16" /><h3>当前阶段</h3></div>
         <template v-if="currentStage">
           <div class="route-title"><strong>{{ currentStage.name }}</strong><span>{{ Math.round(currentStage.progress || 0) }}%</span></div>
           <span class="route-progress" role="progressbar" :aria-valuenow="Math.round(currentStage.progress || 0)" aria-valuemin="0" aria-valuemax="100"><i :style="{ width: `${currentStage.progress || 0}%` }"></i></span>
@@ -98,34 +112,18 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
         <p v-else>完成诊断后会显示真实知识点分布。</p>
       </section>
 
-      <section class="change-snapshot">
-        <div class="panel-heading"><TrendingUp :size="16" /><h3>最近评估变化</h3></div>
-        <div v-if="progress?.recent_changes?.length" class="change-list">
+      <section v-if="progress?.recent_changes?.length" class="change-snapshot">
+        <div class="panel-heading"><TrendingUp :size="16" /><h3>最近变化</h3></div>
+        <div class="change-list">
           <article v-for="change in progress.recent_changes.slice(0, 3)" :key="change.id">
             <component :is="Number(change.after_value) >= Number(change.before_value) ? TrendingUp : TrendingDown" :size="14" />
             <div>
               <strong>{{ change.knowledge_point_name }}</strong>
               <span>{{ change.reason }}</span>
-              <small v-if="change.formula || change.weight">{{ change.formula || `weight ${change.weight}` }}</small>
             </div>
             <b>{{ Number(change.before_value).toFixed(0) }} → {{ Number(change.after_value).toFixed(0) }}</b>
           </article>
         </div>
-        <p v-else>完成练习评估后会显示真实掌握度变化。</p>
-      </section>
-
-      <section class="next-block">
-        <div class="panel-heading"><Target :size="16" /><h3>下一目标</h3></div>
-        <template v-if="nextSession">
-          <span>{{ nextSession.scheduled_date }}</span>
-          <strong>{{ nextSession.items?.[0]?.title || '课程学习单元' }}</strong>
-          <p>{{ nextSession.adaptation_reason || '按照当前计划继续学习。' }}</p>
-          <button type="button" @click="$emit('change-panel', 'today')">进入今日学习 <ArrowRight :size="14" /></button>
-        </template>
-        <template v-else>
-          <p>当前没有待完成单元。</p>
-          <button type="button" @click="$emit('change-panel', 'diagnostic')">开始入门诊断 <ArrowRight :size="14" /></button>
-        </template>
       </section>
 
       <section class="status-list">
@@ -133,7 +131,7 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
           <span>薄弱知识点</span><strong>{{ progress?.weak_points?.length || 0 }} 个</strong><ArrowRight :size="14" />
         </button>
         <button type="button" @click="$emit('change-panel', 'practice')">
-          <span>练习与错题</span><strong>{{ practice?.attempts || 0 }} 次 · {{ practice?.wrong || 0 }} 错题</strong><ArrowRight :size="14" />
+          <span>练习与错题</span><strong>{{ practice?.attempts || 0 }} 次 · {{ practice?.wrong || 0 }} 错</strong><ArrowRight :size="14" />
         </button>
         <button type="button" @click="$emit('change-panel', 'plan')">
           <span>后续单元</span><strong>{{ plan?.sessions?.filter(item => item.status === 'planned').length || 0 }} 个</strong><ArrowRight :size="14" />
@@ -150,32 +148,71 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
 </template>
 
 <style scoped>
-.overview-panel { display: grid; gap: 28px; }
-.panel-state { min-height: 260px; display: grid; place-items: center; color: var(--text-secondary); font-size: 14px; }
-.metric-band { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--border-subtle); border-radius: 20px; overflow: hidden; background: rgba(255, 255, 255, .72); box-shadow: var(--shadow-small); }
-.metric-band > div { min-width: 0; padding: 18px 16px; border-right: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
-.metric-band > div:nth-child(2n) { border-right: 0; }
-.metric-band > div:nth-last-child(-n+2) { border-bottom: 0; }
-.metric-band span { display: block; color: var(--text-tertiary); font-size: 12px; }
-.metric-band strong { display: inline-block; margin-top: 4px; color: var(--text-primary); font-size: 26px; font-weight: 620; }
-.metric-band small { margin-left: 2px; color: var(--text-tertiary); font-size: 11px; }
-.panel-heading { display: flex; align-items: center; gap: 8px; color: var(--accent); }
-.panel-heading h3 { font-size: 17px; font-weight: 620; }
+.overview-panel { display: grid; gap: 14px; }
 .route-snapshot,
 .mastery-snapshot,
-.change-snapshot { display: grid; gap: 11px; padding-bottom: 22px; border-bottom: 1px solid var(--border-subtle); }
-.route-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 3px; }
+.change-snapshot,
+.course-rhythm {
+  display: grid;
+  gap: 10px;
+}
+.route-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 3px;
+}
 .route-title strong { color: var(--text-primary); font-size: 15px; }
-.route-title span { color: var(--accent); font-size: 13px; font-weight: 620; }
-.route-progress { height: 7px; overflow: hidden; border-radius: 999px; background: rgba(52, 120, 246, .1); }
-.route-progress i { display: block; height: 100%; border-radius: inherit; background: var(--gradient-blue-cyan); transition: width .2s ease; }
+.route-title span {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+}
+.route-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: var(--radius-round);
+  background: var(--accent-softer);
+}
+.route-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--gradient-blue-cyan);
+  transition: width var(--duration-normal) var(--ease-out);
+}
 .route-snapshot > p,
 .mastery-snapshot > p,
-.change-snapshot > p { color: var(--text-secondary); font-size: 13px; line-height: 1.68; }
-.adjustment-note { margin-top: 2px; padding: 12px 14px; border-radius: 14px; background: rgba(169, 101, 0, .08); }
-.adjustment-note span { color: var(--warning); font-size: 11px; font-weight: 600; }
-.adjustment-note p { margin-top: 3px; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
-.distribution-bar { height: 10px; display: flex; overflow: hidden; border-radius: 999px; background: var(--surface-tertiary); }
+.change-snapshot > p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.68;
+}
+.adjustment-note {
+  margin-top: 2px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--warning-soft);
+}
+.adjustment-note span {
+  color: var(--warning);
+  font-size: var(--font-micro);
+  font-weight: 600;
+}
+.adjustment-note p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.distribution-bar {
+  height: 10px;
+  display: flex;
+  overflow: hidden;
+  border-radius: var(--radius-round);
+  background: var(--surface-tertiary);
+}
 .distribution-bar i { min-width: 0; height: 100%; }
 .distribution-bar .weak,
 .distribution-legend .weak i { background: #d96b66; }
@@ -184,30 +221,90 @@ watch(() => [props.courseId, props.refreshKey], load, { immediate: true })
 .distribution-bar .strong,
 .distribution-legend .strong i { background: #3d9a5a; }
 .distribution-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; }
-.distribution-legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
+.distribution-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
 .distribution-legend span i { width: 8px; height: 8px; border-radius: 50%; }
 .change-list { display: grid; }
-.change-list article { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
+.change-list article {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
 .change-list article:last-child { border-bottom: 0; }
 .change-list svg { color: var(--accent); margin-top: 2px; }
 .change-list div { min-width: 0; display: grid; gap: 2px; }
-.change-list strong { overflow: hidden; color: var(--text-primary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.change-list strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .change-list span,
 .change-list b { color: var(--text-secondary); font-size: 11px; }
 .change-list small { color: var(--text-tertiary); font-size: 10px; }
-.next-block { display: grid; gap: 8px; padding: 18px; border: 1px solid rgba(52, 120, 246, .12); border-radius: 18px; background: linear-gradient(135deg, rgba(52, 120, 246, .08), rgba(109, 93, 252, .05)); }
+.next-block {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid rgba(52, 120, 246, .12);
+  border-radius: 18px;
+  background: var(--gradient-selected);
+  box-shadow: var(--shadow-hairline);
+}
 .next-block > span { color: var(--accent); font-size: 12px; font-weight: 600; }
 .next-block > strong { color: var(--text-primary); font-size: 17px; }
 .next-block p { color: var(--text-secondary); font-size: 13px; line-height: 1.68; }
-.next-block button { min-height: 40px; display: inline-flex; align-items: center; gap: 5px; justify-self: start; margin-top: 2px; padding: 0 14px; border-radius: 12px; color: #fff; background: var(--gradient-brand); font-size: 13px; font-weight: 600; box-shadow: 0 8px 18px rgba(79, 124, 255, .2); }
+.next-block button {
+  min-height: var(--control-md);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-self: start;
+  margin-top: 2px;
+  padding: 0 14px;
+  border-radius: var(--radius-small);
+  color: var(--text-inverse);
+  background: var(--gradient-brand);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-brand);
+}
 .status-list { display: grid; gap: 4px; }
-.status-list button { min-height: 52px; display: grid; grid-template-columns: minmax(0, 1fr) auto 18px; align-items: center; gap: 8px; padding: 0 10px; border-radius: 14px; color: var(--text-secondary); text-align: left; }
+.status-list button {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-radius: 14px;
+  color: var(--text-secondary);
+  text-align: left;
+}
 .status-list button:hover { color: var(--accent); background: var(--accent-soft); }
 .status-list span,
 .status-list strong { font-size: 13px; }
 .status-list strong { color: var(--text-primary); }
-.course-rhythm { display: grid; gap: 6px; }
-.course-rhythm p { color: var(--text-primary); font-size: 15px; font-weight: 600; }
-.course-rhythm > span { color: var(--text-secondary); font-size: 13px; line-height: 1.68; }
-@media (prefers-reduced-motion: reduce) { .route-progress i { transition: none; } }
+.course-rhythm p {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+.course-rhythm > span {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.68;
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-progress i { transition: none; }
+}
 </style>

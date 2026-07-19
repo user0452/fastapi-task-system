@@ -242,7 +242,7 @@ test('mobile course workspace keeps navigation, chat and inspector usable', asyn
   const inspectorBox = await inspector.boundingBox()
   expect(inspectorBox?.x).toBeLessThan(1)
   expect(inspectorBox?.width).toBeGreaterThanOrEqual(389)
-  await expect(page.locator('.inspector-tabs button')).toHaveCount(9)
+  await expect(inspector.getByRole('tab')).toHaveCount(9)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
 
   await page.locator('.inspector-header button').click()
@@ -300,13 +300,13 @@ test('同一会话消息目录可跳转、滚动跟随、刷新恢复并支持�
 
   const outline = page.locator('.message-anchor-rail')
   await expect(outline).toBeVisible()
-  for (const [index, prompt] of prompts.entries()) {
-    await expect(outline.getByRole('button', { name: `跳转到消息 ${index + 1}：${prompt}`, exact: true })).toBeVisible()
+  for (const prompt of prompts) {
+    await expect(outline.getByRole('button', { name: prompt })).toBeVisible()
   }
 
   const firstMessage = page.locator('.chat-message-anchor[data-message-role="user"]').filter({ hasText: prompts[0] }).last()
-  await outline.getByRole('button', { name: `跳转到消息 1：${prompts[0]}`, exact: true }).click()
-  await expect(outline.getByRole('button', { name: `跳转到消息 1：${prompts[0]}`, exact: true })).toHaveAttribute('aria-current', 'location')
+  await outline.getByRole('button', { name: prompts[0] }).click()
+  await expect(outline.getByRole('button', { name: prompts[0] })).toHaveAttribute('aria-current', 'location')
   await expect.poll(async () => {
     return firstMessage.evaluate(element => {
       const viewport = element.closest('.chat-viewport').getBoundingClientRect()
@@ -322,17 +322,17 @@ test('同一会话消息目录可跳转、滚动跟随、刷新恢复并支持�
     const top = viewport.scrollTop + targetRect.top - viewportRect.top - 24
     viewport.scrollTo({ top, behavior: 'auto' })
   })
-  await expect(outline.getByRole('button', { name: `跳转到消息 3：${prompts[2]}`, exact: true })).toHaveAttribute('aria-current', 'location')
+  await expect(outline.getByRole('button', { name: prompts[2] })).toHaveAttribute('aria-current', 'location')
 
   await page.reload()
   await expect(page.locator('.chat-message-anchor[data-message-role="user"]').filter({ hasText: prompts[0] })).toBeVisible()
-  await expect(page.locator('.message-anchor-rail').getByRole('button', { name: `跳转到消息 1：${prompts[0]}`, exact: true })).toBeVisible()
+  await expect(page.locator('.message-anchor-rail').getByRole('button', { name: prompts[0] })).toBeVisible()
 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('button', { name: '打开本次对话目录', exact: true }).click()
   const mobileOutline = page.locator('.message-anchor-slot.mobile-open')
   await expect(mobileOutline).toBeVisible()
-  await mobileOutline.getByRole('button', { name: `跳转到消息 2：${prompts[1]}`, exact: true }).click()
+  await mobileOutline.getByRole('button', { name: prompts[1] }).click()
   await expect(page.locator('.message-anchor-slot.mobile-open')).toHaveCount(0)
 })
 
@@ -380,7 +380,7 @@ test('课程记忆可添加、修正、暂停、刷新恢复并删除', async ({
   await login(page, testInfo)
   await openSeedCourse(page)
   await page.getByRole('button', { name: '打开课程面板', exact: true }).click()
-  await page.getByRole('tab', { name: '长期记忆', exact: true }).click()
+  await page.getByRole('tab', { name: '记忆', exact: true }).click()
   await expect(page).toHaveURL(/panel=memory/)
 
   const marker = `先举例再定义 ${Date.now().toString(36)}`

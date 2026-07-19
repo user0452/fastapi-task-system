@@ -40,6 +40,10 @@ def public_memory(memory: dict) -> dict:
         "source_message_id",
         "source_type",
         "enabled",
+        "auto_generated",
+        "confidence",
+        "evidence",
+        "last_observed_at",
         "status",
         "created_at",
         "updated_at",
@@ -112,6 +116,9 @@ def save_course_agent_memory(
     *,
     source_type: str = "manual",
     source_message_id: int | None = None,
+    auto_generated: bool = False,
+    confidence: float | None = None,
+    evidence: list[dict] | None = None,
 ) -> dict:
     with get_cursor() as cursor:
         _, agent = require_course_agent(cursor, user_id, course_id)
@@ -140,6 +147,9 @@ def save_course_agent_memory(
             embedding_json=serialize_embedding(embedding),
             embedding_model=EMBEDDING_MODEL_NAME,
             embedding_hash=embedding_hash,
+            auto_generated=auto_generated,
+            confidence=confidence,
+            evidence=evidence,
         )
         record_audit(
             user_id,
@@ -214,6 +224,7 @@ def update_course_agent_memory(
             {"course_id": course_id, "fields": sorted(values)},
             cursor=cursor,
         )
+        repository.mark_user_learning_profile_stale(cursor, user_id)
     return public_memory(memory)
 
 
@@ -249,6 +260,7 @@ def set_course_agent_memory_type_enabled(
             },
             cursor=cursor,
         )
+        repository.mark_user_learning_profile_stale(cursor, user_id)
     return {"memory_type": memory_type, "enabled": enabled, "affected": affected}
 
 
@@ -265,6 +277,7 @@ def delete_course_agent_memory(user_id: int, course_id: int, memory_id: int) -> 
             {"course_id": course_id},
             cursor=cursor,
         )
+        repository.mark_user_learning_profile_stale(cursor, user_id)
 
 
 def write_chat_memory(

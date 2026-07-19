@@ -64,6 +64,8 @@ def test_expected_migration_versions_are_registered():
         "0021",
         "0022",
         "0023",
+        "0024",
+        "0025",
     ]
 
 

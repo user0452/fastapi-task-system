@@ -223,25 +223,25 @@ watch(() => props.activeMessageId, async id => {
   width: 12px;
   height: 2px;
   justify-self: center;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, .16);
+  border-radius: var(--radius-round);
+  background: rgba(23, 24, 28, .14);
   transition:
     width var(--duration-fast) var(--ease-out),
-    height var(--duration-fast) ease,
-    background var(--duration-fast) ease,
-    box-shadow var(--duration-fast) ease;
+    height var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
 }
 .message-anchor-slot.expanded .anchor-bar {
   width: 16px;
   height: 3px;
-  background: rgba(0, 0, 0, .26);
+  background: rgba(23, 24, 28, .22);
 }
 .anchor-summary {
   min-width: 0;
   overflow: hidden;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 560;
+  font-weight: var(--weight-medium);
   line-height: 1.35;
   text-align: left;
   text-overflow: ellipsis;
@@ -251,7 +251,10 @@ watch(() => props.activeMessageId, async id => {
   text-shadow:
     0 0 8px rgba(255, 255, 255, .95),
     0 1px 0 rgba(255, 255, 255, .9);
-  transition: opacity var(--duration-fast) ease, transform var(--duration-fast) var(--ease-out), color var(--duration-fast) ease;
+  transition:
+    opacity var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-standard);
 }
 .message-anchor-slot.expanded .anchor-summary {
   opacity: 1;
@@ -313,8 +316,7 @@ watch(() => props.activeMessageId, async id => {
     pointer-events: auto;
     transform: none;
   }
-  .message-anchor-slot.mobile-open,
-  .message-anchor-slot.expanded {
+  .message-anchor-slot.mobile-open {
     display: block;
     width: auto;
     height: auto;

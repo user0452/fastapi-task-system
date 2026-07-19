@@ -4,6 +4,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import get_settings
 from app.integrations.llm.agent_runtime import invoke_agent_structured
+from app.integrations.llm.model_provider import get_llm
 from app.modules.learning.schemas import LearningEvaluationResult
 
 
@@ -33,6 +34,8 @@ def evaluate_quiz_answers(
     questions: list[dict],
     user_answers: list[dict],
     profile: dict | None = None,
+    *,
+    user_id: int | None = None,
 ) -> dict:
     if not user_answers:
         raise ValueError("用户答案不能为空")
@@ -72,6 +75,7 @@ def evaluate_quiz_answers(
             ),
         ],
         LearningEvaluationResult,
+        model=get_llm(user_id),
     )
     evaluation = result if isinstance(result, LearningEvaluationResult) else LearningEvaluationResult.model_validate(result)
     return evaluation.model_dump()

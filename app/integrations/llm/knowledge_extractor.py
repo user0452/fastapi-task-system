@@ -146,6 +146,8 @@ def extract_knowledge_structure(
     course_name: str,
     material_title: str,
     chunks: list[dict],
+    *,
+    user_id: int | None = None,
 ) -> dict:
     fallback = _fallback_structure(material_title, chunks)
     if get_settings().mock_llm:
@@ -180,7 +182,7 @@ def extract_knowledge_structure(
                 ),
             ],
             KnowledgeStructureResult,
-            model=get_llm(),
+            model=get_llm(user_id),
         )
         validated = result if isinstance(result, KnowledgeStructureResult) else KnowledgeStructureResult.model_validate(result)
         points = []

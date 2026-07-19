@@ -8,6 +8,13 @@ from fastapi import Depends, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.core.responses import V1APIRouter, success
+from app.modules.agent.memory_service import (
+    delete_course_agent_memory,
+    list_course_agent_memories,
+    save_course_agent_memory,
+    set_course_agent_memory_type_enabled,
+    update_course_agent_memory,
+)
 from app.modules.agent.schemas import (
     ActionDecision,
     AgentChatRequest,
@@ -20,17 +27,12 @@ from app.modules.agent.service import (
     archive_chat_session,
     create_chat_session,
     decide_action,
-    delete_course_agent_memory,
     get_chat_session,
     get_course_agent_workspace,
     list_agent_tools,
     list_chat_sessions,
-    list_course_agent_memories,
     run_native_tool_agent_chat,
     run_native_tool_agent_chat_async,
-    save_course_agent_memory,
-    set_course_agent_memory_type_enabled,
-    update_course_agent_memory,
 )
 from app.modules.auth.dependencies import get_current_user
 

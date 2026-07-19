@@ -116,7 +116,10 @@ def generate_diagnostic(
             409,
             "KNOWLEDGE_POINTS_NOT_READY",
         )
-    questions = question_provider(course, points, question_count)
+    if question_provider is generate_diagnostic_questions:
+        questions = question_provider(course, points, question_count, user_id=user_id)
+    else:
+        questions = question_provider(course, points, question_count)
     covered = {item["knowledge_point_id"] for item in questions}
     if len(questions) < 5 or len(covered) < 3:
         raise AppError("诊断题未覆盖足够知识点", 502, "DIAGNOSTIC_GENERATION_INVALID")
@@ -379,14 +382,25 @@ def _claim_planning(attempt: dict) -> tuple[dict, str]:
     raise AppError("学习计划正在生成，请稍后重试", 409, "PLANNING_IN_PROGRESS")
 
 
-def _run_evaluator(attempt: dict, quiz: dict, answers: list[dict], evaluator: Callable) -> dict:
+def _run_evaluator(
+    user_id: int,
+    attempt: dict,
+    quiz: dict,
+    answers: list[dict],
+    evaluator: Callable,
+) -> dict:
     try:
+        evaluator_kwargs = {
+            "quiz_set_id": quiz["id"],
+            "quiz_title": quiz["title"],
+            "questions": quiz["questions"],
+            "user_answers": answers,
+            "profile": None,
+        }
+        if evaluator is evaluate_quiz_answers:
+            evaluator_kwargs["user_id"] = user_id
         raw_evaluation = evaluator(
-            quiz_set_id=quiz["id"],
-            quiz_title=quiz["title"],
-            questions=quiz["questions"],
-            user_answers=answers,
-            profile=None,
+            **evaluator_kwargs,
         )
         return _normalize_evaluation(quiz, answers, raw_evaluation)
     except Exception as exc:
@@ -656,7 +670,7 @@ def submit_diagnostic(
         return attempt["result"]
 
     if action == "evaluate":
-        evaluation = _run_evaluator(attempt, quiz, submitted, evaluator)
+        evaluation = _run_evaluator(user_id, attempt, quiz, submitted, evaluator)
         with get_cursor() as cursor:
             _assert_evaluation_claim_current(cursor, attempt)
             current = repository.get_quiz_set(cursor, quiz_set_id, user_id)
@@ -788,8 +802,8 @@ def get_today_overview(user_id: int) -> dict:
         sessions_by_course = repository.list_today_sessions_for_user(cursor, user_id, today)
         # Batch-load question payloads for every today session item.
         question_ids: list[int] = []
-        for session in sessions_by_course.values():
-            for item in session.get("items", []):
+        for loaded_session in sessions_by_course.values():
+            for item in loaded_session.get("items", []):
                 question_id = item.get("content_ref", {}).get("question_id")
                 if question_id:
                     question_ids.append(int(question_id))
@@ -800,9 +814,9 @@ def get_today_overview(user_id: int) -> dict:
         total_items = 0
         completed = 0
         for course in courses:
-            session = sessions_by_course.get(int(course["id"]))
-            if session is not None:
-                for item in session.get("items", []):
+            course_session = sessions_by_course.get(int(course["id"]))
+            if course_session is not None:
+                for item in course_session.get("items", []):
                     question_id = item.get("content_ref", {}).get("question_id")
                     if question_id in question_map:
                         question = question_map[question_id]
@@ -816,11 +830,11 @@ def get_today_overview(user_id: int) -> dict:
                                 "difficulty",
                             ]
                         }
-                total_minutes += int(session.get("estimated_minutes") or 0)
-                total_items += len(session.get("items") or [])
-                if session.get("status") in {"completed", "evaluated"}:
+                total_minutes += int(course_session.get("estimated_minutes") or 0)
+                total_items += len(course_session.get("items") or [])
+                if course_session.get("status") in {"completed", "evaluated"}:
                     completed += 1
-            rows.append({"course": course, "session": session})
+            rows.append({"course": course, "session": course_session})
         record_audit(
             user_id,
             "COURSE_TODAY_OVERVIEW_VIEWED",
@@ -930,6 +944,7 @@ def _adapt_next_session(
         if question
         else {}
     )
+    item_specs: list[tuple[str, str, dict[str, object], int]]
     if after < 60:
         reason = f"{point_name}掌握度为 {after:.1f}，次日增加复习、基础讲解和基础题"
         item_specs = [
@@ -1070,7 +1085,7 @@ def submit_learning_session(
         return attempt["result"]
     if action != "evaluate":
         raise AppError("当前学习单元评估状态异常", 409, "EVALUATION_IN_PROGRESS")
-    evaluation = _run_evaluator(attempt, quiz, answers, evaluator)
+    evaluation = _run_evaluator(user_id, attempt, quiz, answers, evaluator)
     tomorrow = get_user_local_date(user_id) + timedelta(days=1)
 
     with get_cursor() as cursor:
@@ -1196,7 +1211,16 @@ def generate_practice(
         points = [point for point in points if point["id"] == knowledge_point_id]
         if not points:
             raise AppError("知识点不存在或无访问权限", 404, "KNOWLEDGE_POINT_NOT_FOUND")
-    questions = question_provider(course, points, question_count, difficulty)
+    if question_provider is generate_practice_questions:
+        questions = question_provider(
+            course,
+            points,
+            question_count,
+            difficulty,
+            user_id=user_id,
+        )
+    else:
+        questions = question_provider(course, points, question_count, difficulty)
     if len(questions) != question_count:
         raise AppError("练习题生成结果无效", 502, "PRACTICE_GENERATION_INVALID")
     point_names = ", ".join(point["name"] for point in points[:2])
@@ -1266,7 +1290,7 @@ def submit_practice(
             with get_cursor() as cursor:
                 repository.fail_evaluation_attempt(cursor, attempt["id"], str(exc), _utc_now())
             raise
-    evaluation = _run_evaluator(attempt, preview, submitted, evaluator)
+    evaluation = _run_evaluator(user_id, attempt, preview, submitted, evaluator)
     tomorrow = get_user_local_date(user_id) + timedelta(days=1)
 
     with get_cursor() as cursor:

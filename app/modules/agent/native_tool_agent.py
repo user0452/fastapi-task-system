@@ -520,7 +520,7 @@ def build_course_tool_agent(
             "纯课程内容问题优先使用课程资料检索。"
         )
     agent = create_agent(
-        get_llm(),
+        get_llm(user_id),
         tools=tools,
         middleware=[middleware],
         checkpointer=checkpointer,

@@ -56,15 +56,14 @@ describe('OverviewPanel', () => {
 
     expect(learningApi.getCourseWorkspaceOverview).toHaveBeenCalledWith(7)
     expect(wrapper.text()).toContain('路线进度61%')
-    expect(wrapper.text()).toContain('今日学习已完成')
+    expect(wrapper.text()).toContain('今日已完成')
     expect(wrapper.text()).toContain('核心机制')
     expect(wrapper.text()).toContain('根据最近练习提高事务章节优先级')
     expect(wrapper.text()).toContain('待加强 1')
     expect(wrapper.text()).toContain('巩固中 1')
     expect(wrapper.text()).toContain('已掌握 1')
     expect(wrapper.text()).toContain('事务隔离')
-    expect(wrapper.text()).toContain('before×0.70+score×0.30')
-    expect(wrapper.text()).toContain('2 次 · 1 错题')
+    expect(wrapper.text()).toContain('2 次 · 1 错')
     expect(wrapper.findAll('.distribution-bar i')).toHaveLength(3)
   })
 
@@ -85,7 +84,7 @@ describe('OverviewPanel', () => {
 
     expect(wrapper.text()).toContain('正在根据课程目标生成路线')
     expect(wrapper.text()).toContain('完成诊断后会显示真实知识点分布')
-    expect(wrapper.text()).toContain('完成练习评估后会显示真实掌握度变化')
-    expect(wrapper.text()).toContain('今日学习无任务')
+    expect(wrapper.text()).toContain('今日无任务')
+    expect(wrapper.text()).toContain('当前没有待完成单元')
   })
 })

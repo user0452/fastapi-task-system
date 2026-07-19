@@ -88,26 +88,59 @@ watch(courseId, async id => {
 </template>
 
 <style scoped>
-.course-ai-workspace { position: relative; height: 100dvh; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; }
-.course-ai-workspace.inspector-open { grid-template-columns: minmax(440px, 1fr) 460px; }
+.course-ai-workspace {
+  position: relative;
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+}
+.course-ai-workspace.inspector-open {
+  grid-template-columns: minmax(420px, 1fr) var(--inspector-width);
+}
 .inspector-host { position: relative; z-index: 20; }
 .inspector-scrim { display: none; }
 .inspector-slide-enter-active,
-.inspector-slide-leave-active { transition: opacity var(--duration-normal) ease, transform var(--duration-normal) var(--ease-out); }
+.inspector-slide-leave-active {
+  transition:
+    opacity var(--duration-normal) var(--ease-standard),
+    transform var(--duration-normal) var(--ease-out);
+}
 .inspector-slide-enter-from,
-.inspector-slide-leave-to { opacity: 0; transform: translateX(18px); }
+.inspector-slide-leave-to {
+  opacity: 0;
+  transform: translateX(14px);
+}
 @media (max-width: 1180px) {
   .course-ai-workspace.inspector-open { grid-template-columns: minmax(0, 1fr); }
-  .inspector-host { position: absolute; inset: 0 0 0 auto; z-index: 30; }
-  .inspector-scrim { position: absolute; inset: 0; z-index: 25; display: block; width: 100%; background: rgba(20, 22, 28, .2); backdrop-filter: blur(3px); }
+  .inspector-host {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 30;
+  }
+  .inspector-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 25;
+    display: block;
+    width: 100%;
+    background: rgba(20, 22, 28, .22);
+    backdrop-filter: blur(3px);
+  }
 }
 @media (max-width: 820px) {
   .course-ai-workspace { height: calc(100dvh - 52px); }
-  .inspector-host { inset: 0; background: var(--page-bg); }
+  .inspector-host {
+    inset: 0;
+    background: var(--surface-secondary);
+  }
   .inspector-scrim { display: none; }
   .inspector-slide-enter-active,
-  .inspector-slide-leave-active { transition: transform 180ms ease; }
+  .inspector-slide-leave-active { transition: transform var(--duration-normal) var(--ease-out); }
   .inspector-slide-enter-from,
-  .inspector-slide-leave-to { opacity: 1; transform: translateX(100%); }
+  .inspector-slide-leave-to {
+    opacity: 1;
+    transform: translateX(100%);
+  }
 }
 </style>

@@ -47,6 +47,8 @@ def generate_diagnostic_questions(
     course: dict,
     points: list[dict],
     question_count: int,
+    *,
+    user_id: int | None = None,
 ) -> list[dict]:
     fallback = _fallback_questions(points, question_count)
     if get_settings().mock_llm:
@@ -78,7 +80,7 @@ def generate_diagnostic_questions(
                 ),
             ],
             DiagnosticResult,
-            model=get_llm(),
+            model=get_llm(user_id),
         )
         parsed = result if isinstance(result, DiagnosticResult) else DiagnosticResult.model_validate(result)
         questions = [item.model_dump() for item in parsed.questions]

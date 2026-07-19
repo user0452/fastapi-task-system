@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.integrations.llm.agent_runtime import invoke_agent_structured
+from app.integrations.llm.model_provider import get_llm
 
 
 class PracticeQuestion(BaseModel):
@@ -48,6 +49,8 @@ def generate_practice_questions(
     points: list[dict],
     count: int,
     difficulty: str = "medium",
+    *,
+    user_id: int | None = None,
 ) -> list[dict]:
     fallback = _fallback(points, count, difficulty)
     if get_settings().mock_llm:
@@ -74,6 +77,7 @@ def generate_practice_questions(
                 ),
             ],
             PracticeResult,
+            model=get_llm(user_id),
         )
         validated = result if isinstance(result, PracticeResult) else PracticeResult.model_validate(result)
         allowed = {point["id"] for point in points}

@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.core.time_utils import utc_now_naive
 from app.models import model_as_dict, reflected_model
@@ -41,7 +41,11 @@ def _memory_row(entity: Any | None) -> dict | None:
     row = _row(entity)
     if row is not None:
         row["content"] = _json_loads(row.pop("content_json", None), {})
+        row["evidence"] = _json_loads(row.pop("evidence_json", None), [])
         row["enabled"] = bool(row.get("enabled", True))
+        row["auto_generated"] = bool(row.get("auto_generated", False))
+        if row.get("confidence") is not None:
+            row["confidence"] = float(row["confidence"])
     return row
 
 
@@ -224,6 +228,10 @@ def upsert_course_memory(
     embedding_json: str | None = None,
     embedding_model: str | None = None,
     embedding_hash: str | None = None,
+    *,
+    auto_generated: bool = False,
+    confidence: float | None = None,
+    evidence: list[dict] | None = None,
 ) -> dict:
     CourseMemory = reflected_model("course_agent_memories")
     session = cursor.session
@@ -245,6 +253,10 @@ def upsert_course_memory(
         "embedding_json": embedding_json,
         "embedding_model": embedding_model,
         "embedding_hash": embedding_hash,
+        "auto_generated": auto_generated,
+        "confidence": confidence,
+        "evidence_json": _json_dumps(evidence or []),
+        "last_observed_at": utc_now_naive(),
         "status": "active",
     }
     if memory is None:
@@ -340,6 +352,172 @@ def delete_course_memory(
     memory.enabled = False
     cursor.session.flush()
     return True
+
+
+def get_memory_settings(cursor, user_id: int, *, for_update: bool = False) -> dict:
+    UserMemorySettings = reflected_model("user_memory_settings")
+    statement = select(UserMemorySettings).where(UserMemorySettings.user_id == user_id)
+    if for_update:
+        statement = statement.with_for_update()
+    settings = cursor.session.scalar(statement)
+    if settings is None:
+        cursor.session.execute(
+            text(
+                "INSERT IGNORE INTO user_memory_settings (user_id) "
+                "VALUES (:user_id)"
+            ),
+            {"user_id": user_id},
+        )
+        settings = cursor.session.scalar(statement.with_for_update())
+        if settings is None:
+            raise RuntimeError("user memory settings could not be created")
+    return _row(settings) or {}
+
+
+def update_memory_settings(cursor, user_id: int, values: dict[str, Any]) -> dict:
+    settings = get_memory_settings(cursor, user_id, for_update=True)
+    UserMemorySettings = reflected_model("user_memory_settings")
+    model = cursor.session.scalar(
+        select(UserMemorySettings)
+        .where(UserMemorySettings.user_id == user_id)
+        .with_for_update()
+    )
+    if model is None:
+        raise RuntimeError("user memory settings could not be reloaded")
+    for field, value in values.items():
+        setattr(model, field, value)
+    cursor.session.flush()
+    return _row(model) or settings
+
+
+def enqueue_learning_memory_job(
+    cursor,
+    *,
+    job_type: str,
+    user_id: int,
+    idempotency_key: str,
+    course_id: int | None = None,
+    agent_id: int | None = None,
+    session_id: int | None = None,
+    source_message_id: int | None = None,
+    payload: dict | None = None,
+    available_at=None,
+    max_attempts: int = 3,
+) -> dict:
+    LearningMemoryJob = reflected_model("learning_memory_jobs")
+    job = cursor.session.scalar(
+        select(LearningMemoryJob)
+        .where(LearningMemoryJob.idempotency_key == idempotency_key)
+        .with_for_update()
+    )
+    if job is None:
+        values = {
+            "job_type": job_type,
+            "user_id": user_id,
+            "course_id": course_id,
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "source_message_id": source_message_id,
+            "idempotency_key": idempotency_key,
+            "payload_json": _json_dumps(payload or {}),
+            "max_attempts": max_attempts,
+        }
+        if available_at is not None:
+            values["available_at"] = available_at
+        job = LearningMemoryJob(**values)
+        cursor.session.add(job)
+        cursor.session.flush()
+    return _row(job) or {}
+
+
+def get_learning_memory_job(cursor, job_id: int, *, for_update: bool = False) -> dict | None:
+    LearningMemoryJob = reflected_model("learning_memory_jobs")
+    statement = select(LearningMemoryJob).where(LearningMemoryJob.id == job_id)
+    if for_update:
+        statement = statement.with_for_update()
+    return _row(cursor.session.scalar(statement))
+
+
+def list_course_memories_for_profile(cursor, user_id: int) -> list[dict]:
+    CourseMemory = reflected_model("course_agent_memories")
+    memories = cursor.session.scalars(
+        select(CourseMemory)
+        .where(
+            CourseMemory.user_id == user_id,
+            CourseMemory.status == "active",
+            CourseMemory.enabled.is_(True),
+        )
+        .order_by(CourseMemory.updated_at.desc(), CourseMemory.id.desc())
+    )
+    return [row for memory in memories if (row := _memory_row(memory)) is not None]
+
+
+def get_user_learning_profile(cursor, user_id: int, *, for_update: bool = False) -> dict | None:
+    UserLearningProfile = reflected_model("user_learning_profiles")
+    statement = select(UserLearningProfile).where(UserLearningProfile.user_id == user_id)
+    if for_update:
+        statement = statement.with_for_update()
+    row = _row(cursor.session.scalar(statement))
+    if row is not None:
+        row["profile"] = _json_loads(row.pop("profile_json", None), {})
+    return row
+
+
+def upsert_user_learning_profile(
+    cursor,
+    user_id: int,
+    profile: dict,
+    *,
+    source_watermark: int | None,
+    source_memory_count: int,
+    source_course_count: int,
+    status: str = "active",
+) -> dict:
+    UserLearningProfile = reflected_model("user_learning_profiles")
+    model = cursor.session.scalar(
+        select(UserLearningProfile)
+        .where(UserLearningProfile.user_id == user_id)
+        .with_for_update()
+    )
+    encoded = _json_dumps(profile)
+    if model is None:
+        model = UserLearningProfile(
+            user_id=user_id,
+            profile_json=encoded,
+            source_watermark=source_watermark,
+            source_memory_count=source_memory_count,
+            source_course_count=source_course_count,
+            status=status,
+            generated_at=utc_now_naive(),
+        )
+        cursor.session.add(model)
+    else:
+        changed = model.profile_json != encoded
+        model.profile_json = encoded
+        model.source_watermark = source_watermark
+        model.source_memory_count = source_memory_count
+        model.source_course_count = source_course_count
+        model.status = status
+        model.generated_at = utc_now_naive()
+        model.last_error = None
+        if changed:
+            model.version = int(model.version or 0) + 1
+    cursor.session.flush()
+    row = _row(model) or {}
+    row["profile"] = _json_loads(row.pop("profile_json", None), {})
+    return row
+
+
+def mark_user_learning_profile_stale(cursor, user_id: int) -> None:
+    UserLearningProfile = reflected_model("user_learning_profiles")
+    model = cursor.session.scalar(
+        select(UserLearningProfile)
+        .where(UserLearningProfile.user_id == user_id)
+        .with_for_update()
+    )
+    if model is not None and model.status == "active":
+        model.status = "stale"
+        cursor.session.flush()
 
 
 def claim_agent_run(

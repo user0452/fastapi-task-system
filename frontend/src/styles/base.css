@@ -124,7 +124,7 @@ pre {
   padding: 16px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-medium);
-  background: #f7f7f9;
+  background: var(--surface-secondary);
 }
 
 pre code {
@@ -232,14 +232,14 @@ th {
 
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-round);
+  background: rgba(23, 24, 28, 0.16);
   background-clip: padding-box;
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+  scrollbar-color: rgba(23, 24, 28, 0.16) transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

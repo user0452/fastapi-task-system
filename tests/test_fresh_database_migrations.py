@@ -51,7 +51,7 @@ def test_alembic_upgrade_head_builds_a_fresh_database():
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260718_06"
+                assert cursor.fetchone()["version_num"] == "20260719_08"
                 cursor.execute("SELECT COUNT(*) AS total FROM schema_migrations")
                 assert cursor.fetchone()["total"] >= 23
                 cursor.execute(
@@ -87,12 +87,13 @@ def test_alembic_upgrades_a_previously_stamped_historical_database():
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260718_06"
+                assert cursor.fetchone()["version_num"] == "20260719_08"
                 cursor.execute(
                     "SELECT COUNT(*) AS total FROM schema_migrations "
-                    "WHERE version IN ('0018', '0019', '0020', '0021', '0022', '0023')"
+                    "WHERE version IN "
+                    "('0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025')"
                 )
-                assert cursor.fetchone()["total"] == 6
+                assert cursor.fetchone()["total"] == 8
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total

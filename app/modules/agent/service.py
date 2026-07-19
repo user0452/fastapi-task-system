@@ -17,14 +17,10 @@ from app.core.config import get_settings
 from app.core.database import get_cursor
 from app.core.errors import AppError
 from app.core.metrics import inc_counter, observe
-from app.integrations.embedding.service import (
-    EMBEDDING_MODEL_NAME,
-    embed_texts,
-    serialize_embedding,
-)
 from app.integrations.llm.agent_responder import generate_agent_reply
 from app.integrations.llm.agent_runtime import RiskConfirmationMiddleware
 from app.integrations.llm.mysql_checkpointer import get_mysql_checkpointer
+from app.jobs.learning_memory_job import enqueue_course_memory_extraction
 from app.modules.account.service import get_user_server_time
 from app.modules.agent import repository
 from app.modules.agent.context_manager import (
@@ -33,12 +29,31 @@ from app.modules.agent.context_manager import (
     build_rolling_summary,
     select_relevant_memories,
 )
+from app.modules.agent.memory_service import (
+    delete_chat_memory,
+    list_course_agent_memories,
+    update_chat_memory,
+    write_chat_memory,
+)
+from app.modules.agent.memory_service import (
+    delete_course_agent_memory as delete_course_agent_memory,
+)
+from app.modules.agent.memory_service import (
+    public_memory as _public_memory,
+)
+from app.modules.agent.memory_service import (
+    save_course_agent_memory as save_course_agent_memory,
+)
+from app.modules.agent.memory_service import (
+    set_course_agent_memory_type_enabled as set_course_agent_memory_type_enabled,
+)
+from app.modules.agent.memory_service import (
+    update_course_agent_memory as update_course_agent_memory,
+)
 from app.modules.agent.native_tool_agent import build_course_tool_agent
 from app.modules.agent.schemas import (
     AgentChatRequest,
     ChatSessionCreate,
-    CourseAgentMemoryPatch,
-    CourseAgentMemoryUpsert,
 )
 from app.modules.agent.tools import (
     SandboxExecutor,
@@ -72,21 +87,6 @@ from app.modules.resources.service import search_external_resources
 TOOL_REGISTRY = build_default_tool_registry()
 TOOL_EXECUTOR = ToolExecutor(TOOL_REGISTRY)
 PYTHON_SANDBOX = SandboxExecutor()
-
-
-# Memory CRUD lives in memory_service; re-export for existing imports.
-from app.modules.agent.memory_service import (  # noqa: E402
-    delete_chat_memory,
-    delete_course_agent_memory,
-    list_course_agent_memories,
-    public_memory as _public_memory,
-    require_course_agent as _require_course_agent,
-    save_course_agent_memory,
-    set_course_agent_memory_type_enabled,
-    update_chat_memory,
-    update_course_agent_memory,
-    write_chat_memory,
-)
 
 
 def _utc_now() -> datetime:
@@ -551,6 +551,13 @@ def _prepare_context(
             request.message[:28],
         )
         profile = repository.load_profile(cursor, user_id)
+        memory_settings = repository.get_memory_settings(cursor, user_id)
+        derived_profile = repository.get_user_learning_profile(cursor, user_id)
+        if memory_settings.get("cross_course_profile_enabled") and derived_profile and derived_profile.get("status") == "active":
+            profile = {
+                "baseline_profile": profile or {},
+                "derived_learning_profile": derived_profile.get("profile") or {},
+            }
         if memories:
             profile = {
                 "profile": profile or {},
@@ -580,7 +587,10 @@ def _prepare_context(
 
     if memories:
         selected_memories = select_relevant_memories(request.message, memories)
-        base_profile = profile.get("profile", {}) if isinstance(profile, dict) and "profile" in profile else (profile or {})
+        if isinstance(profile, dict) and "baseline_profile" in profile:
+            base_profile = profile
+        else:
+            base_profile = profile.get("profile", {}) if isinstance(profile, dict) and "profile" in profile else (profile or {})
         profile = {
             "profile": base_profile,
             "course_memories": [
@@ -1110,6 +1120,17 @@ def _persist_assistant_in_transaction(
                 user_id,
                 assistant_message_id=message["id"],
                 output_summary=message["content"],
+            )
+    if message_created and context.get("agent") and course:
+        memory_settings = repository.get_memory_settings(cursor, user_id)
+        if memory_settings.get("course_auto_memory_enabled"):
+            enqueue_course_memory_extraction(
+                cursor,
+                user_id=user_id,
+                course_id=course["id"],
+                agent_id=context["agent"]["id"],
+                session_id=context["session"]["id"],
+                assistant_message_id=message["id"],
             )
     if context.get("agent"):
         current_agent = repository.get_course_agent(

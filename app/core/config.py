@@ -57,6 +57,15 @@ class Settings:
     agent_tool_lease_seconds: float
     agent_action_lease_seconds: float
     agent_lease_heartbeat_seconds: float
+    learning_memory_worker_enabled: bool
+    learning_memory_worker_poll_seconds: float
+    learning_memory_job_lease_seconds: float
+    learning_memory_job_max_attempts: int
+    auto_memory_min_confidence: float
+    auto_memory_max_per_turn: int
+    profile_aggregation_debounce_seconds: int
+    profile_min_memory_count: int
+    profile_min_course_count: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -102,6 +111,17 @@ class Settings:
             agent_tool_lease_seconds=float(_env("AGENT_TOOL_LEASE_SECONDS", "180")),
             agent_action_lease_seconds=float(_env("AGENT_ACTION_LEASE_SECONDS", "180")),
             agent_lease_heartbeat_seconds=float(_env("AGENT_LEASE_HEARTBEAT_SECONDS", "30")),
+            learning_memory_worker_enabled=_env_bool("LEARNING_MEMORY_WORKER_ENABLED", default=True),
+            learning_memory_worker_poll_seconds=float(_env("LEARNING_MEMORY_WORKER_POLL_SECONDS", "5")),
+            learning_memory_job_lease_seconds=float(_env("LEARNING_MEMORY_JOB_LEASE_SECONDS", "180")),
+            learning_memory_job_max_attempts=int(_env("LEARNING_MEMORY_JOB_MAX_ATTEMPTS", "3")),
+            auto_memory_min_confidence=float(_env("AUTO_MEMORY_MIN_CONFIDENCE", "0.85")),
+            auto_memory_max_per_turn=int(_env("AUTO_MEMORY_MAX_PER_TURN", "2")),
+            profile_aggregation_debounce_seconds=int(
+                _env("PROFILE_AGGREGATION_DEBOUNCE_SECONDS", "300")
+            ),
+            profile_min_memory_count=int(_env("PROFILE_MIN_MEMORY_COUNT", "3")),
+            profile_min_course_count=int(_env("PROFILE_MIN_COURSE_COUNT", "2")),
         )
 
     def validate_startup(self) -> None:
@@ -157,6 +177,30 @@ class Settings:
             errors.append(
                 "AGENT_LEASE_HEARTBEAT_SECONDS 必须不大于最短 Agent 租约的三分之一"
             )
+
+        if self.learning_memory_worker_poll_seconds <= 0:
+            errors.append("LEARNING_MEMORY_WORKER_POLL_SECONDS 必须大于 0")
+
+        if self.learning_memory_job_lease_seconds <= 0:
+            errors.append("LEARNING_MEMORY_JOB_LEASE_SECONDS 必须大于 0")
+
+        if self.learning_memory_job_max_attempts < 1:
+            errors.append("LEARNING_MEMORY_JOB_MAX_ATTEMPTS 必须至少为 1")
+
+        if not 0 <= self.auto_memory_min_confidence <= 1:
+            errors.append("AUTO_MEMORY_MIN_CONFIDENCE 必须在 0 到 1 之间")
+
+        if self.auto_memory_max_per_turn < 1:
+            errors.append("AUTO_MEMORY_MAX_PER_TURN 必须至少为 1")
+
+        if self.profile_aggregation_debounce_seconds < 0:
+            errors.append("PROFILE_AGGREGATION_DEBOUNCE_SECONDS 不能小于 0")
+
+        if self.profile_min_memory_count < 1:
+            errors.append("PROFILE_MIN_MEMORY_COUNT 必须至少为 1")
+
+        if self.profile_min_course_count < 1:
+            errors.append("PROFILE_MIN_COURSE_COUNT 必须至少为 1")
 
         for cidr in self.trusted_proxy_cidrs:
             try:

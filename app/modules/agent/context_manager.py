@@ -90,7 +90,7 @@ def build_agent_context(
     selected_memories = memories[:MAX_MEMORIES]
     fixed_layers = {
         "course": _compact(course or {}, 650),
-        "profile": _compact(profile or {}, 750),
+        "profile": _compact(profile or {}, 650),
         "weak_points": [
             {
                 "name": point.get("name"),

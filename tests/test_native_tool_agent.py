@@ -19,7 +19,7 @@ def _build_agent(monkeypatch, *, course=True, latest_diagnostic_id=91, web_searc
         return callback()
 
     monkeypatch.setattr(native_tool_agent, "create_agent", fake_create_agent)
-    monkeypatch.setattr(native_tool_agent, "get_llm", lambda: "fake-model")
+    monkeypatch.setattr(native_tool_agent, "get_llm", lambda _user_id=None: "fake-model")
 
     agent, artifacts = native_tool_agent.build_course_tool_agent(
         user_id=7,

@@ -117,9 +117,10 @@ def test_agent_v1_routes_delegate_and_keep_response_envelope(api_client, monkeyp
 
 
 def test_agent_stream_emits_real_deltas_result_and_done(api_client, monkeypatch):
-    async def fake_chat(_user_id, request, *, on_delta, cancel_event):
+    async def fake_chat(_user_id, request, *, on_delta, cancel_event, on_status):
         assert request.message == "stream this"
         assert not cancel_event.is_set()
+        on_status({"message": "streaming", "phase": "thinking"})
         on_delta("first ")
         on_delta("second")
         return {"reply": "first second", "citations": [{"chunk_id": 9}]}

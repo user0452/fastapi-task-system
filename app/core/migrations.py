@@ -1382,6 +1382,116 @@ def _upgrade_memory_transparency(cursor) -> None:
     )
 
 
+def _upgrade_two_tier_learning_memory(cursor) -> None:
+    """Add durable automatic memory extraction and user-level learning profiles."""
+    _add_column(cursor, "course_agent_memories", "auto_generated", "BOOLEAN NOT NULL DEFAULT FALSE")
+    _add_column(cursor, "course_agent_memories", "confidence", "DECIMAL(5,4) NULL")
+    _add_column(cursor, "course_agent_memories", "evidence_json", "LONGTEXT NULL")
+    _add_column(cursor, "course_agent_memories", "last_observed_at", "DATETIME(6) NULL")
+    _add_index(
+        cursor,
+        "course_agent_memories",
+        "idx_course_agent_memories_automatic",
+        "user_id, course_id, status, enabled, auto_generated, updated_at",
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS learning_memory_jobs (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
+            job_type VARCHAR(40) NOT NULL,
+            user_id INT NOT NULL,
+            course_id INT NULL,
+            agent_id BIGINT NULL,
+            session_id BIGINT NULL,
+            source_message_id INT NULL,
+            idempotency_key VARCHAR(180) NOT NULL,
+            payload_json LONGTEXT NULL,
+            result_json LONGTEXT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'queued',
+            attempts INT NOT NULL DEFAULT 0,
+            max_attempts INT NOT NULL DEFAULT 3,
+            available_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            worker_id VARCHAR(180) NULL,
+            lease_expires_at DATETIME(6) NULL,
+            last_error TEXT NULL,
+            started_at DATETIME(6) NULL,
+            completed_at DATETIME(6) NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+            UNIQUE KEY uk_learning_memory_jobs_idempotency (idempotency_key),
+            INDEX idx_learning_memory_jobs_claim (status, available_at, lease_expires_at),
+            INDEX idx_learning_memory_jobs_user (user_id, job_type, created_at),
+            CONSTRAINT fk_learning_memory_jobs_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_learning_memory_jobs_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE,
+            CONSTRAINT fk_learning_memory_jobs_agent FOREIGN KEY (agent_id)
+                REFERENCES course_agents(id) ON DELETE SET NULL,
+            CONSTRAINT fk_learning_memory_jobs_session FOREIGN KEY (session_id)
+                REFERENCES chat_sessions(id) ON DELETE SET NULL,
+            CONSTRAINT fk_learning_memory_jobs_message FOREIGN KEY (source_message_id)
+                REFERENCES agent_chat_messages(id) ON DELETE SET NULL
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_memory_settings (
+            user_id INT PRIMARY KEY,
+            course_auto_memory_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            cross_course_profile_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+            CONSTRAINT fk_user_memory_settings_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_learning_profiles (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            profile_json LONGTEXT NOT NULL,
+            source_watermark BIGINT NULL,
+            source_memory_count INT NOT NULL DEFAULT 0,
+            source_course_count INT NOT NULL DEFAULT 0,
+            version INT NOT NULL DEFAULT 1,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            generated_at DATETIME(6) NULL,
+            last_error TEXT NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+            UNIQUE KEY uk_user_learning_profiles_user (user_id),
+            INDEX idx_user_learning_profiles_status (user_id, status, updated_at),
+            CONSTRAINT fk_user_learning_profiles_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _upgrade_user_llm_configs(cursor) -> None:
+    """Store per-user OpenAI-compatible model configuration without plaintext keys."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_llm_configs (
+            user_id INT PRIMARY KEY,
+            provider VARCHAR(40) NOT NULL DEFAULT 'openai_compatible',
+            enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            base_url VARCHAR(500) NOT NULL,
+            model VARCHAR(160) NOT NULL,
+            api_key_ciphertext TEXT NOT NULL,
+            api_key_hint VARCHAR(24) NOT NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+            CONSTRAINT fk_user_llm_configs_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
 MIGRATIONS = [
     Migration("0001", "non_destructive_baseline", _upgrade_baseline),
     Migration("0002", "course_learning_foundation", _upgrade_course_learning_foundation),
@@ -1406,6 +1516,8 @@ MIGRATIONS = [
     Migration("0021", "general_agent_run_idempotency", _upgrade_general_agent_run_idempotency),
     Migration("0022", "learning_roadmaps", _upgrade_learning_roadmaps),
     Migration("0023", "memory_transparency", _upgrade_memory_transparency),
+    Migration("0024", "two_tier_learning_memory", _upgrade_two_tier_learning_memory),
+    Migration("0025", "user_llm_configs", _upgrade_user_llm_configs),
 ]
 
 
