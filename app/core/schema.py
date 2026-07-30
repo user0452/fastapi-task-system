@@ -12,6 +12,7 @@ from alembic.script import ScriptDirectory
 
 from alembic import command
 from app.core.database import get_conn
+from app.core.migrations import MIGRATIONS
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
@@ -46,13 +47,33 @@ def database_schema_status(connection=None) -> dict[str, Any]:
                 current = ()
             else:
                 raise
+        try:
+            cursor.execute("SELECT version FROM schema_migrations")
+            current_internal = tuple(sorted(row["version"] for row in cursor.fetchall()))
+        except pymysql.MySQLError as exc:
+            if exc.args and exc.args[0] == 1146:
+                current_internal = ()
+            else:
+                raise
         expected = alembic_heads()
+        expected_internal = tuple(migration.version for migration in MIGRATIONS)
         return {
-            "ready": set(current) == set(expected),
+            "ready": (
+                set(current) == set(expected)
+                and set(current_internal) == set(expected_internal)
+            ),
             "current_revisions": list(current),
             "expected_revisions": list(expected),
             "current_revision": current[0] if len(current) == 1 else None,
             "expected_revision": expected[0] if len(expected) == 1 else None,
+            "current_internal_migrations": list(current_internal),
+            "expected_internal_migrations": list(expected_internal),
+            "current_internal_migration": (
+                current_internal[-1] if current_internal else None
+            ),
+            "expected_internal_migration": (
+                expected_internal[-1] if expected_internal else None
+            ),
         }
     finally:
         cursor.close()

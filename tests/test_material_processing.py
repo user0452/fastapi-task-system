@@ -17,6 +17,7 @@ from app.integrations import file_storage
 from app.integrations.embedding import persistent_index
 from app.integrations.file_storage import StoredUpload
 from app.integrations.llm import knowledge_extractor
+from app.jobs import material_index_job
 from app.jobs.material_index_job import enqueue_material_processing_job
 from app.modules.courses.schemas import CourseCreate
 from app.modules.courses.service import (
@@ -36,6 +37,7 @@ from app.modules.materials.service import (
     process_material,
     request_material_retry,
 )
+from scripts.build_complex_document_fixtures import build_fixture_pack
 
 
 def _fake_embeddings(texts: list[str]) -> np.ndarray:
@@ -242,6 +244,7 @@ def test_text_material_is_automatically_indexed_with_sources(two_users):
     assert completed["parse_status"] == "parsed"
     assert completed["index_status"] == "ready"
     assert completed["processing_error"] is None
+    assert completed["parser_version"] == "layout-blocks-v1"
     assert len(points) == 3
     assert all(point["source_chunk_ids"] for point in points)
     assert updated_course["status"] == "diagnostic_pending"
@@ -259,7 +262,7 @@ def test_text_material_is_automatically_indexed_with_sources(two_users):
         cursor.execute(
             """
             SELECT embedding_json, embedding_model, embedding_hash,
-                   chunker_version, estimated_tokens
+                   chunker_version, estimated_tokens, source_block_ids_json
             FROM course_material_chunks
             WHERE material_id = %s
             """,
@@ -272,6 +275,68 @@ def test_text_material_is_automatically_indexed_with_sources(two_users):
     assert all(chunk["embedding_hash"] for chunk in chunks)
     assert all(chunk["chunker_version"] == "structure-token-v2" for chunk in chunks)
     assert all(0 < chunk["estimated_tokens"] <= 320 for chunk in chunks)
+    assert all(json.loads(chunk["source_block_ids_json"] or "[]") for chunk in chunks)
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT block_type, should_index FROM course_material_blocks WHERE material_id = %s",
+            (material["id"],),
+        )
+        blocks = cursor.fetchall()
+    assert blocks
+    assert all(block["should_index"] for block in blocks)
+
+
+def test_uploaded_complex_docx_persists_blocks_and_chunk_provenance(
+    two_users,
+    monkeypatch,
+    tmp_path,
+):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="复杂文档课程"))
+    monkeypatch.setattr(file_storage, "UPLOAD_ROOT", tmp_path.resolve())
+    source = build_fixture_pack(tmp_path / str(user["id"]))[0]
+    material = materials_service.create_uploaded_material(
+        user["id"],
+        course["id"],
+        "复杂 DOCX",
+        StoredUpload(
+            original_filename=source.name,
+            storage_path=str(source),
+            mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            size=source.stat().st_size,
+        ),
+    )
+
+    result = process_material(
+        user["id"],
+        material["id"],
+        embedding_provider=_fake_embeddings,
+        knowledge_provider=_fake_knowledge_points,
+    )
+
+    assert result["chunk_count"] >= 1
+    completed = get_user_material(user["id"], material["id"])
+    diagnostics = json.loads(completed["parse_warnings_json"])
+    assert diagnostics["table_blocks"] == 1
+    assert diagnostics["noise_blocks"] == 2
+    with get_cursor() as cursor:
+        blocks = materials_service.repository.get_material_blocks(
+            cursor,
+            material["id"],
+            user["id"],
+        )
+        chunks = materials_service.repository.get_material_chunks(
+            cursor,
+            material["id"],
+            user["id"],
+        )
+    assert any(block["block_type"] == "table" for block in blocks)
+    assert {block["noise_reason"] for block in blocks if not block["should_index"]} == {
+        "repeated_header",
+        "repeated_footer",
+    }
+    assert all(chunk["source_block_ids"] for chunk in chunks)
+    assert any(chunk["document_type"] in {"table", "mixed"} for chunk in chunks)
 
 
 def test_material_delete_removes_chunks_and_owned_knowledge(api_client, two_users):
@@ -314,6 +379,11 @@ def test_material_delete_removes_chunks_and_owned_knowledge(api_client, two_user
         assert tombstone["processing_status"] == "deleted"
         assert tombstone["storage_path"] is None
         cursor.execute("SELECT COUNT(*) AS total FROM course_material_chunks WHERE material_id = %s", (material["id"],))
+        assert cursor.fetchone()["total"] == 0
+        cursor.execute(
+            "SELECT COUNT(*) AS total FROM course_material_blocks WHERE material_id = %s",
+            (material["id"],),
+        )
         assert cursor.fetchone()["total"] == 0
         cursor.execute(
             """
@@ -489,6 +559,132 @@ def test_deleting_material_invalidates_inflight_processing(two_users):
             (material["id"],),
         )
         assert cursor.fetchone()["total"] == 0
+
+
+def test_lost_material_job_lease_does_not_mark_material_failed(two_users):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="租约失败隔离课程"))
+    material = create_text_material(
+        user["id"],
+        course["id"],
+        TextMaterialCreate(title="待接管资料", content="租约丢失后应由新 worker 安全接管。"),
+    )
+    checkpoints = 0
+
+    def lose_lease_after_parse():
+        nonlocal checkpoints
+        checkpoints += 1
+        if checkpoints == 2:
+            raise materials_service.MaterialProcessingLeaseLost("lease reclaimed")
+
+    with pytest.raises(materials_service.MaterialProcessingLeaseLost):
+        process_material(
+            user["id"],
+            material["id"],
+            embedding_provider=_fake_embeddings,
+            knowledge_provider=_fake_knowledge_points,
+            heartbeat=lose_lease_after_parse,
+        )
+
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT processing_status, index_status
+            FROM course_materials
+            WHERE id = %s AND user_id = %s
+            """,
+            (material["id"], user["id"]),
+        )
+        stored = cursor.fetchone()
+    assert stored == {"processing_status": "uploaded", "index_status": "pending"}
+
+
+def test_provider_failure_revalidates_lease_before_marking_material_failed(two_users):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="异常租约竞争课程"))
+    material = create_text_material(
+        user["id"],
+        course["id"],
+        TextMaterialCreate(title="并发失败资料", content="provider 失败时也要先验证 worker 所有权。"),
+    )
+    checkpoints = 0
+
+    def lease_lost_during_provider_failure():
+        nonlocal checkpoints
+        checkpoints += 1
+        if checkpoints >= 3:
+            raise materials_service.MaterialProcessingLeaseLost("lease reclaimed")
+
+    def failed_embeddings(_texts):
+        raise RuntimeError("provider failed")
+
+    with pytest.raises(materials_service.MaterialProcessingLeaseLost):
+        process_material(
+            user["id"],
+            material["id"],
+            embedding_provider=failed_embeddings,
+            knowledge_provider=_fake_knowledge_points,
+            heartbeat=lease_lost_during_provider_failure,
+        )
+
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT processing_status, processing_error
+            FROM course_materials
+            WHERE id = %s AND user_id = %s
+            """,
+            (material["id"], user["id"]),
+        )
+        stored = cursor.fetchone()
+    assert stored["processing_status"] != "failed"
+    assert stored["processing_error"] is None
+
+
+def test_stale_material_worker_cannot_renew_or_cancel_new_owner(two_users):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="资料租约隔离课程"))
+    material = create_text_material(
+        user["id"],
+        course["id"],
+        TextMaterialCreate(title="租约资料", content="用于验证过期 worker 无法覆盖新 owner。"),
+    )
+    enqueue_material_processing_job(user["id"], course["id"], material["id"])
+    stale_job = material_index_job._claim_job(material["id"], "worker-stale")
+    assert stale_job is not None
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE material_processing_jobs
+            SET lease_expires_at = DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 1 SECOND)
+            WHERE id = %s
+            """,
+            (stale_job["id"],),
+        )
+    current_job = material_index_job._claim_job(material["id"], "worker-current")
+    assert current_job is not None
+
+    with pytest.raises(material_index_job.MaterialJobLeaseLost):
+        material_index_job._heartbeat(stale_job["id"], "worker-stale")
+    assert (
+        material_index_job._finish_job(
+            stale_job,
+            error=materials_service.MaterialProcessingCancelled("stale worker cancelled"),
+        )
+        is False
+    )
+
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT status, worker_id
+            FROM material_processing_jobs
+            WHERE id = %s
+            """,
+            (current_job["id"],),
+        )
+        stored = cursor.fetchone()
+    assert stored == {"status": "running", "worker_id": "worker-current"}
 
 
 def test_concurrent_material_indexing_keeps_both_materials(
@@ -759,6 +955,7 @@ def test_course_search_returns_standard_citations(api_client, two_users, monkeyp
     assert citation["chunk_index"] == 0
     assert citation["score"] == 0.91
     assert citation["dense_score"] == 0.9
+    assert citation["source_block_ids"]
     assert citation["keyword_score"] == 0.95
     assert "青层" in citation["snippet"]
     assert payload["trace"]["trace_id"]

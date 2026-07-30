@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from time import perf_counter
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -11,24 +11,35 @@ from app.core.config import get_settings
 from app.core.database import get_cursor
 from app.core.errors import AppError
 from app.core.secret_crypto import decrypt_secret, encrypt_secret
+from app.integrations.llm.endpoint_security import (
+    create_pinned_http_client,
+    validate_user_llm_endpoint,
+)
 
 
 def normalize_openai_base_url(value: str) -> str:
-    raw = str(value or "").strip().rstrip("/")
-    parsed = urlsplit(raw)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    return validate_user_llm_endpoint(value).base_url
+
+
+def _endpoint_origin(value: str) -> tuple[str, str, int] | None:
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        return None
+    return parsed.scheme, hostname.rstrip(".").lower(), port
+
+
+def _require_same_key_origin(current: dict, candidate_url: str) -> None:
+    if _endpoint_origin(str(current.get("base_url") or "")) != _endpoint_origin(candidate_url):
         raise AppError(
-            "API 地址必须是有效的 http 或 https URL",
+            "更换模型 API 域名、协议或端口时必须重新填写 API Key",
             422,
-            "LLM_BASE_URL_INVALID",
+            "LLM_API_KEY_REQUIRED_FOR_ENDPOINT_CHANGE",
         )
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise AppError(
-            "API 地址不能包含账号、密码、查询参数或片段",
-            422,
-            "LLM_BASE_URL_INVALID",
-        )
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
 
 
 def _load_config(user_id: int) -> dict | None:
@@ -105,6 +116,7 @@ def save_user_llm_config(
         ciphertext = encrypt_secret(secret)
         hint = f"••••{secret[-4:]}"
     elif current is not None:
+        _require_same_key_origin(current, normalized_url)
         ciphertext = current["api_key_ciphertext"]
         hint = current["api_key_hint"]
     else:
@@ -149,13 +161,12 @@ def get_enabled_user_llm_config(user_id: int) -> dict | None:
 
 
 def _probe_openai_compatible(config: dict) -> dict:
-    endpoint = f"{config['base_url'].rstrip('/')}/chat/completions"
+    validated_endpoint = validate_user_llm_endpoint(config["base_url"])
+    endpoint = f"{validated_endpoint.base_url}/chat/completions"
     started = perf_counter()
     try:
-        with httpx.Client(
-            timeout=min(30.0, max(3.0, get_settings().llm_timeout_seconds)),
-            follow_redirects=False,
-        ) as client:
+        timeout = min(30.0, max(3.0, get_settings().llm_timeout_seconds))
+        with create_pinned_http_client(validated_endpoint, timeout=timeout) as client:
             response = client.post(
                 endpoint,
                 headers={
@@ -189,7 +200,7 @@ def _probe_openai_compatible(config: dict) -> dict:
             422,
             "LLM_RESPONSE_INVALID",
         ) from exc
-    if not isinstance(payload.get("choices"), list):
+    if not isinstance(payload, dict) or not isinstance(payload.get("choices"), list):
         raise AppError(
             "API 响应缺少 OpenAI 兼容的 choices 字段",
             422,
@@ -212,6 +223,8 @@ def test_user_llm_config(
     current = _load_config(user_id)
     secret = str(api_key or "").strip()
     if not secret and current is not None:
+        normalized_url = normalize_openai_base_url(base_url)
+        _require_same_key_origin(current, normalized_url)
         try:
             secret = decrypt_secret(current["api_key_ciphertext"])
         except RuntimeError as exc:

@@ -9,7 +9,12 @@ from dataclasses import dataclass
 import pymysql
 
 DATABASE_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-TEST_DATABASE_MARKERS = {"test", "pytest"}
+STATIC_TEST_DATABASE_NAMES = frozenset({"a3_ci_test", "a3_e2e_test"})
+DYNAMIC_TEST_DATABASE_PATTERN = re.compile(
+    r"^a3_(?:"
+    r"pytest|goal_test|boundary_test|history_test|concurrent_test|alembic_race_test"
+    r")_[0-9a-f]{8,32}$"
+)
 
 
 @dataclass(frozen=True)
@@ -21,12 +26,14 @@ class DatabaseAdminConfig:
 
 
 def validate_test_database_name(database_name: str) -> str:
-    """Reject ambiguous names before any destructive test-database operation."""
+    """Allow only this project's known disposable database namespaces."""
     normalized = database_name.strip()
     if not DATABASE_IDENTIFIER_PATTERN.fullmatch(normalized):
         raise ValueError(f"Invalid test database identifier: {database_name!r}")
-    parts = {part.lower() for part in normalized.split("_") if part}
-    if not parts.intersection(TEST_DATABASE_MARKERS):
+    if (
+        normalized not in STATIC_TEST_DATABASE_NAMES
+        and not DYNAMIC_TEST_DATABASE_PATTERN.fullmatch(normalized)
+    ):
         raise ValueError(
             f"Refusing destructive test operation on non-test database: {normalized}"
         )

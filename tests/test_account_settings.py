@@ -90,9 +90,43 @@ def test_malformed_profile_json_returns_controlled_error(api_client, two_users):
     assert response.json()["error_code"] == "PROFILE_DATA_INVALID"
 
 
-def test_user_llm_config_is_encrypted_masked_and_user_scoped(api_client, two_users):
+def test_empty_memory_settings_patch_returns_stable_app_error(api_client, two_users):
+    response = api_client.patch("/api/v1/account/memory-settings", json={})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "code": 422,
+        "message": "至少提供一个需要更新的记忆设置",
+        "data": None,
+        "details": None,
+        "error_code": "MEMORY_SETTINGS_EMPTY",
+    }
+
+
+def test_memory_settings_patch_rejects_inconsistent_fields(api_client, two_users):
+    response = api_client.patch(
+        "/api/v1/account/memory-settings",
+        json={
+            "course_auto_memory_enabled": False,
+            "cross_course_profile_enabled": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "启用跨课程画像时不能同时关闭自动课程记忆" in response.text
+
+
+def test_user_llm_config_is_encrypted_masked_and_user_scoped(
+    api_client,
+    two_users,
+    monkeypatch,
+):
     user, other_user = two_users
     secret = "sk-user-owned-secret-1234"
+    monkeypatch.setattr(
+        "app.integrations.llm.endpoint_security._resolve_public_addresses",
+        lambda _hostname, _port: ("8.8.8.8",),
+    )
 
     initial = api_client.get("/api/v1/account/llm-config")
     assert initial.status_code == 200
@@ -134,6 +168,21 @@ def test_user_llm_config_is_encrypted_masked_and_user_scoped(api_client, two_use
     assert retained.status_code == 200
     assert retained.json()["data"]["has_api_key"] is True
     assert retained.json()["data"]["active_source"] == "server_default"
+
+    rejected = api_client.put(
+        "/api/v1/account/llm-config",
+        json={
+            "enabled": True,
+            "base_url": "https://attacker.example/v1",
+            "model": "stolen-key-model",
+        },
+    )
+    assert rejected.status_code == 422
+    assert (
+        rejected.json()["error_code"]
+        == "LLM_API_KEY_REQUIRED_FOR_ENDPOINT_CHANGE"
+    )
+    assert get_user_llm_config(user["id"])["base_url"] == "https://example.ai/v1"
     assert get_user_llm_config(other_user["id"])["configured"] is False
 
 
@@ -144,6 +193,10 @@ def test_user_llm_config_connection_uses_candidate_without_exposing_key(
 ):
     _user, _other_user = two_users
     secret = "sk-connection-secret-9876"
+    monkeypatch.setattr(
+        "app.integrations.llm.endpoint_security._resolve_public_addresses",
+        lambda _hostname, _port: ("8.8.8.8",),
+    )
     saved = api_client.put(
         "/api/v1/account/llm-config",
         json={
@@ -177,6 +230,21 @@ def test_user_llm_config_connection_uses_candidate_without_exposing_key(
     assert response.json()["data"] == {"ok": True, "model": "gateway-chat", "latency_ms": 12}
     assert captured["api_key"] == secret
     assert secret not in response.text
+
+    captured.clear()
+    rejected = api_client.post(
+        "/api/v1/account/llm-config/test",
+        json={
+            "base_url": "https://attacker.example/v1",
+            "model": "gateway-chat",
+        },
+    )
+    assert rejected.status_code == 422
+    assert (
+        rejected.json()["error_code"]
+        == "LLM_API_KEY_REQUIRED_FOR_ENDPOINT_CHANGE"
+    )
+    assert captured == {}
 
 
 def test_user_llm_config_rejects_non_http_endpoint(api_client):

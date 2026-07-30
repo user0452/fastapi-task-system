@@ -55,7 +55,7 @@ jobs:
         run: uv run alembic upgrade head
       - name: Backend lint and type check
         run: |
-          uv run ruff check app tests
+          uv run ruff check app tests scripts alembic packaging/competition_launcher.py
           uv run mypy app
       - name: Backend tests and critical coverage
         run: >-
@@ -80,6 +80,8 @@ jobs:
           npm run lint
           npm run test:run
           npm run build
+      - name: Validate packaged runtime manifest
+        run: uv run python packaging/competition_launcher.py --check
       - name: Install Playwright Chromium
         working-directory: frontend
         run: npx playwright install --with-deps chromium
@@ -121,3 +123,33 @@ jobs:
             var/e2e-frontend.log
             frontend/test-results
             frontend/playwright-report
+
+  package-windows:
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.28"
+      - name: Install locked backend and packaging dependencies
+        run: uv sync --locked --dev
+      - name: Build frozen Windows application
+        shell: pwsh
+        run: |
+          $specification = Get-ChildItem packaging -Filter "*.spec" |
+            Select-Object -First 1
+          if (-not $specification) {
+            throw "PyInstaller specification was not found."
+          }
+          uv run python -m PyInstaller --clean --noconfirm $specification.FullName
+      - name: Validate frozen application
+        shell: pwsh
+        run: |
+          $executable = Get-ChildItem dist -Recurse -Filter "*.exe" |
+            Where-Object { $_.Name -like "A3*" } |
+            Select-Object -First 1
+          if (-not $executable) {
+            throw "Frozen application executable was not produced."
+          }
+          & $executable.FullName --check

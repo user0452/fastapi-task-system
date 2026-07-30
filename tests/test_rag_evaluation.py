@@ -9,6 +9,7 @@ from app.evaluation.rag import (
     prepare_cases,
     score_case,
 )
+from scripts.evaluate_rag import evaluate_quality_gates
 
 
 def _bundle(tmp_path):
@@ -107,3 +108,55 @@ def test_evaluate_bundle_runs_offline_with_deterministic_embeddings(tmp_path):
     assert report["evaluated_cases"] == 1
     assert report["index"]["unique_kb_ids"] == 2
     assert report["metrics"]["any_hit_rate"] == 1.0
+
+
+def test_quality_gates_report_all_metric_and_latency_failures():
+    report = {
+        "metrics": {
+            "mean_support_recall": 0.75,
+            "any_hit_rate": 0.9,
+            "all_support_rate": 0.5,
+            "mrr": 0.8,
+            "latency_ms": {"p95": 45.0},
+        }
+    }
+
+    verdict = evaluate_quality_gates(
+        report,
+        min_mean_support_recall=0.8,
+        min_any_hit_rate=0.9,
+        min_all_support_rate=0.75,
+        min_mrr=0.7,
+        max_p95_ms=40,
+    )
+
+    assert verdict["passed"] is False
+    assert [failure["metric"] for failure in verdict["failures"]] == [
+        "mean_support_recall",
+        "all_support_rate",
+        "latency_ms.p95",
+    ]
+
+
+def test_quality_gates_pass_when_thresholds_are_met():
+    report = {
+        "metrics": {
+            "mean_support_recall": 1.0,
+            "any_hit_rate": 1.0,
+            "all_support_rate": 1.0,
+            "mrr": 1.0,
+            "latency_ms": {"p95": 4.0},
+        }
+    }
+
+    verdict = evaluate_quality_gates(
+        report,
+        min_mean_support_recall=1.0,
+        max_p95_ms=4.0,
+    )
+
+    assert verdict == {
+        "passed": True,
+        "thresholds": {"min_mean_support_recall": 1.0, "max_p95_ms": 4.0},
+        "failures": [],
+    }

@@ -111,6 +111,10 @@ def update_memory_settings(
     if not values:
         raise AppError("至少提供一个需要更新的记忆设置", 422, "MEMORY_SETTINGS_EMPTY")
     with get_cursor() as cursor:
+        if values.get("cross_course_profile_enabled") is True:
+            values.setdefault("course_auto_memory_enabled", True)
+        elif values.get("course_auto_memory_enabled") is False:
+            values.setdefault("cross_course_profile_enabled", False)
         settings = agent_repository.update_memory_settings(cursor, user["id"], values)
         if values.get("course_auto_memory_enabled") is False:
             agent_repository.mark_user_learning_profile_stale(cursor, user["id"])

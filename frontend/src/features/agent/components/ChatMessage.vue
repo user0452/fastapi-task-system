@@ -1,6 +1,6 @@
 <script setup>
-import { computed } from 'vue'
-import { Bot, UserRound } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { ArrowRight, BookOpenCheck, Bot, ClipboardCheck, Target, UserRound } from 'lucide-vue-next'
 import SourceBubbles from './SourceBubbles.vue'
 import ExecutionSummary from './ExecutionSummary.vue'
 import ConfirmationBar from './ConfirmationBar.vue'
@@ -10,10 +10,12 @@ import { renderAssistantMarkdown } from '../markdown'
 
 const props = defineProps({
   message: { type: Object, required: true },
+  turnGoal: { type: String, default: '' },
   courseId: { type: Number, default: null },
   actionBusy: { type: Boolean, default: false }
 })
 const emit = defineEmits(['navigate', 'open-panel', 'decide', 'resource-updated', 'practice', 'data-changed'])
+const localPracticeResults = ref({})
 const renderedContent = computed(() => (
   props.message.role === 'assistant' ? renderAssistantMarkdown(props.message.content) : ''
 ))
@@ -55,6 +57,86 @@ function executionSummary() {
   return props.message.tool_calls?.execution_summary || null
 }
 
+function practiceResultKey(card) {
+  const practiceId = card.data?.id
+  if (practiceId === null || practiceId === undefined) return null
+  return `${props.message.id}:${practiceId}`
+}
+
+function practiceResult(card) {
+  const persistedResult = card.data?.result
+  if (persistedResult) return persistedResult
+  const key = practiceResultKey(card)
+  return key ? localPracticeResults.value[key] || null : null
+}
+
+function handlePracticeCompleted(card, result) {
+  const key = practiceResultKey(card)
+  if (key) {
+    localPracticeResults.value = {
+      ...localPracticeResults.value,
+      [key]: result
+    }
+  }
+  emit('data-changed', result)
+}
+
+const learningTurn = computed(() => {
+  const goal = props.turnGoal.trim()
+  if (props.message.role !== 'assistant' || props.message.streaming || !goal) return null
+
+  const summary = executionSummary()
+  const summaryInternalCount = summary?.internal_sources?.length || 0
+  const summaryExternalCount = summary?.external_sources?.length || 0
+  const internalCount = summaryInternalCount || props.message.sources?.length || 0
+  const externalCount = summaryExternalCount || resources().length
+  const context = summary?.context_used || {}
+  const evidence = []
+  if (internalCount) evidence.push(`课程资料 ${internalCount} 条`)
+  if (externalCount) evidence.push(`外部来源 ${externalCount} 条`)
+  if (context.memory_count) evidence.push(`学习记忆 ${context.memory_count} 条`)
+  if (context.weak_point_count) evidence.push(`薄弱知识点 ${context.weak_point_count} 个`)
+
+  const practiceCards = cards().filter(item => item.type === 'practice')
+  const practiceCount = practiceCards.reduce(
+    (total, card) => total + (card.data?.questions?.length || 0),
+    0
+  )
+  const completedPractice = practiceCards.map(practiceResult).find(Boolean) || null
+  const masteryUpdateCount = (
+    summary?.updates?.mastery?.length
+    || completedPractice?.mastery_changes?.length
+    || 0
+  )
+  let learningUpdate = '本轮暂无练习或掌握度更新'
+  if (completedPractice && masteryUpdateCount) {
+    learningUpdate = `练习已完成，掌握度更新 ${masteryUpdateCount} 项`
+  } else if (completedPractice) {
+    learningUpdate = '练习已完成'
+  } else if (masteryUpdateCount) {
+    learningUpdate = `掌握度更新 ${masteryUpdateCount} 项`
+  } else if (practiceCount) {
+    learningUpdate = `练习 ${practiceCount} 道，等待完成`
+  }
+
+  const pendingConfirmation = confirmation()?.status === 'pending'
+  let nextStep = '暂无待执行操作'
+  if (practiceCount && !completedPractice) {
+    nextStep = `完成并提交 ${practiceCount} 道练习`
+  } else if (pendingConfirmation) {
+    nextStep = confirmation().summary ? `确认：${confirmation().summary}` : '确认后继续'
+  } else if (actions().length) {
+    nextStep = actions()[0].label
+  }
+
+  return {
+    goal,
+    evidence: evidence.join('，') || '未附加可核对记录',
+    learningUpdate,
+    nextStep
+  }
+})
+
 function triggerAction(action) {
   if (action.type === 'open_panel' && action.panel) emit('open-panel', action.panel)
   else if (action.to) emit('navigate', action.to)
@@ -79,6 +161,31 @@ async function handleMarkdownClick(event) {
         <i></i>
         <span>{{ activity.message }}</span>
       </div>
+      <section
+        v-if="learningTurn"
+        class="learning-turn"
+        :aria-labelledby="`learning-turn-title-${message.id}`"
+      >
+        <h3 :id="`learning-turn-title-${message.id}`">本轮学习进度</h3>
+        <dl>
+          <div>
+            <dt><Target :size="13" /> 本轮目标</dt>
+            <dd :title="learningTurn.goal">{{ learningTurn.goal }}</dd>
+          </div>
+          <div>
+            <dt><BookOpenCheck :size="13" /> 依据</dt>
+            <dd>{{ learningTurn.evidence }}</dd>
+          </div>
+          <div>
+            <dt><ClipboardCheck :size="13" /> 练习/掌握度更新</dt>
+            <dd>{{ learningTurn.learningUpdate }}</dd>
+          </div>
+          <div>
+            <dt><ArrowRight :size="13" /> 下一步</dt>
+            <dd>{{ learningTurn.nextStep }}</dd>
+          </div>
+        </dl>
+      </section>
       <div v-if="message.role === 'assistant' && renderedContent" class="message-text markdown-body" v-html="renderedContent" @click="handleMarkdownClick"></div>
       <p v-else-if="message.role !== 'assistant'" class="message-text">{{ message.content }}</p>
       <span v-if="message.streaming && !activity" class="typing-indicator"><i></i><i></i><i></i></span>
@@ -110,7 +217,7 @@ async function handleMarkdownClick(event) {
         v-for="card in cards().filter(item => item.type === 'practice')"
         :key="`practice-${card.data.id}`"
         :practice="card.data"
-        @completed="result => $emit('data-changed', result)"
+        @completed="result => handlePracticeCompleted(card, result)"
       />
 
       <SourceBubbles :citations="message.sources || []" :resources="resources()" :course-id="courseId" />
@@ -173,6 +280,54 @@ async function handleMarkdownClick(event) {
   background: var(--surface-primary);
 }
 .chat-message.assistant .message-body { padding: 2px 0; border: 0; background: transparent; }
+.learning-turn {
+  margin-bottom: 15px;
+  padding: 12px 14px 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-medium);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-hairline);
+}
+.learning-turn h3 {
+  margin: 0 0 9px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+}
+.learning-turn dl {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+.learning-turn dl > div {
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+.learning-turn dt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: var(--weight-medium);
+}
+.learning-turn dt svg { flex: 0 0 auto; color: var(--accent); }
+.learning-turn dd {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.learning-turn dl > div:first-child dd {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--text-primary);
+}
 .activity-chip {
   display: inline-flex;
   align-items: center;
@@ -368,6 +523,11 @@ async function handleMarkdownClick(event) {
   .chat-message.user { grid-template-columns: minmax(0, 1fr) 28px; }
   .message-avatar { width: 28px; height: 28px; border-radius: 9px; }
   .chat-message.user .message-body { max-width: 92%; }
+  .learning-turn { padding: 11px 12px; }
+  .learning-turn dl { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+}
+@media (min-width: 621px) and (max-width: 900px) {
+  .learning-turn dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .activity-chip i,

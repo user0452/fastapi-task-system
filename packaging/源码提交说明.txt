@@ -1,0 +1,30 @@
+A3 学习 AI - 源码提交说明
+==========================
+
+仓库：https://github.com/user0452/fastapi-task-system
+提交分支：main
+
+源码运行要求
+------------
+- Python 3.13
+- Node.js 20+
+- MySQL 8.x
+- uv
+
+快速开始
+--------
+1. 复制 .env.example 为 .env，并填写数据库配置和稳定的 SECRET_KEY。
+2. 创建 .env 中 DATABASE_NAME 对应的 MySQL 数据库。
+3. 运行 uv sync --locked --dev。
+4. 进入 frontend，运行 npm ci。
+5. 回到根目录，运行 uv run alembic upgrade head。
+6. 后端：uv run python -m uvicorn main:app --host 127.0.0.1 --port 8010
+7. 前端：进入 frontend，运行 npm run dev -- --host 127.0.0.1 --port 5175
+
+完整说明见根目录 README.md，完整验收命令为：
+powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1
+
+安全说明
+--------
+- 源码包不包含 .env、数据库密码、API Key、用户数据、虚拟环境或 node_modules。
+- 用户可在设置页配置自己的 OpenAI Chat Completions 兼容 API。

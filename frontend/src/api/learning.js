@@ -23,8 +23,8 @@ export function getTodayLearning(courseId) {
   return request(`/api/v1/study/today?course_id=${courseId}`)
 }
 
-export function getTodayOverview() {
-  return request('/api/v1/study/today-overview')
+export function getTodayOverview(availableMinutes = 90) {
+  return request(`/api/v1/study/today-overview?available_minutes=${encodeURIComponent(availableMinutes)}`)
 }
 
 export function getCourseWorkspaceOverview(courseId) {

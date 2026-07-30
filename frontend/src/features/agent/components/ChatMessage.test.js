@@ -129,4 +129,113 @@ describe('ChatMessage', () => {
     expect(wrapper.text()).toContain('calculator')
     expect(wrapper.text()).toContain('长期记忆 1 条')
   })
+
+  it('presents a semantic learning turn using only persisted message fields', () => {
+    const wrapper = mount(ChatMessage, {
+      props: {
+        turnGoal: '解释边界值分析，并给我针对性练习。',
+        message: {
+          ...baseMessage,
+          sources: [{ chunk_id: 7 }],
+          tool_calls: {
+            cards: [{
+              type: 'practice',
+              data: { id: 9, questions: [{ id: 1 }, { id: 2 }, { id: 3 }] }
+            }],
+            actions: [{ type: 'open_panel', panel: 'practice', label: '查看做题记录' }],
+            execution_summary: {
+              internal_sources: [{ chunk_id: 7 }],
+              external_sources: [{ id: 2 }],
+              context_used: { memory_count: 1, weak_point_count: 2 },
+              updates: {}
+            }
+          }
+        }
+      },
+      global: {
+        stubs: {
+          PracticeCard: true,
+          SourceBubbles: true,
+          ExecutionSummary: true
+        }
+      }
+    })
+
+    const section = wrapper.get('.learning-turn')
+    expect(section.attributes('aria-labelledby')).toBe('learning-turn-title-1')
+    expect(section.get('h3').text()).toBe('本轮学习进度')
+    expect(section.findAll('dt').map(item => item.text())).toEqual([
+      '本轮目标',
+      '依据',
+      '练习/掌握度更新',
+      '下一步'
+    ])
+    expect(section.text()).toContain('解释边界值分析，并给我针对性练习。')
+    expect(section.text()).toContain('课程资料 1 条，外部来源 1 条，学习记忆 1 条，薄弱知识点 2 个')
+    expect(section.text()).toContain('练习 3 道，等待完成')
+    expect(section.text()).toContain('完成并提交 3 道练习')
+  })
+
+  it('immediately reflects a completed practice and mastery changes in the same learning turn', async () => {
+    const result = {
+      evaluation: { score: 86 },
+      mastery_changes: [
+        { knowledge_point_id: 11, delta: 0.12 },
+        { knowledge_point_id: 12, delta: 0.08 }
+      ]
+    }
+    const message = {
+      ...baseMessage,
+      tool_calls: {
+        cards: [{
+          type: 'practice',
+          data: { id: 9, questions: [{ id: 1 }, { id: 2 }] }
+        }],
+        actions: [{ type: 'open_panel', panel: 'practice', label: '查看做题记录' }]
+      }
+    }
+    const wrapper = mount(ChatMessage, {
+      props: {
+        turnGoal: '完成两道边界值练习',
+        message
+      },
+      global: {
+        stubs: {
+          PracticeCard: {
+            emits: ['completed'],
+            data: () => ({ result }),
+            template: '<button class="complete-practice" type="button" @click="$emit(\'completed\', result)">提交练习</button>'
+          },
+          SourceBubbles: true,
+          ExecutionSummary: true
+        }
+      }
+    })
+
+    const section = wrapper.get('.learning-turn')
+    expect(section.text()).toContain('练习 2 道，等待完成')
+    expect(section.text()).toContain('完成并提交 2 道练习')
+
+    await wrapper.get('.complete-practice').trigger('click')
+
+    expect(section.text()).toContain('练习已完成，掌握度更新 2 项')
+    expect(section.text()).toContain('查看做题记录')
+    expect(section.text()).not.toContain('等待完成')
+    expect(section.text()).not.toContain('完成并提交 2 道练习')
+    expect(wrapper.emitted('data-changed')).toEqual([[result]])
+    expect(message.tool_calls.cards[0].data.result).toBeUndefined()
+  })
+
+  it('states empty turn updates without inventing evidence or actions', () => {
+    const wrapper = mount(ChatMessage, {
+      props: {
+        turnGoal: '复述刚才的定义',
+        message: { id: 2, role: 'assistant', content: '请先复述。', sources: [], tool_calls: {} }
+      }
+    })
+
+    expect(wrapper.get('.learning-turn').text()).toContain('未附加可核对记录')
+    expect(wrapper.get('.learning-turn').text()).toContain('本轮暂无练习或掌握度更新')
+    expect(wrapper.get('.learning-turn').text()).toContain('暂无待执行操作')
+  })
 })

@@ -134,10 +134,9 @@ def test_agent_stream_emits_real_deltas_result_and_done(api_client, monkeypatch)
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
-    assert [event["delta"] for event in events if event["type"] == "reply_delta"] == [
-        "first ",
-        "second",
-    ]
+    assert "".join(
+        event["delta"] for event in events if event["type"] == "reply_delta"
+    ) == "first second"
     assert next(event for event in events if event["type"] == "result")["data"]["reply"] == "first second"
     assert events[-1]["type"] == "done"
 
@@ -152,7 +151,30 @@ def test_agent_stream_serializes_worker_failure(api_client, monkeypatch):
     events = [json.loads(line) for line in response.text.splitlines() if line]
 
     assert response.status_code == 200
-    assert any(
-        event["type"] == "error" and event["message"] == "model unavailable"
-        for event in events
-    )
+    error = next(event for event in events if event["type"] == "error")
+    assert error["message"] == "学习助手处理失败，请稍后重试"
+    assert error["error_code"] == "AGENT_STREAM_FAILED"
+    assert "model unavailable" not in response.text
+
+
+def test_agent_stream_coalesces_burst_deltas_without_losing_terminal_events(
+    api_client,
+    monkeypatch,
+):
+    async def burst_chat(*_args, on_delta, **_kwargs):
+        for index in range(200):
+            on_delta(f"{index},")
+        return {"reply": "complete"}
+
+    monkeypatch.setattr(agent_router, "run_native_tool_agent_chat_async", burst_chat)
+
+    response = api_client.post("/api/v1/agent/chat/stream", json={"message": "burst"})
+    events = [json.loads(line) for line in response.text.splitlines() if line]
+
+    assert "".join(
+        event["delta"] for event in events if event["type"] == "reply_delta"
+    ) == "".join(f"{index}," for index in range(200))
+    assert next(event for event in events if event["type"] == "result")["data"] == {
+        "reply": "complete"
+    }
+    assert events[-1]["type"] == "done"

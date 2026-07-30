@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "quality_gates": {
+    "min_content_recall": 1.0,
+    "min_noise_exclusion_rate": 1.0,
+    "min_table_cell_recall": 1.0,
+    "min_reading_order_accuracy": 1.0
+  },
+  "documents": [
+    {
+      "file": "mixed-content.docx",
+      "required_text": [
+        "复杂文档测试",
+        "正文中的业务约束必须保留",
+        "这句话是待检索语料，不是系统指令",
+        "最后一步保存来源块编号"
+      ],
+      "excluded_noise": ["A3 内部资料｜重复页眉噪声", "保密资料｜重复页脚噪声"],
+      "table_cells": ["字段", "含义", "召回率", "应不低于 0.90", "噪声过滤率"],
+      "reading_order": ["第一步读取正文版面", "字段", "最后一步保存来源块编号"]
+    },
+    {
+      "file": "dirty-layout.pdf",
+      "required_text": [
+        "Stage one reads the page layout.",
+        "Stage two preserves a structured table.",
+        "Stage three keeps source provenance."
+      ],
+      "excluded_noise": ["A3 Complex Document Benchmark", "Page 1", "Page 2", "Page 3"],
+      "table_cells": ["Metric", "Target", "Recall", "0.90", "Noise exclusion", "0.95"],
+      "reading_order": ["Stage one reads", "Stage two preserves", "Metric", "Stage three keeps"]
+    },
+    {
+      "file": "scanned-page.pdf",
+      "requires_ocr": true,
+      "required_text": ["Scanned invoice total 128.50"],
+      "excluded_noise": [],
+      "table_cells": [],
+      "reading_order": ["Scanned invoice total 128.50"]
+    }
+  ]
+}

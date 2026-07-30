@@ -1,13 +1,16 @@
 import asyncio
 import json
+import logging
 import os
 from contextlib import suppress
-from threading import Event
+from threading import Event, Lock
 
 from fastapi import Depends, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
 
+from app.core.errors import AppError
 from app.core.responses import V1APIRouter, success
+from app.modules.agent.admission import agent_admission
 from app.modules.agent.memory_service import (
     delete_course_agent_memory,
     list_course_agent_memories,
@@ -37,6 +40,7 @@ from app.modules.agent.service import (
 from app.modules.auth.dependencies import get_current_user
 
 router = V1APIRouter(prefix="/agent", tags=["course-agent"])
+logger = logging.getLogger(__name__)
 MAX_CONCURRENT_STREAMS = max(1, int(os.getenv("AGENT_MAX_CONCURRENT_STREAMS", "8")))
 STREAM_TIMEOUT_SECONDS = max(10.0, float(os.getenv("AGENT_STREAM_TIMEOUT_SECONDS", "180")))
 _stream_slots = asyncio.Semaphore(MAX_CONCURRENT_STREAMS)
@@ -160,22 +164,46 @@ def archive_session(session_id: int, user=Depends(get_current_user)):
 
 @router.post("/chat")
 def chat(request: AgentChatRequest, user=Depends(get_current_user)):
-    return success(data=run_native_tool_agent_chat(user["id"], request))
+    with agent_admission.slot(user["id"]):
+        return success(data=run_native_tool_agent_chat(user["id"], request))
 
 
 @router.post("/chat/stream", response_model=None)
 async def chat_stream(request: AgentChatRequest, http_request: Request, user=Depends(get_current_user)):
     async def stream():
-        events: asyncio.Queue[tuple[str, object]] = asyncio.Queue(maxsize=128)
+        events: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
         cancelled = Event()
+        event_loop = asyncio.get_running_loop()
+        delta_lock = Lock()
+        pending_deltas: list[str] = []
+        delta_event_pending = False
+
+        def enqueue(event_type: str, payload: object) -> None:
+            events.put_nowait((event_type, payload))
 
         def publish(event_type: str, payload: object) -> None:
+            nonlocal delta_event_pending
             if cancelled.is_set():
                 return
-            try:
-                events.put_nowait((event_type, payload))
-            except asyncio.QueueFull:
-                cancelled.set()
+            if event_type == "reply_delta":
+                should_schedule = False
+                with delta_lock:
+                    pending_deltas.append(str(payload))
+                    if not delta_event_pending:
+                        delta_event_pending = True
+                        should_schedule = True
+                if should_schedule:
+                    event_loop.call_soon_threadsafe(enqueue, "reply_delta", None)
+                return
+            event_loop.call_soon_threadsafe(enqueue, event_type, payload)
+
+        def take_pending_delta() -> str:
+            nonlocal delta_event_pending
+            with delta_lock:
+                value = "".join(pending_deltas)
+                pending_deltas.clear()
+                delta_event_pending = False
+                return value
 
         async def run() -> None:
             try:
@@ -203,61 +231,94 @@ async def chat_stream(request: AgentChatRequest, http_request: Request, user=Dep
                     on_status=publish_status,
                 )
                 publish("result", result)
-            except Exception as exc:
+            except AppError as exc:
                 if not cancelled.is_set():
-                    publish("error", str(exc))
+                    publish(
+                        "error",
+                        {"message": exc.message, "error_code": exc.error_code},
+                    )
+            except Exception:
+                logger.exception(
+                    "Unhandled Agent stream failure",
+                    extra={"user_id": int(user["id"])},
+                )
+                if not cancelled.is_set():
+                    publish(
+                        "error",
+                        {
+                            "message": "学习助手处理失败，请稍后重试",
+                            "error_code": "AGENT_STREAM_FAILED",
+                        },
+                    )
             finally:
                 publish("worker_done", None)
 
-        async with _stream_slots:
-            worker = asyncio.create_task(run())
-            worker_done = False
-            try:
-                async with asyncio.timeout(STREAM_TIMEOUT_SECONDS):
-                    while not worker_done or not events.empty():
-                        if await http_request.is_disconnected():
-                            cancelled.set()
-                            break
-                        try:
-                            event_type, payload = await asyncio.wait_for(events.get(), timeout=0.25)
-                        except TimeoutError:
-                            if worker.done() and events.empty():
+        try:
+            async with _stream_slots:
+                worker = asyncio.create_task(run())
+                worker_done = False
+                try:
+                    async with asyncio.timeout(STREAM_TIMEOUT_SECONDS):
+                        while not worker_done or not events.empty():
+                            if await http_request.is_disconnected():
+                                cancelled.set()
                                 break
-                            continue
-                        if event_type == "worker_done":
-                            worker_done = True
-                        elif event_type == "status":
-                            if isinstance(payload, dict):
-                                yield _event(
-                                    "status",
-                                    message=str(payload.get("message") or ""),
-                                    phase=str(payload.get("phase") or "thinking"),
-                                    tool=payload.get("tool"),
-                                )
+                            try:
+                                event_type, payload = await asyncio.wait_for(events.get(), timeout=0.25)
+                            except TimeoutError:
+                                if worker.done() and events.empty():
+                                    break
+                                continue
+                            if event_type == "worker_done":
+                                worker_done = True
+                            elif event_type == "status":
+                                if isinstance(payload, dict):
+                                    yield _event(
+                                        "status",
+                                        message=str(payload.get("message") or ""),
+                                        phase=str(payload.get("phase") or "thinking"),
+                                        tool=payload.get("tool"),
+                                    )
+                                else:
+                                    yield _event("status", message=str(payload), phase="thinking")
+                            elif event_type == "reply_delta":
+                                delta = take_pending_delta()
+                                if delta:
+                                    yield _event("reply_delta", delta=delta)
+                            elif event_type == "result":
+                                yield _event("result", data=payload)
+                                yield _event("done")
                             else:
-                                yield _event("status", message=str(payload), phase="thinking")
-                        elif event_type == "reply_delta":
-                            yield _event("reply_delta", delta=str(payload))
-                        elif event_type == "result":
-                            yield _event("result", data=payload)
-                            yield _event("done")
-                        else:
-                            yield _event("error", message=str(payload))
-            except TimeoutError:
-                cancelled.set()
-                yield _event("error", message="生成超时，请稍后重试")
-            finally:
-                cancelled.set()
-                if not worker.done():
-                    worker.cancel()
-                with suppress(asyncio.CancelledError):
-                    await worker
+                                if isinstance(payload, dict):
+                                    yield _event(
+                                        "error",
+                                        message=str(payload.get("message") or ""),
+                                        error_code=payload.get("error_code"),
+                                    )
+                                else:
+                                    yield _event("error", message=str(payload))
+                except TimeoutError:
+                    cancelled.set()
+                    yield _event("error", message="生成超时，请稍后重试")
+                finally:
+                    cancelled.set()
+                    if not worker.done():
+                        worker.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await worker
+        finally:
+            agent_admission.release(user["id"])
 
-    return StreamingResponse(
-        stream(),
-        media_type="application/x-ndjson",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    admitted_stream = agent_admission.admit_stream(user["id"], stream())
+    try:
+        return StreamingResponse(
+            admitted_stream,
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    except BaseException:
+        await admitted_stream.aclose()
+        raise
 
 
 @router.post("/actions/{action_id}/decision")

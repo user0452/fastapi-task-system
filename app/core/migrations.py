@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from app.core.database import get_conn
 ROOT_DIR = Path(__file__).resolve().parents[2]
 MIGRATION_SQL_DIR = ROOT_DIR / "sql" / "migrations"
 IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+MIGRATION_LOCK_TIMEOUT_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -1492,6 +1494,47 @@ def _upgrade_user_llm_configs(cursor) -> None:
     )
 
 
+def _upgrade_complex_document_blocks(cursor) -> None:
+    """Persist layout-aware parse results and link RAG chunks back to source blocks."""
+    _add_column(cursor, "course_materials", "parser_version", "VARCHAR(64) NULL")
+    _add_column(cursor, "course_materials", "parse_warnings_json", "JSON NULL")
+    _add_column(cursor, "course_material_chunks", "source_block_ids_json", "JSON NULL")
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS course_material_blocks (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            material_id INT NOT NULL,
+            block_id VARCHAR(80) NOT NULL,
+            block_index INT NOT NULL,
+            block_type VARCHAR(30) NOT NULL,
+            page_number INT NULL,
+            bbox_json JSON NULL,
+            reading_order INT NOT NULL DEFAULT 0,
+            heading_level INT NULL,
+            block_text LONGTEXT NULL,
+            table_json JSON NULL,
+            ocr_used BOOLEAN NOT NULL DEFAULT FALSE,
+            ocr_confidence DECIMAL(6,5) NULL,
+            should_index BOOLEAN NOT NULL DEFAULT TRUE,
+            noise_reason VARCHAR(80) NULL,
+            metadata_json JSON NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                ON UPDATE CURRENT_TIMESTAMP(6),
+            UNIQUE KEY uk_material_blocks_source (material_id, block_id),
+            INDEX idx_material_blocks_user_material (user_id, material_id, block_index),
+            INDEX idx_material_blocks_page (material_id, page_number, reading_order),
+            INDEX idx_material_blocks_kind (material_id, block_type, should_index),
+            CONSTRAINT fk_material_blocks_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_material_blocks_material FOREIGN KEY (material_id)
+                REFERENCES course_materials(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
 MIGRATIONS = [
     Migration("0001", "non_destructive_baseline", _upgrade_baseline),
     Migration("0002", "course_learning_foundation", _upgrade_course_learning_foundation),
@@ -1518,6 +1561,7 @@ MIGRATIONS = [
     Migration("0023", "memory_transparency", _upgrade_memory_transparency),
     Migration("0024", "two_tier_learning_memory", _upgrade_two_tier_learning_memory),
     Migration("0025", "user_llm_configs", _upgrade_user_llm_configs),
+    Migration("0026", "complex_document_blocks", _upgrade_complex_document_blocks),
 ]
 
 
@@ -1533,7 +1577,20 @@ def _ensure_migration_table(cursor) -> None:
     )
 
 
+def migration_lock_name(database_name: str, namespace: str) -> str:
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,20}", namespace):
+        raise ValueError(f"非法迁移锁命名空间：{namespace}")
+    digest = hashlib.sha256(database_name.encode("utf-8")).hexdigest()[:32]
+    return f"a3:{namespace}:{digest}"
+
+
 def run_migrations(connection=None, target_version: str | None = None) -> list[str]:
+    """Apply registered internal migrations up to an optional fixed boundary.
+
+    Alembic revisions must pass a literal ``target_version`` so that replaying an
+    old revision cannot start applying internal migrations added by newer code.
+    Omitting the target is reserved for the legacy standalone runner.
+    """
     owns_connection = connection is None
     if connection is None:
         connection = get_conn()
@@ -1547,7 +1604,27 @@ def run_migrations(connection=None, target_version: str | None = None) -> list[s
         selected_migrations = MIGRATIONS[: target_indexes[0] + 1]
     cursor = connection.cursor()
     applied = []
+    lock_name: str | None = None
+    lock_acquired = False
+    migration_failed = False
     try:
+        cursor.execute("SELECT DATABASE() AS database_name")
+        database_row = cursor.fetchone()
+        database_name = str((database_row or {}).get("database_name") or "").strip()
+        if not database_name:
+            raise RuntimeError("无法确定迁移目标数据库")
+        lock_name = migration_lock_name(database_name, "schema-migrations")
+        cursor.execute(
+            "SELECT GET_LOCK(%s, %s) AS acquired",
+            (lock_name, MIGRATION_LOCK_TIMEOUT_SECONDS),
+        )
+        lock_result = cursor.fetchone()
+        if lock_result is None or int(lock_result.get("acquired") or 0) != 1:
+            raise RuntimeError(
+                f"等待数据库迁移锁超时（{MIGRATION_LOCK_TIMEOUT_SECONDS} 秒）"
+            )
+        lock_acquired = True
+
         _ensure_migration_table(cursor)
         connection.commit()
         cursor.execute("SELECT version FROM schema_migrations")
@@ -1565,12 +1642,26 @@ def run_migrations(connection=None, target_version: str | None = None) -> list[s
             applied.append(migration.version)
         return applied
     except Exception:
+        migration_failed = True
         connection.rollback()
         raise
     finally:
-        cursor.close()
-        if owns_connection:
-            connection.close()
+        release_error: Exception | None = None
+        if lock_acquired and lock_name is not None:
+            try:
+                cursor.execute("SELECT RELEASE_LOCK(%s) AS released", (lock_name,))
+                release_result = cursor.fetchone()
+                if release_result is None or int(release_result.get("released") or 0) != 1:
+                    raise RuntimeError("数据库迁移锁释放失败")
+            except Exception as exc:
+                release_error = exc
+        try:
+            cursor.close()
+        finally:
+            if owns_connection:
+                connection.close()
+        if release_error is not None and not migration_failed:
+            raise RuntimeError("数据库迁移锁释放失败") from release_error
 
 
 if __name__ == "__main__":

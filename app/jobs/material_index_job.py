@@ -2,21 +2,32 @@ import asyncio
 import logging
 import os
 import socket
+from contextlib import contextmanager
+from threading import Event, Lock, Thread
 from time import perf_counter
+from typing import Callable, Iterator
 from uuid import uuid4
 
-from app.core.database import get_cursor
+from app.core.database import get_cursor, get_dedicated_conn
 from app.core.metrics import inc_counter, observe, set_gauge
 from app.modules.materials.service import (
     MATERIAL_DELETION_STATUSES,
     MaterialProcessingCancelled,
+    MaterialProcessingLeaseLost,
     backfill_knowledge_point_vectors,
     process_material,
 )
 
 logger = logging.getLogger(__name__)
 LEASE_MINUTES = 60
+LEASE_HEARTBEAT_SECONDS = 60.0
+LEASE_HEARTBEAT_RETRY_SECONDS = 5.0
+LEASE_HEARTBEAT_SHUTDOWN_SECONDS = 20.0
 WORKER_POLL_SECONDS = 2.0
+
+
+class MaterialJobLeaseLost(MaterialProcessingLeaseLost):
+    """Raised when a worker no longer owns the durable material job."""
 
 
 def _worker_id() -> str:
@@ -149,7 +160,15 @@ def _claim_job(material_id: int | None, worker_id: str) -> dict | None:
 
 
 def _heartbeat(job_id: int, worker_id: str) -> None:
-    with get_cursor() as cursor:
+    connection = get_dedicated_conn(
+        autocommit=True,
+        connect_timeout=5,
+        read_timeout=10,
+        write_timeout=10,
+    )
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SET SESSION innodb_lock_wait_timeout = 5")
         cursor.execute(
             """
             UPDATE material_processing_jobs
@@ -158,9 +177,95 @@ def _heartbeat(job_id: int, worker_id: str) -> None:
             """,
             (LEASE_MINUTES, job_id, worker_id),
         )
+        if cursor.rowcount != 1:
+            raise MaterialJobLeaseLost(
+                f"material job {job_id} lease is no longer owned by {worker_id}"
+            )
+    finally:
+        cursor.close()
+        connection.close()
 
 
-def _finish_job(job: dict, *, error: Exception | None = None) -> None:
+@contextmanager
+def _maintain_job_lease(job_id: int, worker_id: str) -> Iterator[Callable[[], None]]:
+    """Renew a job lease during long parser/LLM calls and surface ownership loss."""
+    stopped = Event()
+    state_lock = Lock()
+    detected_lease_loss: MaterialJobLeaseLost | None = None
+
+    def remember_lease_loss(exc: MaterialJobLeaseLost) -> None:
+        nonlocal detected_lease_loss
+        with state_lock:
+            if detected_lease_loss is None:
+                detected_lease_loss = exc
+
+    def known_lease_loss() -> MaterialJobLeaseLost | None:
+        with state_lock:
+            return detected_lease_loss
+
+    def renew() -> None:
+        try:
+            _heartbeat(job_id, worker_id)
+        except MaterialJobLeaseLost as exc:
+            remember_lease_loss(exc)
+            raise
+        except Exception as exc:
+            raise MaterialJobLeaseLost(
+                f"material job {job_id} lease renewal failed"
+            ) from exc
+
+    def heartbeat_loop() -> None:
+        delay = LEASE_HEARTBEAT_SECONDS
+        while not stopped.wait(delay):
+            try:
+                _heartbeat(job_id, worker_id)
+            except MaterialJobLeaseLost as exc:
+                remember_lease_loss(exc)
+                logger.warning(
+                    "material_job_lease_lost job_id=%s worker_id=%s",
+                    job_id,
+                    worker_id,
+                )
+                return
+            except Exception:
+                logger.warning(
+                    "material_job_heartbeat_failed job_id=%s worker_id=%s",
+                    job_id,
+                    worker_id,
+                )
+                delay = min(LEASE_HEARTBEAT_RETRY_SECONDS, LEASE_HEARTBEAT_SECONDS)
+            else:
+                delay = LEASE_HEARTBEAT_SECONDS
+
+    thread = Thread(
+        target=heartbeat_loop,
+        name=f"material-job-heartbeat-{job_id}",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield renew
+    except BaseException as exc:
+        stopped.set()
+        thread.join(timeout=LEASE_HEARTBEAT_SHUTDOWN_SECONDS)
+        if thread.is_alive():
+            raise MaterialJobLeaseLost(
+                f"material job {job_id} heartbeat did not stop after failure"
+            ) from exc
+        if lease_error := known_lease_loss():
+            raise lease_error from exc
+        raise
+    else:
+        stopped.set()
+        thread.join(timeout=LEASE_HEARTBEAT_SHUTDOWN_SECONDS)
+        if thread.is_alive():
+            raise MaterialJobLeaseLost(
+                f"material job {job_id} heartbeat did not stop cleanly"
+            )
+        renew()
+
+
+def _finish_job(job: dict, *, error: Exception | None = None) -> bool:
     with get_cursor() as cursor:
         if error is None:
             cursor.execute(
@@ -168,22 +273,22 @@ def _finish_job(job: dict, *, error: Exception | None = None) -> None:
                 UPDATE material_processing_jobs
                 SET status = 'completed', worker_id = NULL, lease_expires_at = NULL,
                     completed_at = CURRENT_TIMESTAMP(6), last_error = NULL
-                WHERE id = %s AND worker_id = %s
+                WHERE id = %s AND worker_id = %s AND status = 'running'
                 """,
                 (job["id"], job["worker_id"]),
             )
-            return
+            return cursor.rowcount == 1
         if isinstance(error, MaterialProcessingCancelled):
             cursor.execute(
                 """
                 UPDATE material_processing_jobs
                 SET status = 'cancelled', worker_id = NULL, lease_expires_at = NULL,
                     completed_at = CURRENT_TIMESTAMP(6), last_error = %s
-                WHERE id = %s
+                WHERE id = %s AND worker_id = %s AND status = 'running'
                 """,
-                (str(error)[:2000], job["id"]),
+                (str(error)[:2000], job["id"], job["worker_id"]),
             )
-            return
+            return cursor.rowcount == 1
         retrying = int(job["attempts"]) < int(job["max_attempts"])
         if retrying:
             cursor.execute(
@@ -212,6 +317,7 @@ def _finish_job(job: dict, *, error: Exception | None = None) -> None:
                 """,
                 (str(error)[:2000], job["id"], job["worker_id"]),
             )
+        return cursor.rowcount == 1
 
 
 def run_material_processing_job(user_id: int, material_id: int) -> bool:
@@ -239,11 +345,12 @@ def run_material_processing_job(user_id: int, material_id: int) -> bool:
         return False
     started = perf_counter()
     try:
-        process_material(
-            user_id,
-            material_id,
-            heartbeat=lambda: _heartbeat(job["id"], worker_id),
-        )
+        with _maintain_job_lease(job["id"], worker_id) as renew_lease:
+            process_material(
+                user_id,
+                material_id,
+                heartbeat=renew_lease,
+            )
     except Exception as exc:
         _finish_job(job, error=exc)
         inc_counter("a3_material_job_attempts_total", status="failed")
@@ -256,7 +363,14 @@ def run_material_processing_job(user_id: int, material_id: int) -> bool:
             job["attempts"],
         )
         return False
-    _finish_job(job)
+    if not _finish_job(job):
+        logger.warning(
+            "material_processing_completion_fenced material_id=%s job_id=%s worker_id=%s",
+            material_id,
+            job["id"],
+            worker_id,
+        )
+        return False
     inc_counter("a3_material_job_attempts_total", status="completed")
     observe("a3_material_job_duration_seconds", perf_counter() - started, status="completed")
     return True
@@ -271,11 +385,12 @@ def drain_material_processing_jobs(max_jobs: int = 4) -> int:
             break
         started = perf_counter()
         try:
-            process_material(
-                job["user_id"],
-                job["material_id"],
-                heartbeat=lambda: _heartbeat(job["id"], worker_id),
-            )
+            with _maintain_job_lease(job["id"], worker_id) as renew_lease:
+                process_material(
+                    job["user_id"],
+                    job["material_id"],
+                    heartbeat=renew_lease,
+                )
         except Exception as exc:
             _finish_job(job, error=exc)
             inc_counter("a3_material_job_attempts_total", status="failed")
@@ -288,7 +403,15 @@ def drain_material_processing_jobs(max_jobs: int = 4) -> int:
                 job["attempts"],
             )
         else:
-            _finish_job(job)
+            if not _finish_job(job):
+                logger.warning(
+                    "material_processing_completion_fenced material_id=%s "
+                    "job_id=%s worker_id=%s",
+                    job["material_id"],
+                    job["id"],
+                    worker_id,
+                )
+                continue
             inc_counter("a3_material_job_attempts_total", status="completed")
             observe("a3_material_job_duration_seconds", perf_counter() - started, status="completed")
             completed += 1

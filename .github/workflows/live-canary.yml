@@ -1,0 +1,42 @@
+name: Live AI canary
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * 1-5"
+
+jobs:
+  verify-live-integrations:
+    if: github.event_name == 'workflow_dispatch' || vars.LIVE_CANARY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_ENV: test
+      SECRET_KEY: live-canary-only-secret-key-with-at-least-32-characters
+      A3_MOCK_LLM: "false"
+      A3_MOCK_EMBEDDING: "false"
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_BASE_URL: ${{ vars.DEEPSEEK_BASE_URL || 'https://api.deepseek.com' }}
+      DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL }}
+      LLM_MAX_RETRIES: "0"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.28"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Run one minimal real call per integration
+        run: uv run python -m scripts.verify_live_integrations --output var/live-canary.json
+      - name: Upload redacted canary report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-canary-report
+          if-no-files-found: ignore
+          path: var/live-canary.json

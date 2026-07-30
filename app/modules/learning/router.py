@@ -1,4 +1,4 @@
-from fastapi import Depends, status
+from fastapi import Depends, Query, status
 
 from app.core.responses import V1APIRouter, success
 from app.modules.auth.dependencies import get_current_user
@@ -78,8 +78,11 @@ def today_learning(course_id: int, user=Depends(get_current_user)):
 
 
 @router.get("/study/today-overview")
-def today_overview(user=Depends(get_current_user)):
-    return success(data=get_today_overview(user["id"]))
+def today_overview(
+    available_minutes: int = Query(default=90, ge=10, le=480),
+    user=Depends(get_current_user),
+):
+    return success(data=get_today_overview(user["id"], available_minutes))
 
 
 @router.post("/study/sessions/{session_id}/start")

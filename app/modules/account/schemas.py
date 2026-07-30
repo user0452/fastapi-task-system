@@ -1,6 +1,6 @@
 from urllib.parse import urlsplit
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.core.request_models import TrimmedRequestModel
 from app.core.time_utils import validate_timezone_name
@@ -38,12 +38,11 @@ class UserMemorySettingsUpdate(TrimmedRequestModel):
     course_auto_memory_enabled: bool | None = None
     cross_course_profile_enabled: bool | None = None
 
-    @field_validator("cross_course_profile_enabled")
-    @classmethod
-    def require_course_memory_for_profile(cls, value: bool | None, info):
-        if value and info.data.get("course_auto_memory_enabled") is False:
+    @model_validator(mode="after")
+    def validate_consistent_settings(self):
+        if self.cross_course_profile_enabled and self.course_auto_memory_enabled is False:
             raise ValueError("启用跨课程画像时不能同时关闭自动课程记忆")
-        return value
+        return self
 
 
 class UserLlmConfigUpdate(TrimmedRequestModel):

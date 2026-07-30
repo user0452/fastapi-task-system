@@ -46,6 +46,29 @@ def test_production_explicitly_disabled_legacy_routes_stay_absent(monkeypatch):
     assert "/api/v1/courses" in paths
 
 
+def test_production_alias_uses_fail_closed_security_defaults(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.delenv("ENABLE_LEGACY_ROUTES", raising=False)
+    settings = Settings.from_env()
+
+    assert settings.environment == "production"
+    assert settings.enable_legacy_routes is False
+
+
+def test_unknown_environment_name_is_rejected(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "productionn")
+
+    with pytest.raises(RuntimeError, match="APP_ENV 无效"):
+        Settings.from_env()
+
+
+def test_security_boolean_typo_is_rejected(monkeypatch):
+    monkeypatch.setenv("AUTH_RATE_LIMIT_ENABLED", "tru")
+
+    with pytest.raises(RuntimeError, match="AUTH_RATE_LIMIT_ENABLED"):
+        Settings.from_env()
+
+
 def test_production_explicit_legacy_routes_fail_startup(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ENABLE_LEGACY_ROUTES", "true")

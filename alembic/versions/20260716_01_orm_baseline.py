@@ -16,7 +16,7 @@ depends_on = None
 def upgrade() -> None:
     # This makes ``alembic upgrade head`` sufficient for both an empty
     # database and an un-stamped historical installation.
-    run_migrations()
+    run_migrations(target_version="0017")
 
 
 def downgrade() -> None:

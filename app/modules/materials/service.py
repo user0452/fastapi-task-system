@@ -1,14 +1,15 @@
 import hashlib
 import json
+import logging
 from collections import Counter, defaultdict
 from contextlib import contextmanager
 from time import perf_counter
 from typing import Callable
 from uuid import uuid4
 
-from app.core.database import get_conn, get_cursor
+from app.core.database import get_cursor, get_dedicated_conn
 from app.core.errors import AppError
-from app.integrations.document_parser import extract_text_from_path
+from app.integrations.document_parser import parse_document_from_path, parse_text_document
 from app.integrations.embedding.chunking import (
     CHUNKER_VERSION,
     chunk_document,
@@ -45,6 +46,7 @@ from app.modules.courses.service import (
 from app.modules.materials import repository
 from app.modules.materials.schemas import TextMaterialCreate
 
+logger = logging.getLogger(__name__)
 RAG_EVIDENCE_MAX_TOKENS = 9_000
 RAG_SECTION_MAX_TOKENS = 6_000
 RAG_EVIDENCE_BLOCK_MAX_TOKENS = 1_800
@@ -57,23 +59,52 @@ class MaterialProcessingCancelled(RuntimeError):
     pass
 
 
+class MaterialProcessingLeaseLost(RuntimeError):
+    pass
+
+
 @contextmanager
 def _course_material_finalize_lock(user_id: int, course_id: int):
     lock_name = f"a3:material:{int(user_id)}:{int(course_id)}"
-    connection = get_conn()
+    connection = get_dedicated_conn(
+        connect_timeout=5,
+        read_timeout=35,
+        write_timeout=10,
+    )
     cursor = connection.cursor()
+    acquired = False
+
+    def verify_owned() -> None:
+        cursor.execute(
+            "SELECT IS_USED_LOCK(%s) = CONNECTION_ID() AS owned",
+            (lock_name,),
+        )
+        ownership = cursor.fetchone()
+        if ownership is None or int(ownership.get("owned") or 0) != 1:
+            raise RuntimeError("课程资料写入锁已丢失")
+
     try:
         cursor.execute("SELECT GET_LOCK(%s, 30) AS acquired", (lock_name,))
-        acquired = cursor.fetchone()
-        if acquired is None or int(acquired.get("acquired") or 0) != 1:
+        result = cursor.fetchone()
+        if result is None or int(result.get("acquired") or 0) != 1:
             raise RuntimeError("无法获取课程资料写入锁")
-        yield
+        acquired = True
+        yield verify_owned
     finally:
         try:
-            cursor.execute("SELECT RELEASE_LOCK(%s)", (lock_name,))
+            if acquired:
+                cursor.execute("SELECT RELEASE_LOCK(%s)", (lock_name,))
+        except Exception:
+            logger.warning(
+                "course_material_lock_release_failed user_id=%s course_id=%s",
+                user_id,
+                course_id,
+            )
         finally:
-            cursor.close()
-            connection.close()
+            try:
+                cursor.close()
+            finally:
+                connection.close()
 
 
 def get_course_material_chunk(user_id: int, course_id: int, chunk_id: int) -> dict:
@@ -508,6 +539,16 @@ def material_public_view(material: dict) -> dict:
     visible = dict(material)
     content = visible.pop("content", "") or ""
     visible.pop("storage_path", None)
+    raw_diagnostics = visible.pop("parse_warnings_json", None)
+    if isinstance(raw_diagnostics, str):
+        try:
+            visible["parse_diagnostics"] = json.loads(raw_diagnostics)
+        except json.JSONDecodeError:
+            visible["parse_diagnostics"] = {"warnings": [raw_diagnostics]}
+    elif raw_diagnostics:
+        visible["parse_diagnostics"] = raw_diagnostics
+    else:
+        visible["parse_diagnostics"] = None
     visible["content_preview"] = content[:300]
     return visible
 
@@ -524,7 +565,7 @@ def list_user_course_materials(user_id: int, course_id: int) -> list[dict]:
             {"count": len(items)},
             cursor=cursor,
         )
-        return items
+        return [material_public_view(item) for item in items]
 
 
 def list_course_knowledge_points(user_id: int, course_id: int) -> list[dict]:
@@ -656,15 +697,45 @@ def process_material(
                 processing_error=None,
             )
             source_path = resolve_upload_path(material["storage_path"])
-            content = extract_text_from_path(source_path, material.get("filename") or source_path.name)
+            parsed_document = parse_document_from_path(
+                source_path,
+                material.get("filename") or source_path.name,
+            )
+            rendered_document = parsed_document.render_for_index()
+            content = rendered_document.text
+            _processing_checkpoint(user_id, material_id, renew_lease)
             material = _update_material(
                 user_id,
                 material_id,
                 content=content,
                 file_hash=_hash_file(source_path),
                 parse_status="parsed",
+                parser_version=parsed_document.parser_version,
+                parse_warnings_json=json.dumps(
+                    parsed_document.diagnostics(),
+                    ensure_ascii=False,
+                ),
             )
             _processing_checkpoint(user_id, material_id, renew_lease)
+        else:
+            parsed_document = parse_text_document(
+                material.get("filename") or f"{material['title']}.md",
+                content,
+            )
+            rendered_document = parsed_document.render_for_index()
+            content = rendered_document.text
+            _processing_checkpoint(user_id, material_id, renew_lease)
+            material = _update_material(
+                user_id,
+                material_id,
+                content=content,
+                parse_status="parsed",
+                parser_version=parsed_document.parser_version,
+                parse_warnings_json=json.dumps(
+                    parsed_document.diagnostics(),
+                    ensure_ascii=False,
+                ),
+            )
 
         if not content.strip():
             raise ValueError("资料内容为空，无法构建索引")
@@ -687,7 +758,28 @@ def process_material(
         if not chunks:
             raise ValueError("资料没有可索引的文本片段")
 
-        for chunk in chunks:
+        block_map = parsed_document.block_map()
+        source_ids_by_chunk = parsed_document.source_block_ids_for_ranges(
+            [
+                (chunk.get("char_start"), chunk.get("char_end"))
+                for chunk in chunks
+            ],
+            rendered=rendered_document,
+        )
+        for chunk, source_block_ids in zip(chunks, source_ids_by_chunk):
+            chunk["source_block_ids"] = source_block_ids
+            source_blocks = [
+                block_map[block_id]
+                for block_id in chunk["source_block_ids"]
+                if block_id in block_map
+            ]
+            source_types = {block.block_type for block in source_blocks}
+            if source_types == {"table"}:
+                chunk["document_type"] = "table"
+            elif "table" in source_types:
+                chunk["document_type"] = "mixed"
+            elif any(block.ocr_used for block in source_blocks):
+                chunk["document_type"] = "ocr"
             chunk["content_hash"] = hashlib.sha256(chunk["chunk_text"].encode("utf-8")).hexdigest()
             chunk["embedding_text"] = retrieval_text(
                 chunk["chunk_text"],
@@ -749,7 +841,13 @@ def process_material(
                 reloaded_material["course_id"],
             )
             material = reloaded_material
+            repository.replace_material_blocks(
+                cursor,
+                material,
+                [block.as_record() for block in parsed_document.blocks],
+            )
             stored_chunks = repository.replace_chunks(cursor, material, prepared)
+            renew_lease()
         _processing_checkpoint(user_id, material_id, renew_lease)
 
         if knowledge_provider is extract_knowledge_structure:
@@ -838,7 +936,11 @@ def process_material(
                 points[index]["embedding_model"] = EMBEDDING_MODEL_NAME
         _processing_checkpoint(user_id, material_id, renew_lease)
 
-        with _course_material_finalize_lock(user_id, material["course_id"]):
+        with _course_material_finalize_lock(
+            user_id,
+            material["course_id"],
+        ) as verify_course_lock:
+            renew_lease()
             with get_cursor() as cursor:
                 current_material = repository.get_material_for_update(cursor, material_id, user_id)
                 if (
@@ -897,8 +999,12 @@ def process_material(
                     },
                     cursor=cursor,
                 )
+                verify_course_lock()
+                renew_lease()
 
+        renew_lease()
         vector_index_count = _rebuild_vector_index(user_id, material["course_id"])
+        renew_lease()
 
         return {
             "material": completed,
@@ -908,9 +1014,13 @@ def process_material(
             "reused_knowledge_point_embeddings": reused_point_count,
             "vector_index_count": vector_index_count,
         }
-    except MaterialProcessingCancelled:
+    except (MaterialProcessingCancelled, MaterialProcessingLeaseLost):
         raise
     except Exception as exc:
+        try:
+            renew_lease()
+        except MaterialProcessingLeaseLost as lease_error:
+            raise lease_error from exc
         with get_cursor() as cursor:
             current = repository.get_material(cursor, material_id, user_id)
             if current and current.get("processing_status") not in MATERIAL_DELETION_STATUSES:
@@ -1021,6 +1131,7 @@ def search_course_materials(user_id: int, course_id: int, query: str, top_k: int
             "document_type": item.get("document_type", "content"),
             "char_start": item.get("char_start"),
             "char_end": item.get("char_end"),
+            "source_block_ids": item.get("source_block_ids", []),
             "chunk_index": item["chunk_index"],
             "score": item["score"],
             "dense_score": item["dense_score"],

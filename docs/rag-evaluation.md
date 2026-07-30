@@ -11,6 +11,21 @@
   --output var\rag-evaluation\full.json
 ```
 
+质量门槛可直接让命令以非零状态退出，适合接入发布流水线：
+
+```powershell
+.venv\Scripts\python.exe -m scripts.evaluate_rag `
+  "C:\path\to\rag-test-pack.zip" `
+  --embedding mock --top-k 8 `
+  --min-mean-support-recall 0.80 `
+  --min-any-hit-rate 0.90 `
+  --min-all-support-rate 0.70 `
+  --min-mrr 0.75 --max-p95-ms 250 `
+  --output var\rag-evaluation\gated.json
+```
+
+报告中的 `quality_gates` 会记录阈值、结论和全部失败指标。无阈值时仍生成报告，但不阻断命令。
+
 去泄漏推理测：
 
 ```powershell

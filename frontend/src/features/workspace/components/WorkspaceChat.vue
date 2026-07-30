@@ -166,6 +166,14 @@ function usePrompt(prompt) {
   })
 }
 
+function turnGoalFor(messageIndex) {
+  for (let index = messageIndex - 1; index >= 0; index -= 1) {
+    const message = messages.value[index]
+    if (message?.role === 'user') return String(message.content || '').trim()
+  }
+  return ''
+}
+
 async function submitMessage() {
   await send()
   await nextTick()
@@ -371,7 +379,7 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
         </div>
         <div v-else class="message-list">
           <div
-            v-for="message in messages"
+            v-for="(message, messageIndex) in messages"
             :id="`chat-message-${message.id}`"
             :key="message.id"
             class="chat-message-anchor"
@@ -381,6 +389,7 @@ defineExpose({ send, focus: () => inputElement.value?.focus(), jumpToMessage })
           >
             <ChatMessage
               :message="message"
+              :turn-goal="turnGoalFor(messageIndex)"
               :course-id="courseId"
               :action-busy="actionBusy"
               @navigate="to => router.push(to)"

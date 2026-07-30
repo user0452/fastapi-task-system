@@ -32,6 +32,44 @@ def list_points_with_mastery(cursor, user_id: int, course_id: int) -> list[dict]
     return list(cursor.fetchall())
 
 
+def mastery_summaries_for_courses(
+    cursor,
+    user_id: int,
+    course_ids: list[int],
+) -> dict[int, dict]:
+    """Load compact mastery signals for several courses in one query."""
+    normalized_ids = sorted({int(course_id) for course_id in course_ids if int(course_id) > 0})
+    if not normalized_ids:
+        return {}
+    placeholders = ", ".join(["%s"] * len(normalized_ids))
+    cursor.execute(
+        f"""
+        SELECT kp.course_id,
+               COUNT(*) AS total_points,
+               SUM(CASE WHEN COALESCE(mr.mastery, 0) < 60 THEN 1 ELSE 0 END) AS weak_points,
+               AVG(COALESCE(mr.mastery, 0)) AS average_mastery
+        FROM knowledge_points kp
+        LEFT JOIN mastery_records mr
+          ON mr.knowledge_point_id = kp.id
+         AND mr.user_id = %s
+         AND mr.course_id = kp.course_id
+        WHERE kp.user_id = %s
+          AND kp.course_id IN ({placeholders})
+          AND kp.status = 'active'
+        GROUP BY kp.course_id
+        """,
+        (user_id, user_id, *normalized_ids),
+    )
+    return {
+        int(row["course_id"]): {
+            "total_points": int(row.get("total_points") or 0),
+            "weak_points": int(row.get("weak_points") or 0),
+            "average_mastery": round(float(row.get("average_mastery") or 0), 2),
+        }
+        for row in cursor.fetchall()
+    }
+
+
 def create_quiz_set(
     cursor,
     user_id: int,

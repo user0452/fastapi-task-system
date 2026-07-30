@@ -6,6 +6,7 @@ import globals from 'globals'
 export default [
   {
     ignores: [
+      '.vite/**',
       'dist/**',
       'coverage/**',
       'node_modules/**',

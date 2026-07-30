@@ -17,6 +17,18 @@ _PLACEHOLDER_VALUES = {
 PRODUCTION_LEGACY_ROUTES_ERROR = (
     "生产环境禁止启用旧版路由，请设置 ENABLE_LEGACY_ROUTES=false"
 )
+_ENVIRONMENT_ALIASES = {
+    "dev": "development",
+    "development": "development",
+    "test": "test",
+    "testing": "test",
+    "prod": "production",
+    "production": "production",
+    "stage": "production",
+    "staging": "production",
+}
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 def _env(name: str, default: str = "") -> str:
@@ -25,7 +37,20 @@ def _env(name: str, default: str = "") -> str:
 
 def _env_bool(name: str, default: bool = False) -> bool:
     value = _env(name, "true" if default else "false").lower()
-    return value in {"1", "true", "yes", "on"}
+    if value in _TRUE_VALUES:
+        return True
+    if value in _FALSE_VALUES:
+        return False
+    raise RuntimeError(f"{name} 必须是 true/false、1/0、yes/no 或 on/off")
+
+
+def _environment() -> str:
+    raw = _env("APP_ENV", "development").lower()
+    try:
+        return _ENVIRONMENT_ALIASES[raw]
+    except KeyError as exc:
+        allowed = ", ".join(sorted(_ENVIRONMENT_ALIASES))
+        raise RuntimeError(f"APP_ENV 无效：{raw!r}；允许值：{allowed}") from exc
 
 
 @dataclass(frozen=True)
@@ -69,10 +94,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        environment = _environment()
         return cls(
             app_name=_env("APP_NAME", "A3 专科学习 AI"),
             app_version=_env("APP_VERSION", "1.0.0"),
-            environment=_env("APP_ENV", "development").lower(),
+            environment=environment,
             database_host=_env("DATABASE_HOST", _env("DB_HOST", "127.0.0.1")),
             database_port=int(_env("DATABASE_PORT", _env("DB_PORT", "3306"))),
             database_user=_env("DATABASE_USER", _env("DB_USER", "root")),
@@ -106,7 +132,7 @@ class Settings:
             ),
             enable_legacy_routes=_env_bool(
                 "ENABLE_LEGACY_ROUTES",
-                default=_env("APP_ENV", "development").lower() != "production",
+                default=environment != "production",
             ),
             agent_tool_lease_seconds=float(_env("AGENT_TOOL_LEASE_SECONDS", "180")),
             agent_action_lease_seconds=float(_env("AGENT_ACTION_LEASE_SECONDS", "180")),

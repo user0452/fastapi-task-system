@@ -1,3 +1,7 @@
+import ast
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from app.core.database import get_conn
@@ -31,8 +35,45 @@ REQUIRED_TABLES = {
     "roadmap_stage_points",
     "roadmap_stage_sessions",
     "roadmap_adjustments",
+    "course_material_blocks",
     "schema_migrations",
 }
+
+ALEMBIC_INTERNAL_TARGETS = {
+    "20260716_01_orm_baseline.py": "0017",
+    "20260716_02_legacy_bridge.py": "0019",
+    "20260716_03_agent_crash_safety.py": "0020",
+    "20260717_04_agent_lease_renewal.py": "0021",
+    "20260718_05_learning_roadmaps.py": "0022",
+    "20260718_06_memory_transparency.py": "0023",
+    "20260719_07_two_tier_learning_memory.py": "0024",
+    "20260719_08_user_llm_configs.py": "0025",
+    "20260722_09_complex_document_blocks.py": "0026",
+}
+
+
+def _alembic_internal_target(path: Path) -> str:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_migrations"
+    ]
+    assert len(calls) == 1, f"{path.name} must call run_migrations exactly once"
+
+    call = calls[0]
+    assert not call.args, f"{path.name} must use an explicit target_version keyword"
+    keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+    assert set(keywords) == {"target_version"}, (
+        f"{path.name} must only pass a fixed target_version to run_migrations"
+    )
+    target = keywords["target_version"]
+    assert isinstance(target, ast.Constant) and isinstance(target.value, str), (
+        f"{path.name} target_version must be a string literal"
+    )
+    return target.value
 
 
 def test_migrations_are_idempotent():
@@ -66,7 +107,46 @@ def test_expected_migration_versions_are_registered():
         "0023",
         "0024",
         "0025",
+        "0026",
     ]
+
+
+def test_alembic_revisions_have_immutable_internal_targets():
+    version_dir = ROOT_DIR / "alembic" / "versions"
+    revision_paths = {
+        path.name: path for path in version_dir.glob("*.py") if path.name != "__init__.py"
+    }
+    assert set(revision_paths) == set(ALEMBIC_INTERNAL_TARGETS)
+
+    registered_versions = {migration.version for migration in MIGRATIONS}
+    for name, expected_target in ALEMBIC_INTERNAL_TARGETS.items():
+        actual_target = _alembic_internal_target(revision_paths[name])
+        assert actual_target == expected_target
+        assert actual_target in registered_versions
+
+
+def test_alembic_offline_mode_fails_without_connecting_or_exposing_credentials():
+    sentinel_password = "offline-password-must-not-appear"
+    environment = os.environ.copy()
+    environment["DATABASE_NAME"] = "a3_offline_database_must_not_exist"
+    environment["DB_NAME"] = environment["DATABASE_NAME"]
+    environment["DATABASE_PASSWORD"] = sentinel_password
+    environment["DB_PASSWORD"] = sentinel_password
+
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head", "--sql"],
+        cwd=ROOT_DIR,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0
+    assert "Offline SQL generation is disabled" in output
+    assert "OperationalError" not in output
+    assert sentinel_password not in output
 
 
 def test_required_foundation_tables_exist():

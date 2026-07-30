@@ -46,6 +46,19 @@
 - 自动删除数据库或清理 E2E 数据前，数据库名必须包含独立的 `test`/`pytest` 标识；`task_db2` 等开发库名会被安全保护拒绝。
 - Playwright 使用其下载的 Chromium，不依赖本机 Chrome。可用 `A3_PYTHON` 指向当前 Python；未设置时使用 `uv run python`。
 
+### 生产升级、备份与恢复边界
+
+- 升级前停止或排空写流量，并创建目标 MySQL 数据库的一致性备份。备份必须包含业务表、`alembic_version` 和 `schema_migrations`；同时保留对应版本的上传原文件和 `SECRET_KEY`。`var/rag_indexes` 可由数据库中的 chunk embedding 重建，不是数据库回滚点。
+- 当前 revision 只支持向前升级，`alembic downgrade` 会有意失败。Alembic 不会自动备份业务数据，也不会把失败前已由 MySQL 提交的 DDL/DML 恢复到旧版本。
+- 需要回退时，停止应用写入，将升级前备份恢复到隔离数据库并完成校验，再切换数据库；同时部署与备份 schema 匹配的应用版本、上传文件和 `SECRET_KEY`。不要用 `alembic stamp` 冒充恢复或跳过实际 schema 变更。
+- 恢复后先核对两张迁移状态表和关键业务数据，再运行 `uv run alembic upgrade head`、检查 `/health/ready`，最后恢复流量。
+
+### 新迁移约束
+
+- `app.core.migrations.MIGRATIONS` 中新增内部版本时，必须新增对应的 Alembic revision，并在 revision 中以字符串字面量调用 `run_migrations(target_version="xxxx")`。
+- 已发布 revision 的 `target_version` 不得修改。每个 revision 的固定边界保证旧 revision 在未来代码中重放时不会越级执行新迁移。
+- 迁移专项测试会校验 revision 与内部版本的映射，并在空库中逐 revision 升级；新增 revision 时必须同步更新该映射测试。
+
 ## 资料任务
 
 - 单文件最大 100MB。

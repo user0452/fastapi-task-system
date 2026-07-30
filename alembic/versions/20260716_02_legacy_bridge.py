@@ -14,7 +14,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    run_migrations()
+    run_migrations(target_version="0019")
 
 
 def downgrade() -> None:

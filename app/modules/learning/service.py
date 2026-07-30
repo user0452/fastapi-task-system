@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from app.core.database import get_cursor
 from app.core.errors import AppError
-from app.core.time_utils import utc_naive_to_local
+from app.core.time_utils import local_date, utc_naive_to_local
 from app.integrations.llm.diagnostic_generator import generate_diagnostic_questions
 from app.integrations.llm.evaluation import evaluate_quiz_answers
 from app.integrations.llm.practice_generator import generate_practice_questions
@@ -15,6 +15,10 @@ from app.modules.audit.service import record_audit
 from app.modules.courses import repository as course_repository
 from app.modules.courses.service import get_user_course
 from app.modules.learning import repository
+from app.modules.learning.today_planner import (
+    DEFAULT_AVAILABLE_MINUTES,
+    plan_today_rows,
+)
 from app.modules.roadmaps import service as roadmap_service
 
 
@@ -793,12 +797,26 @@ def get_today_learning(user_id: int, course_id: int) -> dict | None:
         return hydrated
 
 
-def get_today_overview(user_id: int) -> dict:
-    """Aggregate today sessions for all active courses in one request."""
-    today = get_user_local_date(user_id)
+def get_today_overview(
+    user_id: int,
+    available_minutes: int = DEFAULT_AVAILABLE_MINUTES,
+) -> dict:
+    """Aggregate and prioritise today's sessions for all active courses."""
+    timezone_name = get_user_timezone(user_id)
+    today = local_date(timezone_name)
     with get_cursor() as cursor:
         courses = course_repository.list_courses(cursor, user_id, include_archived=False)
         roadmap_service.attach_summaries(cursor, user_id, courses)
+        mastery_by_course = repository.mastery_summaries_for_courses(
+            cursor,
+            user_id,
+            [int(course["id"]) for course in courses],
+        )
+        for course in courses:
+            course["learning_priority"] = mastery_by_course.get(
+                int(course["id"]),
+                {"total_points": 0, "weak_points": 0, "average_mastery": 0.0},
+            )
         sessions_by_course = repository.list_today_sessions_for_user(cursor, user_id, today)
         # Batch-load question payloads for every today session item.
         question_ids: list[int] = []
@@ -809,7 +827,7 @@ def get_today_overview(user_id: int) -> dict:
                     question_ids.append(int(question_id))
         questions = repository.get_questions_by_ids(cursor, question_ids, user_id)
         question_map = {item["id"]: item for item in questions}
-        rows = []
+        rows: list[dict] = []
         total_minutes = 0
         total_items = 0
         completed = 0
@@ -835,19 +853,32 @@ def get_today_overview(user_id: int) -> dict:
                 if course_session.get("status") in {"completed", "evaluated"}:
                     completed += 1
             rows.append({"course": course, "session": course_session})
+        planned = plan_today_rows(
+            rows,
+            today=today,
+            available_minutes=available_minutes,
+            timezone_name=timezone_name,
+        )
         record_audit(
             user_id,
             "COURSE_TODAY_OVERVIEW_VIEWED",
             "course",
-            detail={"count": len(rows), "completed": completed},
+            detail={
+                "count": len(rows),
+                "completed": completed,
+                "available_minutes": planned["budget"]["available_minutes"],
+                "recommended_minutes": planned["budget"]["recommended_minutes"],
+            },
             cursor=cursor,
         )
     return {
         "date": today.isoformat(),
-        "items": rows,
+        "items": planned["items"],
+        "budget": planned["budget"],
         "summary": {
             "course_count": len(rows),
             "total_minutes": total_minutes,
+            "recommended_minutes": planned["budget"]["recommended_minutes"],
             "total_items": total_items,
             "completed": completed,
             "with_session": sum(1 for row in rows if row["session"]),

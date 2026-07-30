@@ -41,8 +41,8 @@ function mountChat(courseId = 1) {
     global: {
       stubs: {
         ChatMessage: {
-          props: ['message'],
-          template: '<div class="message-content">{{ message.content }}</div>'
+          props: ['message', 'turnGoal'],
+          template: '<div class="message-content"><span v-if="message.role === \'assistant\'" class="turn-goal">{{ turnGoal }}</span>{{ message.content }}</div>'
         }
       }
     }
@@ -125,6 +125,7 @@ describe('WorkspaceChat stream isolation', () => {
     expect(wrapper.get('#chat-message-31').attributes('data-message-role')).toBe('user')
     expect(wrapper.get('#chat-message-33').attributes('data-message-id')).toBe('33')
     expect(outlineItems[0].attributes('aria-label')).toContain('解释边界值分析')
+    expect(wrapper.get('.turn-goal').text()).toBe('解释边界值分析')
 
     await outlineItems[0].trigger('click')
     expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }))

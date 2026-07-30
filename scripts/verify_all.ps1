@@ -1,6 +1,7 @@
 param(
     [switch]$SkipE2E,
-    [switch]$SkipCoverage
+    [switch]$SkipCoverage,
+    [switch]$SkipPackage
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,9 +95,18 @@ Push-Location $root
 try {
     Invoke-Checked "Database migrations" { Invoke-Python @("-m", "alembic", "upgrade", "head") }
     Invoke-Checked "Python compile check" {
-        Invoke-Python @("-m", "compileall", "-q", "app", "agents", "routers", "services", "main.py", "models.py")
+        Invoke-Python @(
+            "-m", "compileall", "-q",
+            "app", "agents", "routers", "services", "scripts", "alembic",
+            "packaging", "main.py", "models.py"
+        )
     }
-    Invoke-Checked "Backend lint" { Invoke-Python @("-m", "ruff", "check", "app", "tests") }
+    Invoke-Checked "Backend lint" {
+        Invoke-Python @(
+            "-m", "ruff", "check",
+            "app", "tests", "scripts", "alembic", "packaging/competition_launcher.py"
+        )
+    }
     Invoke-Checked "Backend type check" { Invoke-Python @("-m", "mypy", "app") }
 
     Invoke-BackendTestBatches -WithCoverage (-not $SkipCoverage)
@@ -106,6 +116,40 @@ try {
         Invoke-Checked "Frontend lint" { npm run lint }
         Invoke-Checked "Frontend component tests" { npm run test:run }
         Invoke-Checked "Frontend production build" { npm run build }
+        Invoke-Checked "Packaged runtime manifest" {
+            Invoke-Python @(
+                (Join-Path $root "packaging/competition_launcher.py"),
+                "--check"
+            )
+        }
+        if (-not $SkipPackage) {
+            Push-Location $root
+            try {
+                Invoke-Checked "Windows frozen application build" {
+                    $specification = Get-ChildItem (Join-Path $root "packaging") -Filter "*.spec" |
+                        Select-Object -First 1
+                    if (-not $specification) {
+                        throw "PyInstaller specification was not found."
+                    }
+                    Invoke-Python @(
+                        "-m", "PyInstaller", "--clean", "--noconfirm",
+                        $specification.FullName
+                    )
+                }
+                Invoke-Checked "Windows frozen application self-check" {
+                    $executable = Get-ChildItem (Join-Path $root "dist") -Recurse -Filter "*.exe" |
+                        Where-Object { $_.Name -like "A3*" } |
+                        Select-Object -First 1
+                    if (-not $executable) {
+                        throw "Frozen application executable was not produced."
+                    }
+                    & $executable.FullName --check
+                }
+            }
+            finally {
+                Pop-Location
+            }
+        }
         if (-not $SkipE2E) {
             $previousPython = $env:A3_PYTHON
             if (-not $uv) {

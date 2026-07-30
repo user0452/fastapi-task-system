@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowRight,
@@ -19,11 +19,17 @@ const loading = ref(true)
 const rows = ref([])
 const overviewError = ref('')
 const summary = ref({ course_count: 0, total_minutes: 0, total_items: 0, completed: 0, with_session: 0 })
+const budgetOptions = [30, 60, 90, 120]
+const selectedBudget = ref(90)
+const budget = ref(null)
+let loadRequestId = 0
 
 const now = new Date()
 const todayLabel = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(now)
 const greeting = now.getHours() < 6 ? '夜深了' : now.getHours() < 12 ? '早上好' : now.getHours() < 18 ? '下午好' : '晚上好'
-const totalMinutes = computed(() => Number(summary.value.total_minutes || 0))
+const totalMinutes = computed(() => Number(
+  summary.value.recommended_minutes ?? summary.value.total_minutes ?? 0
+))
 const totalItems = computed(() => Number(summary.value.total_items || 0))
 const completed = computed(() => Number(summary.value.completed || 0))
 const loadError = computed(() => overviewError.value || courses.error)
@@ -41,16 +47,34 @@ const primaryProgress = computed(() => Math.round(
   ?? 0
 ))
 
+function recommendedMinutes(row) {
+  return Number(
+    row?.recommendation?.recommended_minutes
+    ?? row?.session?.estimated_minutes
+    ?? row?.course?.daily_minutes
+    ?? 0
+  )
+}
+
+function recommendationReasons(row) {
+  return Array.isArray(row?.recommendation?.reasons) ? row.recommendation.reasons : []
+}
+
 async function load() {
+  const requestId = ++loadRequestId
+  const requestedBudget = selectedBudget.value
   loading.value = true
   rows.value = []
+  budget.value = null
   overviewError.value = ''
   try {
     await courses.ensureLoaded()
-    if (courses.error) return
-    const response = await getTodayOverview()
+    if (requestId !== loadRequestId || courses.error) return
+    const response = await getTodayOverview(requestedBudget)
+    if (requestId !== loadRequestId) return
     if (response.code === 200) {
       rows.value = response.data?.items || []
+      budget.value = response.data?.budget || null
       summary.value = response.data?.summary || {
         course_count: rows.value.length,
         total_minutes: 0,
@@ -59,11 +83,23 @@ async function load() {
         with_session: 0
       }
     } else {
+      budget.value = null
       overviewError.value = response.message || '今日总览加载失败'
     }
+  } catch {
+    if (requestId === loadRequestId) {
+      budget.value = null
+      overviewError.value = '今日总览加载失败，请稍后重试'
+    }
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId) loading.value = false
   }
+}
+
+async function chooseBudget(minutes) {
+  if (loading.value || selectedBudget.value === minutes) return
+  selectedBudget.value = minutes
+  await load()
 }
 
 function openCourse(row, prompt = '', panel = '') {
@@ -74,16 +110,51 @@ function openCourse(row, prompt = '', panel = '') {
 }
 
 onMounted(load)
+onBeforeUnmount(() => {
+  loadRequestId += 1
+})
 </script>
 
 <template>
   <div class="global-today">
     <header class="today-topline">
       <div><CalendarCheck2 :size="17" /><span>{{ todayLabel }}</span></div>
-      <button type="button" title="刷新今日总览" aria-label="刷新今日总览" @click="load"><RotateCw :size="17" /> 刷新</button>
+      <button
+        type="button"
+        title="刷新今日总览"
+        aria-label="刷新今日总览"
+        :disabled="loading"
+        @click="load"
+      ><RotateCw :size="17" /> 刷新</button>
     </header>
 
-    <div v-if="loading" class="today-state">正在汇总所有课程</div>
+    <section class="budget-control" aria-labelledby="budget-title">
+      <div class="budget-copy">
+        <h2 id="budget-title">今天有多少学习时间？</h2>
+        <p>系统会按课程优先级给出建议投入时长，不会删减或改写原课程计划。</p>
+      </div>
+      <div class="budget-options" role="group" aria-label="选择今日可用学习时间">
+        <button
+          v-for="minutes in budgetOptions"
+          :key="minutes"
+          type="button"
+          :data-minutes="minutes"
+          :aria-pressed="selectedBudget === minutes"
+          :class="{ active: selectedBudget === minutes }"
+          :disabled="loading"
+          @click="chooseBudget(minutes)"
+        >{{ minutes }} 分钟</button>
+      </div>
+      <div v-if="budget" class="budget-result" role="status" aria-live="polite">
+        <span>今日推荐</span>
+        <strong>{{ budget.recommended_minutes }} / {{ budget.available_minutes }} 分钟</strong>
+        <small v-if="budget.limited">总需求 {{ budget.requested_minutes }} 分钟；建议本次投入 {{ budget.recommended_minutes }} 分钟</small>
+        <small v-else-if="budget.unallocated_minutes">仍有 {{ budget.unallocated_minutes }} 分钟可分配</small>
+        <small v-else>学习预算已完整分配</small>
+      </div>
+    </section>
+
+    <div v-if="loading" class="today-state" role="status" aria-live="polite">正在计算 {{ selectedBudget }} 分钟预算下的建议</div>
     <div v-else-if="loadError" class="today-empty today-error">
       <CalendarCheck2 :size="34" />
       <h2>课程暂时未加载</h2>
@@ -121,7 +192,7 @@ onMounted(load)
       <section class="continue-section">
         <header class="section-heading">
           <div><span>下一步</span><h2>继续学习</h2></div>
-          <span>{{ primaryRow.session?.estimated_minutes || primaryRow.course.daily_minutes }} 分钟</span>
+          <span>推荐 {{ recommendedMinutes(primaryRow) }} 分钟</span>
         </header>
         <article class="continue-card">
           <span class="continue-glyph">{{ primaryRow.course.name.slice(0, 1) }}</span>
@@ -131,8 +202,9 @@ onMounted(load)
             <p>{{ primaryTask }}</p>
           </div>
           <div class="continue-meta">
-            <strong>{{ primaryProgress }}%</strong>
-            <span>长期路线总进度</span>
+            <strong>{{ recommendedMinutes(primaryRow) }}</strong>
+            <span>推荐分钟</span>
+            <small v-if="primaryRow.recommendation?.budget_limited">原课程计划 {{ primaryRow.recommendation.requested_minutes }} 分钟</small>
           </div>
           <button type="button" title="进入课程" aria-label="进入课程" @click="openCourse(primaryRow)"><ArrowRight :size="20" /></button>
         </article>
@@ -146,14 +218,19 @@ onMounted(load)
         <div class="course-day-list">
           <article v-for="row in rows" :key="row.course.id" :class="row.session?.status || 'empty'">
             <span class="timeline-dot"></span>
-            <div class="day-time">
-              <strong>{{ row.session?.estimated_minutes || row.course.daily_minutes }}</strong>
-              <span>分钟</span>
+            <div class="day-time" :aria-label="`${row.course.name} 推荐 ${recommendedMinutes(row)} 分钟`">
+              <strong>{{ recommendedMinutes(row) }}</strong>
+              <span>推荐分钟</span>
             </div>
             <div class="day-course-copy">
-              <span>{{ row.course.name }}</span>
+              <span v-if="row.recommendation">推荐顺序 {{ row.recommendation.rank }}，{{ row.course.name }}</span>
+              <span v-else>{{ row.course.name }}</span>
               <strong>{{ row.session?.items?.[0]?.title || '暂无今日单元' }}</strong>
               <p>{{ row.session ? `${row.session.items?.length || 0} 项学习内容` : (row.course.goal || '进入课程继续学习') }}</p>
+              <ul v-if="recommendationReasons(row).length" class="recommendation-reasons" :aria-label="`${row.course.name} 推荐理由`">
+                <li v-for="reason in recommendationReasons(row)" :key="reason">{{ reason }}</li>
+              </ul>
+              <small v-if="row.recommendation?.budget_limited" class="budget-limited">原课程计划 {{ row.recommendation.requested_minutes }} 分钟；建议本次投入 {{ row.recommendation.recommended_minutes }} 分钟</small>
             </div>
             <CheckCircle2 v-if="['completed', 'evaluated'].includes(row.session?.status)" class="done-icon" :size="21" />
             <div v-else class="day-actions">
@@ -206,6 +283,47 @@ onMounted(load)
   border-radius: var(--radius-small);
 }
 .today-topline button:hover { color: var(--accent); background: var(--accent-soft); }
+.today-topline button:disabled { cursor: wait; opacity: .58; }
+.budget-control {
+  display: grid;
+  grid-template-columns: minmax(230px, 1fr) auto minmax(190px, auto);
+  align-items: center;
+  gap: 18px 28px;
+  margin-bottom: 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-large);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-small), var(--shadow-hairline);
+}
+.budget-copy h2 { font-size: 16px; font-weight: var(--weight-semibold); }
+.budget-copy p {
+  max-width: 520px;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.budget-options { display: grid; grid-template-columns: repeat(4, minmax(72px, 1fr)); gap: 6px; }
+.budget-options button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-small);
+  color: var(--text-secondary);
+  background: var(--surface-primary);
+  font-size: 13px;
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.budget-options button:hover:not(:disabled),
+.budget-options button:focus-visible { color: var(--text-accent); border-color: var(--border-accent); background: var(--accent-softer); }
+.budget-options button.active { color: var(--text-inverse); border-color: var(--accent-deep); background: var(--accent-deep); }
+.budget-options button:disabled { cursor: wait; opacity: .65; }
+.budget-result { min-width: 0; display: grid; justify-items: end; gap: 2px; text-align: right; }
+.budget-result > span,
+.budget-result small { color: var(--text-secondary); font-size: 12px; }
+.budget-result strong { color: var(--text-primary); font-size: 17px; font-weight: var(--weight-semibold); }
 .today-state,
 .today-empty {
   min-height: 560px;
@@ -388,6 +506,7 @@ onMounted(load)
 .continue-meta { display: grid; justify-items: end; }
 .continue-meta strong { font-size: 26px; font-weight: var(--weight-semibold); }
 .continue-meta span { color: var(--text-tertiary); font-size: 12px; }
+.continue-meta small { margin-top: 3px; color: var(--text-secondary); font-size: 11px; }
 .continue-card > button {
   width: 46px;
   height: 46px;
@@ -434,13 +553,25 @@ onMounted(load)
 .day-course-copy { min-width: 0; display: grid; gap: 3px; }
 .day-course-copy > span { color: var(--accent); font-size: 12px; font-weight: 600; }
 .day-course-copy strong,
-.day-course-copy p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.day-course-copy > p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .day-course-copy strong {
   color: var(--text-primary);
   font-size: 15px;
   font-weight: 600;
 }
-.day-course-copy p { color: var(--text-secondary); font-size: 13px; }
+.day-course-copy > p { color: var(--text-secondary); font-size: 13px; }
+.recommendation-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  margin: 3px 0 0;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  list-style-position: inside;
+}
+.budget-limited { display: block; margin-top: 3px; color: var(--warning); font-size: 11px; }
 .day-actions { display: flex; gap: 6px; }
 .day-actions button {
   width: 42px;
@@ -482,13 +613,18 @@ onMounted(load)
   font-size: 12px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1200px) {
+  .budget-control { grid-template-columns: minmax(0, 1fr) auto; }
+  .budget-result { grid-column: 1 / -1; justify-items: start; text-align: left; }
   .today-hero { min-height: auto; grid-template-columns: 1fr; align-items: start; }
   .hero-progress { width: min(360px, 100%); }
 }
 
 @media (max-width: 700px) {
   .global-today { min-height: calc(100dvh - 52px); padding: 18px 14px 54px; }
+  .budget-control { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 16px; }
+  .budget-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .budget-result { grid-column: auto; }
   .today-hero { gap: 28px; padding: 30px 22px; border-radius: 26px; }
   .hero-copy h1 { font-size: 38px; }
   .hero-actions { display: grid; }
@@ -500,6 +636,7 @@ onMounted(load)
   .continue-meta { grid-column: 2; justify-items: start; }
   .continue-card > button { grid-column: 3; grid-row: 1 / span 2; }
   .course-day-list article { grid-template-columns: 16px 52px minmax(0, 1fr) auto; gap: 10px; }
+  .recommendation-reasons { display: grid; gap: 2px; }
   .day-actions { grid-column: 3 / -1; justify-self: start; }
   .status-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .status-metrics > div:nth-child(2) { border-right: 0; }

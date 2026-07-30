@@ -5,13 +5,15 @@ MATERIAL_COLUMNS = """
     id, user_id, course_id, course_name, title, content, filename,
     file_hash, parse_status, index_status, processing_status,
     processing_error, storage_path, mime_type, file_size, chunker_version,
+    parser_version, parse_warnings_json,
     created_at, updated_at
 """
 
 MATERIAL_SUMMARY_COLUMNS = """
     id, user_id, course_id, course_name, title, filename,
     file_hash, parse_status, index_status, processing_status,
-    processing_error, mime_type, file_size, chunker_version, created_at, updated_at
+    processing_error, mime_type, file_size, chunker_version,
+    parser_version, parse_warnings_json, created_at, updated_at
 """
 
 
@@ -149,6 +151,10 @@ def delete_material(cursor, material_id: int, user_id: int) -> dict | None:
         "DELETE FROM course_material_chunks WHERE material_id = %s AND user_id = %s",
         (material_id, user_id),
     )
+    cursor.execute(
+        "DELETE FROM course_material_blocks WHERE material_id = %s AND user_id = %s",
+        (material_id, user_id),
+    )
 
     orphaned_point_ids: list[int] = []
     for point_id in sorted(affected_point_ids):
@@ -201,6 +207,8 @@ def update_material(cursor, material_id: int, user_id: int, **changes) -> dict |
         "filename",
         "mime_type",
         "file_size",
+        "parser_version",
+        "parse_warnings_json",
     }
     updates = []
     values: list[Any] = []
@@ -215,6 +223,67 @@ def update_material(cursor, material_id: int, user_id: int, **changes) -> dict |
             values,
         )
     return get_material(cursor, material_id, user_id)
+
+
+def replace_material_blocks(cursor, material: dict, blocks: list[dict]) -> None:
+    """Atomically replace the canonical parse model for one material."""
+    cursor.execute(
+        "DELETE FROM course_material_blocks WHERE material_id = %s AND user_id = %s",
+        (material["id"], material["user_id"]),
+    )
+    if not blocks:
+        return
+    cursor.executemany(
+        """
+        INSERT INTO course_material_blocks
+            (user_id, material_id, block_id, block_index, block_type,
+             page_number, bbox_json, reading_order, heading_level, block_text,
+             table_json, ocr_used, ocr_confidence, should_index, noise_reason,
+             metadata_json)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        [
+            (
+                material["user_id"],
+                material["id"],
+                block["block_id"],
+                block["block_index"],
+                block["block_type"],
+                block.get("page_number"),
+                json.dumps(block.get("bbox"), ensure_ascii=False),
+                block.get("reading_order", 0),
+                block.get("heading_level"),
+                block.get("text") or None,
+                json.dumps(block.get("table_cells"), ensure_ascii=False),
+                bool(block.get("ocr_used")),
+                block.get("ocr_confidence"),
+                bool(block.get("should_index", True)),
+                block.get("noise_reason"),
+                json.dumps(block.get("metadata") or {}, ensure_ascii=False),
+            )
+            for block in blocks
+        ],
+    )
+
+
+def get_material_blocks(cursor, material_id: int, user_id: int) -> list[dict]:
+    cursor.execute(
+        """
+        SELECT block_id, block_index, block_type, page_number, bbox_json,
+               reading_order, heading_level, block_text, table_json, ocr_used,
+               ocr_confidence, should_index, noise_reason, metadata_json
+        FROM course_material_blocks
+        WHERE material_id = %s AND user_id = %s
+        ORDER BY block_index, reading_order, id
+        """,
+        (material_id, user_id),
+    )
+    rows = list(cursor.fetchall())
+    for row in rows:
+        row["bbox"] = json.loads(row.pop("bbox_json") or "null")
+        row["table_cells"] = json.loads(row.pop("table_json") or "null")
+        row["metadata"] = json.loads(row.pop("metadata_json") or "{}")
+    return rows
 
 
 def replace_chunks(cursor, material: dict, chunks: list[dict]) -> list[dict]:
@@ -243,7 +312,8 @@ def replace_chunks(cursor, material: dict, chunks: list[dict]) -> list[dict]:
                 UPDATE course_material_chunks
                 SET course_name = %s, chunk_index = %s, chunk_text = %s,
                     page_number = %s, heading_path = %s, kb_ids_json = %s,
-                    document_type = %s, char_start = %s, char_end = %s,
+                    document_type = %s, source_block_ids_json = %s,
+                    char_start = %s, char_end = %s,
                     chunker_version = %s, estimated_tokens = %s,
                     embedding_json = %s, embedding_model = %s,
                     embedding_hash = %s, content_hash = %s, indexed_at = CURRENT_TIMESTAMP
@@ -257,6 +327,7 @@ def replace_chunks(cursor, material: dict, chunks: list[dict]) -> list[dict]:
                     chunk.get("heading_path"),
                     json.dumps(chunk.get("kb_ids", []), ensure_ascii=False),
                     chunk.get("document_type", "content"),
+                    json.dumps(chunk.get("source_block_ids", []), ensure_ascii=False),
                     chunk.get("char_start"),
                     chunk.get("char_end"),
                     chunk.get("chunker_version"),
@@ -276,10 +347,11 @@ def replace_chunks(cursor, material: dict, chunks: list[dict]) -> list[dict]:
                 INSERT INTO course_material_chunks
                     (user_id, material_id, course_name, chunk_index, chunk_text,
                      page_number, heading_path, kb_ids_json, document_type,
-                     char_start, char_end, chunker_version, estimated_tokens,
+                     source_block_ids_json, char_start, char_end,
+                     chunker_version, estimated_tokens,
                      embedding_json, embedding_model, embedding_hash, content_hash, indexed_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                        %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 """,
                 (
                     material["user_id"],
@@ -291,6 +363,7 @@ def replace_chunks(cursor, material: dict, chunks: list[dict]) -> list[dict]:
                     chunk.get("heading_path"),
                     json.dumps(chunk.get("kb_ids", []), ensure_ascii=False),
                     chunk.get("document_type", "content"),
+                    json.dumps(chunk.get("source_block_ids", []), ensure_ascii=False),
                     chunk.get("char_start"),
                     chunk.get("char_end"),
                     chunk.get("chunker_version"),
@@ -578,7 +651,8 @@ def get_course_chunks_by_ids(
         f"""
         SELECT chunks.id, chunks.material_id, chunks.chunk_index, chunks.chunk_text,
                chunks.page_number, chunks.heading_path, chunks.kb_ids_json,
-               chunks.document_type, chunks.char_start, chunks.char_end,
+               chunks.document_type, chunks.source_block_ids_json,
+               chunks.char_start, chunks.char_end,
                chunks.chunker_version, chunks.estimated_tokens,
                chunks.embedding_json, chunks.embedding_model, chunks.embedding_hash,
                chunks.content_hash, chunks.indexed_at,
@@ -595,6 +669,7 @@ def get_course_chunks_by_ids(
     by_id = {}
     for row in cursor.fetchall():
         row["kb_ids"] = json.loads(row.pop("kb_ids_json") or "[]")
+        row["source_block_ids"] = json.loads(row.pop("source_block_ids_json") or "[]")
         by_id[int(row["id"])] = row
     return [by_id[value] for value in ids if value in by_id]
 
@@ -619,7 +694,8 @@ def get_course_neighbor_chunks(
         f"""
         SELECT chunks.id, chunks.material_id, chunks.chunk_index, chunks.chunk_text,
                chunks.page_number, chunks.heading_path, chunks.kb_ids_json,
-               chunks.document_type, chunks.char_start, chunks.char_end,
+               chunks.document_type, chunks.source_block_ids_json,
+               chunks.char_start, chunks.char_end,
                chunks.chunker_version, chunks.estimated_tokens,
                chunks.embedding_json, chunks.embedding_model, chunks.embedding_hash,
                chunks.content_hash, chunks.indexed_at,
@@ -637,6 +713,7 @@ def get_course_neighbor_chunks(
     rows = list(cursor.fetchall())
     for row in rows:
         row["kb_ids"] = json.loads(row.pop("kb_ids_json") or "[]")
+        row["source_block_ids"] = json.loads(row.pop("source_block_ids_json") or "[]")
     return rows
 
 
@@ -687,7 +764,8 @@ def get_course_section_chunks(
             f"""
             SELECT chunks.id, chunks.material_id, chunks.chunk_index, chunks.chunk_text,
                    chunks.page_number, chunks.heading_path, chunks.kb_ids_json,
-                   chunks.document_type, chunks.char_start, chunks.char_end,
+                   chunks.document_type, chunks.source_block_ids_json,
+                   chunks.char_start, chunks.char_end,
                    chunks.chunker_version, chunks.estimated_tokens,
                    materials.title AS material_title, materials.filename
             FROM course_material_chunks chunks
@@ -706,6 +784,9 @@ def get_course_section_chunks(
         if rows:
             for row in rows:
                 row["kb_ids"] = json.loads(row.pop("kb_ids_json") or "[]")
+                row["source_block_ids"] = json.loads(
+                    row.pop("source_block_ids_json") or "[]"
+                )
             return rows
     return []
 
@@ -874,7 +955,8 @@ def get_material_chunks(cursor, material_id: int, user_id: int) -> list[dict]:
     cursor.execute(
         """
         SELECT id, chunk_index, chunk_text, page_number, heading_path, kb_ids_json,
-               document_type, char_start, char_end, chunker_version, estimated_tokens,
+               document_type, source_block_ids_json, char_start, char_end,
+               chunker_version, estimated_tokens,
                embedding_json, embedding_model, embedding_hash, content_hash, indexed_at
         FROM course_material_chunks
         WHERE material_id = %s AND user_id = %s
@@ -885,13 +967,15 @@ def get_material_chunks(cursor, material_id: int, user_id: int) -> list[dict]:
     chunks = list(cursor.fetchall())
     for chunk in chunks:
         chunk["kb_ids"] = json.loads(chunk.pop("kb_ids_json") or "[]")
+        chunk["source_block_ids"] = json.loads(chunk.pop("source_block_ids_json") or "[]")
     return chunks
 
 def get_course_chunk(cursor, course_id: int, chunk_id: int, user_id: int) -> dict | None:
     cursor.execute(
         """
         SELECT chunks.id, chunks.material_id, chunks.chunk_index, chunks.chunk_text,
-               chunks.page_number, chunks.heading_path, chunks.char_start, chunks.char_end,
+               chunks.page_number, chunks.heading_path, chunks.source_block_ids_json,
+               chunks.char_start, chunks.char_end,
                materials.title AS material_title, materials.filename
         FROM course_material_chunks chunks
         JOIN course_materials materials ON materials.id = chunks.material_id
@@ -899,7 +983,10 @@ def get_course_chunk(cursor, course_id: int, chunk_id: int, user_id: int) -> dic
         """,
         (chunk_id, user_id, course_id),
     )
-    return cursor.fetchone()
+    row = cursor.fetchone()
+    if row is not None:
+        row["source_block_ids"] = json.loads(row.pop("source_block_ids_json") or "[]")
+    return row
 
 
 def get_course_chunks(cursor, course_id: int, user_id: int) -> list[dict]:
@@ -907,7 +994,8 @@ def get_course_chunks(cursor, course_id: int, user_id: int) -> list[dict]:
         """
         SELECT chunks.id, chunks.material_id, chunks.chunk_index, chunks.chunk_text,
                chunks.page_number, chunks.heading_path, chunks.kb_ids_json,
-               chunks.document_type, chunks.char_start, chunks.char_end,
+               chunks.document_type, chunks.source_block_ids_json,
+               chunks.char_start, chunks.char_end,
                chunks.chunker_version, chunks.estimated_tokens,
                chunks.embedding_json, chunks.embedding_model, chunks.embedding_hash,
                chunks.content_hash, chunks.indexed_at,
@@ -927,4 +1015,5 @@ def get_course_chunks(cursor, course_id: int, user_id: int) -> list[dict]:
     chunks = list(cursor.fetchall())
     for chunk in chunks:
         chunk["kb_ids"] = json.loads(chunk.pop("kb_ids_json") or "[]")
+        chunk["source_block_ids"] = json.loads(chunk.pop("source_block_ids_json") or "[]")
     return chunks
