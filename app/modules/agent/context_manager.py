@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from app.core.config import get_settings
 from app.integrations.embedding.chunking import estimate_tokens
 from app.integrations.embedding.service import deserialize_embedding, embed_texts
 
@@ -15,6 +16,8 @@ MAX_CONTEXT_TOKENS = 7_000
 RECENT_TURNS = 8
 MAX_MEMORIES = 5
 MAX_MASTERY_POINTS = 8
+SEMANTIC_MEMORY_WEIGHT = 0.8
+LEXICAL_MEMORY_WEIGHT = 0.2
 
 
 def _compact(value: Any, token_limit: int) -> str:
@@ -39,11 +42,17 @@ def select_relevant_memories(
     memories: list[dict],
     *,
     limit: int = MAX_MEMORIES,
+    min_score: float | None = None,
     embedding_provider: Callable = embed_texts,
 ) -> list[dict]:
-    """Rank persistent memories semantically, with lexical fallback."""
-    if not memories:
+    """Return only memories that clear the semantic/lexical relevance threshold."""
+    if not memories or not str(query or "").strip():
         return []
+    threshold = (
+        get_settings().memory_relevance_threshold
+        if min_score is None
+        else max(0.0, min(1.0, float(min_score)))
+    )
     query_vector = None
     if any(memory.get("embedding_json") for memory in memories):
         try:
@@ -59,17 +68,26 @@ def select_relevant_memories(
         memory_terms = _lexical_terms(text)
         lexical = len(query_terms & memory_terms) / max(1, len(query_terms))
         semantic = 0.0
+        has_semantic_score = False
         if query_vector is not None and memory.get("embedding_json"):
             try:
                 vector = deserialize_embedding(memory["embedding_json"])
                 if vector.shape == query_vector.shape:
-                    semantic = max(0.0, min(1.0, (float(np.dot(query_vector, vector)) + 1.0) / 2.0))
+                    # Stored/query embeddings are normalized, so their dot product is cosine similarity.
+                    semantic = max(0.0, min(1.0, float(np.dot(query_vector, vector))))
+                    has_semantic_score = True
             except (TypeError, ValueError):
                 semantic = 0.0
-        score = semantic * 0.8 + lexical * 0.2 if semantic else lexical
-        ranked.append((score, memory.get("updated_at"), memory))
+        score = (
+            semantic * SEMANTIC_MEMORY_WEIGHT + lexical * LEXICAL_MEMORY_WEIGHT
+            if has_semantic_score
+            else lexical
+        )
+        if score >= threshold:
+            ranked.append((score, memory.get("updated_at"), memory))
     ranked.sort(key=lambda item: (item[0], item[1] or ""), reverse=True)
-    return [item[2] for item in ranked[: max(1, min(int(limit), MAX_MEMORIES))]]
+    count = max(1, min(int(limit), MAX_MEMORIES))
+    return [item[2] for item in ranked[:count]]
 
 
 def build_agent_context(
