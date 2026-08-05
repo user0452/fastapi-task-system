@@ -88,6 +88,7 @@ class Settings:
     learning_memory_job_max_attempts: int
     auto_memory_min_confidence: float
     auto_memory_max_per_turn: int
+    memory_relevance_threshold: float
     profile_aggregation_debounce_seconds: int
     profile_min_memory_count: int
     profile_min_course_count: int
@@ -143,6 +144,7 @@ class Settings:
             learning_memory_job_max_attempts=int(_env("LEARNING_MEMORY_JOB_MAX_ATTEMPTS", "3")),
             auto_memory_min_confidence=float(_env("AUTO_MEMORY_MIN_CONFIDENCE", "0.85")),
             auto_memory_max_per_turn=int(_env("AUTO_MEMORY_MAX_PER_TURN", "2")),
+            memory_relevance_threshold=float(_env("MEMORY_RELEVANCE_THRESHOLD", "0.20")),
             profile_aggregation_debounce_seconds=int(
                 _env("PROFILE_AGGREGATION_DEBOUNCE_SECONDS", "300")
             ),
@@ -218,6 +220,9 @@ class Settings:
 
         if self.auto_memory_max_per_turn < 1:
             errors.append("AUTO_MEMORY_MAX_PER_TURN 必须至少为 1")
+
+        if not 0 <= self.memory_relevance_threshold <= 1:
+            errors.append("MEMORY_RELEVANCE_THRESHOLD 必须在 0 到 1 之间")
 
         if self.profile_aggregation_debounce_seconds < 0:
             errors.append("PROFILE_AGGREGATION_DEBOUNCE_SECONDS 不能小于 0")
