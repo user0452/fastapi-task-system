@@ -25,6 +25,8 @@ def bundle_root() -> Path:
 
 ROOT = bundle_root()
 os.chdir(ROOT)
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def load_env_file(path: Path) -> None:
