@@ -36,6 +36,9 @@ REQUIRED_TABLES = {
     "roadmap_stage_sessions",
     "roadmap_adjustments",
     "course_material_blocks",
+    "session_retrieval_contexts",
+    "session_context_states",
+    "conversation_summary_blocks",
     "schema_migrations",
 }
 
@@ -49,6 +52,8 @@ ALEMBIC_INTERNAL_TARGETS = {
     "20260719_07_two_tier_learning_memory.py": "0024",
     "20260719_08_user_llm_configs.py": "0025",
     "20260722_09_complex_document_blocks.py": "0026",
+    "20260807_10_fast_rag_session_context.py": "0027",
+    "20260807_11_conversation_summary_blocks.py": "0028",
 }
 
 
@@ -108,6 +113,8 @@ def test_expected_migration_versions_are_registered():
         "0024",
         "0025",
         "0026",
+        "0027",
+        "0028",
     ]
 
 

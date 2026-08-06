@@ -35,6 +35,7 @@ def generate_agent_reply(
     current_time: str | None,
     agent_invoker: Callable = invoke_agent_messages,
     llm_provider: Callable | None = None,
+    evidence_context: dict | None = None,
 ) -> str:
     if get_settings().mock_llm:
         return _fallback_reply(course, citations)
@@ -61,6 +62,7 @@ def generate_agent_reply(
             for item in citations
         ],
         "server_time": current_time,
+        "evidence": (evidence_context or {}).get("evidence_blocks", []),
     }
     try:
         invocation = agent_invoker(

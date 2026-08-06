@@ -1085,6 +1085,223 @@ def list_messages_after(
     return [row for message in messages if (row := _message_row(message)) is not None]
 
 
+def get_session_retrieval_context(
+    cursor,
+    *,
+    user_id: int,
+    course_id: int,
+    session_id: int,
+) -> dict | None:
+    """Load only state belonging to the exact user/course/session triple."""
+    cursor.execute(
+        """
+        SELECT session_id, user_id, course_id, last_original_query,
+               last_resolved_query, last_focus_topic, last_anchor_chunk_ids_json,
+               last_knowledge_point_names_json, updated_at
+        FROM session_retrieval_contexts
+        WHERE session_id = %s AND user_id = %s AND course_id = %s
+        """,
+        (session_id, user_id, course_id),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    row["last_anchor_chunk_ids"] = _json_loads(row.pop("last_anchor_chunk_ids_json", None), [])
+    row["last_knowledge_point_names"] = _json_loads(row.pop("last_knowledge_point_names_json", None), [])
+    return row
+
+
+def upsert_session_retrieval_context(
+    cursor,
+    *,
+    user_id: int,
+    course_id: int,
+    session_id: int,
+    original_query: str,
+    resolved_query: str,
+    focus_topic: str | None,
+    anchor_chunk_ids: list[int],
+    knowledge_point_names: list[str],
+) -> None:
+    cursor.execute(
+        """
+        INSERT INTO session_retrieval_contexts
+            (session_id, user_id, course_id, last_original_query, last_resolved_query,
+             last_focus_topic, last_anchor_chunk_ids_json, last_knowledge_point_names_json)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            user_id = VALUES(user_id), course_id = VALUES(course_id),
+            last_original_query = VALUES(last_original_query),
+            last_resolved_query = VALUES(last_resolved_query),
+            last_focus_topic = VALUES(last_focus_topic),
+            last_anchor_chunk_ids_json = VALUES(last_anchor_chunk_ids_json),
+            last_knowledge_point_names_json = VALUES(last_knowledge_point_names_json),
+            updated_at = CURRENT_TIMESTAMP(6)
+        """,
+        (
+            session_id, user_id, course_id, original_query[:1000], resolved_query[:1000],
+            (focus_topic or "")[:255] or None, _json_dumps(anchor_chunk_ids),
+            _json_dumps(knowledge_point_names[:20]),
+        ),
+    )
+
+
+def get_session_context_state(cursor, *, user_id: int, course_id: int, session_id: int) -> dict:
+    cursor.execute(
+        """
+        SELECT session_id, user_id, course_id, covered_until_message_id, created_at, updated_at
+        FROM session_context_states
+        WHERE session_id = %s AND user_id = %s AND course_id = %s
+        """,
+        (session_id, user_id, course_id),
+    )
+    return cursor.fetchone() or {
+        "session_id": session_id, "user_id": user_id, "course_id": course_id,
+        "covered_until_message_id": None,
+    }
+
+
+def list_active_conversation_summary_blocks(
+    cursor, *, user_id: int, course_id: int, session_id: int
+) -> list[dict]:
+    cursor.execute(
+        """
+        SELECT id, user_id, course_id, session_id, start_message_id, end_message_id,
+               summary_text, summary_json, token_count, status, summary_version, level,
+               source_block_ids_json, compacted_by_id, created_at, updated_at
+        FROM conversation_summary_blocks
+        WHERE user_id = %s AND course_id = %s AND session_id = %s AND status = 'active'
+        ORDER BY end_message_id, id
+        """,
+        (user_id, course_id, session_id),
+    )
+    rows = list(cursor.fetchall())
+    for row in rows:
+        row["summary"] = _json_loads(row.pop("summary_json", None), None)
+        row["source_block_ids"] = _json_loads(row.pop("source_block_ids_json", None), [])
+    return rows
+
+
+def list_session_messages_for_context(
+    cursor, *, user_id: int, session_id: int, limit: int = 200
+) -> list[dict]:
+    Message = reflected_model("agent_chat_messages")
+    rows = cursor.session.scalars(
+        select(Message)
+        .where(Message.user_id == user_id, Message.session_id == session_id)
+        .order_by(Message.id.desc())
+        .limit(max(1, min(int(limit), 500)))
+    ).all()
+    rows.reverse()
+    return [row for model in rows if (row := _message_row(model)) is not None]
+
+
+def list_messages_in_summary_range(cursor, job: dict) -> list[dict]:
+    Message = reflected_model("agent_chat_messages")
+    payload = job.get("payload") or _json_loads(job.get("payload_json"), {}) or {}
+    start_id, end_id = int(payload["start_message_id"]), int(payload["end_message_id"])
+    rows = cursor.session.scalars(
+        select(Message)
+        .where(
+            Message.user_id == job["user_id"],
+            Message.session_id == job["session_id"],
+            Message.course_id == job["course_id"],
+            Message.id >= start_id,
+            Message.id <= end_id,
+        )
+        .order_by(Message.id)
+    ).all()
+    return [row for model in rows if (row := _message_row(model)) is not None]
+
+
+def commit_conversation_summary_block(
+    cursor,
+    *,
+    job: dict,
+    summary_text: str,
+    summary_json: dict | None,
+    token_count: int,
+) -> dict:
+    """Atomically write a block and only advance the monotonic coverage watermark."""
+    payload = job.get("payload") or _json_loads(job.get("payload_json"), {}) or {}
+    start_id, end_id = int(payload["start_message_id"]), int(payload["end_message_id"])
+    cursor.execute(
+        """
+        SELECT covered_until_message_id FROM session_context_states
+        WHERE session_id = %s AND user_id = %s AND course_id = %s FOR UPDATE
+        """,
+        (job["session_id"], job["user_id"], job["course_id"]),
+    )
+    state = cursor.fetchone()
+    if state and int(state.get("covered_until_message_id") or 0) >= end_id:
+        return {"status": "already_covered", "covered_until_message_id": state.get("covered_until_message_id")}
+    cursor.execute(
+        """
+        INSERT INTO conversation_summary_blocks
+            (user_id, course_id, session_id, start_message_id, end_message_id,
+             summary_text, summary_json, token_count, status, summary_version, level)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'active', 1, 0)
+        ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+        """,
+        (
+            job["user_id"], job["course_id"], job["session_id"], start_id, end_id,
+            summary_text, _json_dumps(summary_json) if summary_json else None, token_count,
+        ),
+    )
+    block_id = int(cursor.lastrowid)
+    cursor.execute(
+        """
+        INSERT INTO session_context_states (session_id, user_id, course_id, covered_until_message_id)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE covered_until_message_id = GREATEST(
+            COALESCE(covered_until_message_id, 0), VALUES(covered_until_message_id)
+        )
+        """,
+        (job["session_id"], job["user_id"], job["course_id"], end_id),
+    )
+    return {"status": "created", "block_id": block_id, "covered_until_message_id": end_id}
+
+
+def compact_conversation_summary_blocks(
+    cursor, *, job: dict, summary_text: str, token_count: int
+) -> dict:
+    payload = job.get("payload") or _json_loads(job.get("payload_json"), {}) or {}
+    source_ids = [int(value) for value in payload.get("source_block_ids") or []]
+    if len(source_ids) < 2:
+        raise ValueError("summary compaction requires at least two source blocks")
+    placeholders = ",".join(["%s"] * len(source_ids))
+    cursor.execute(
+        f"""
+        SELECT id, start_message_id, end_message_id, level FROM conversation_summary_blocks
+        WHERE id IN ({placeholders}) AND user_id = %s AND course_id = %s
+          AND session_id = %s AND status = 'active'
+        ORDER BY end_message_id FOR UPDATE
+        """,
+        [*source_ids, job["user_id"], job["course_id"], job["session_id"]],
+    )
+    sources = list(cursor.fetchall())
+    if len(sources) != len(source_ids):
+        return {"status": "source_blocks_no_longer_active"}
+    start_id, end_id = int(sources[0]["start_message_id"]), int(sources[-1]["end_message_id"])
+    level = max(int(row.get("level") or 0) for row in sources) + 1
+    cursor.execute(
+        """
+        INSERT INTO conversation_summary_blocks
+            (user_id, course_id, session_id, start_message_id, end_message_id,
+             summary_text, token_count, status, summary_version, level, source_block_ids_json)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 'active', 1, %s, %s)
+        """,
+        (job["user_id"], job["course_id"], job["session_id"], start_id, end_id,
+         summary_text, token_count, level, _json_dumps(source_ids)),
+    )
+    new_id = int(cursor.lastrowid)
+    cursor.execute(
+        f"UPDATE conversation_summary_blocks SET status = 'compacted', compacted_by_id = %s WHERE id IN ({placeholders})",
+        [new_id, *source_ids],
+    )
+    return {"status": "compacted", "block_id": new_id, "source_block_ids": source_ids}
+
+
 def get_action_statuses(cursor, user_id: int, action_ids: list[int]) -> dict[int, str]:
     if not action_ids:
         return {}

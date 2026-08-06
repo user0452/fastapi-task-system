@@ -92,6 +92,18 @@ class Settings:
     profile_aggregation_debounce_seconds: int
     profile_min_memory_count: int
     profile_min_course_count: int
+    fast_rag_enabled: bool
+    fast_rag_confidence_threshold: float
+    fast_rag_max_anchors: int
+    fast_rag_neighbor_window: int
+    fast_rag_min_retrieval_score: float
+    agent_context_budget_tokens: int
+    agent_min_recent_rounds: int
+    agent_target_recent_rounds: int
+    conversation_summary_batch_rounds: int
+    conversation_summary_max_tokens: int
+    conversation_summary_max_blocks: int
+    conversation_summary_compact_batch_size: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -150,6 +162,18 @@ class Settings:
             ),
             profile_min_memory_count=int(_env("PROFILE_MIN_MEMORY_COUNT", "3")),
             profile_min_course_count=int(_env("PROFILE_MIN_COURSE_COUNT", "2")),
+            fast_rag_enabled=_env_bool("FAST_RAG_ENABLED", default=True),
+            fast_rag_confidence_threshold=float(_env("FAST_RAG_CONFIDENCE_THRESHOLD", "0.85")),
+            fast_rag_max_anchors=int(_env("FAST_RAG_MAX_ANCHORS", "3")),
+            fast_rag_neighbor_window=int(_env("FAST_RAG_NEIGHBOR_WINDOW", "1")),
+            fast_rag_min_retrieval_score=float(_env("FAST_RAG_MIN_RETRIEVAL_SCORE", "0.10")),
+            agent_context_budget_tokens=int(_env("AGENT_CONTEXT_BUDGET_TOKENS", "10000")),
+            agent_min_recent_rounds=int(_env("AGENT_MIN_RECENT_ROUNDS", "3")),
+            agent_target_recent_rounds=int(_env("AGENT_TARGET_RECENT_ROUNDS", "5")),
+            conversation_summary_batch_rounds=int(_env("CONVERSATION_SUMMARY_BATCH_ROUNDS", "4")),
+            conversation_summary_max_tokens=int(_env("CONVERSATION_SUMMARY_MAX_TOKENS", "3000")),
+            conversation_summary_max_blocks=int(_env("CONVERSATION_SUMMARY_MAX_BLOCKS", "8")),
+            conversation_summary_compact_batch_size=int(_env("CONVERSATION_SUMMARY_COMPACT_BATCH_SIZE", "4")),
         )
 
     def validate_startup(self) -> None:
@@ -232,6 +256,30 @@ class Settings:
 
         if self.profile_min_course_count < 1:
             errors.append("PROFILE_MIN_COURSE_COUNT 必须至少为 1")
+
+        if not 0 <= self.fast_rag_confidence_threshold <= 1:
+            errors.append("FAST_RAG_CONFIDENCE_THRESHOLD 必须在 0 到 1 之间")
+        if not 1 <= self.fast_rag_max_anchors <= 5:
+            errors.append("FAST_RAG_MAX_ANCHORS 必须在 1 到 5 之间")
+        if not 0 <= self.fast_rag_neighbor_window <= 2:
+            errors.append("FAST_RAG_NEIGHBOR_WINDOW 必须在 0 到 2 之间")
+        if not 0 <= self.fast_rag_min_retrieval_score <= 1:
+            errors.append("FAST_RAG_MIN_RETRIEVAL_SCORE 必须在 0 到 1 之间")
+
+        if self.agent_context_budget_tokens < 2_000:
+            errors.append("AGENT_CONTEXT_BUDGET_TOKENS 必须至少为 2000")
+        if not 1 <= self.agent_min_recent_rounds <= 5:
+            errors.append("AGENT_MIN_RECENT_ROUNDS 必须在 1 到 5 之间")
+        if not self.agent_min_recent_rounds <= self.agent_target_recent_rounds <= 8:
+            errors.append("AGENT_TARGET_RECENT_ROUNDS 必须不小于最小轮次且不大于 8")
+        if self.conversation_summary_batch_rounds < 1:
+            errors.append("CONVERSATION_SUMMARY_BATCH_ROUNDS 必须至少为 1")
+        if self.conversation_summary_max_tokens < 300:
+            errors.append("CONVERSATION_SUMMARY_MAX_TOKENS 必须至少为 300")
+        if self.conversation_summary_max_blocks < 2:
+            errors.append("CONVERSATION_SUMMARY_MAX_BLOCKS 必须至少为 2")
+        if self.conversation_summary_compact_batch_size < 2:
+            errors.append("CONVERSATION_SUMMARY_COMPACT_BATCH_SIZE 必须至少为 2")
 
         for cidr in self.trusted_proxy_cidrs:
             try:

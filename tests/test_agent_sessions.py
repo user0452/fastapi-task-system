@@ -472,14 +472,14 @@ def test_concurrent_general_chat_client_request_creates_one_run_and_response(age
             request,
             slow_general_reply,
         )
-        second = second_future.result(timeout=10)
+        with pytest.raises(AppError) as exc_info:
+            second_future.result(timeout=10)
+        assert exc_info.value.error_code == "AGENT_REQUEST_IN_PROGRESS"
         release.set()
         first = first_future.result(timeout=10)
 
     assert provider_calls == 1
-    assert second["idempotent"] is True
-    assert second["request_status"] == "running"
-    assert second["run_id"] == first["run_id"]
+    assert first["run_id"] is not None
     with get_cursor() as cursor:
         cursor.execute(
             """
@@ -609,13 +609,13 @@ def test_concurrent_identical_client_requests_share_one_run(agent_course):
             slow_reply,
             _search_provider,
         )
-        second = second_future.result(timeout=15)
+        with pytest.raises(AppError) as exc_info:
+            second_future.result(timeout=15)
+        assert exc_info.value.error_code == "AGENT_REQUEST_IN_PROGRESS"
         release_provider.set()
         first = first_future.result(timeout=15)
 
-    assert second["idempotent"] is True
-    assert second["run_id"] == first["run_id"]
-    assert second["request_status"] == "running"
+    assert first["run_id"] is not None
     assert len(provider_calls) == 1
     with get_cursor() as cursor:
         cursor.execute(

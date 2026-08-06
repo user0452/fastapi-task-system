@@ -1535,6 +1535,90 @@ def _upgrade_complex_document_blocks(cursor) -> None:
     )
 
 
+def _upgrade_session_retrieval_context(cursor) -> None:
+    """Persist the narrowly scoped retrieval focus used by Fast RAG."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_retrieval_contexts (
+            session_id BIGINT NOT NULL,
+            user_id INT NOT NULL,
+            course_id INT NOT NULL,
+            last_original_query VARCHAR(1000) NULL,
+            last_resolved_query VARCHAR(1000) NULL,
+            last_focus_topic VARCHAR(255) NULL,
+            last_anchor_chunk_ids_json JSON NULL,
+            last_knowledge_point_names_json JSON NULL,
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                ON UPDATE CURRENT_TIMESTAMP(6),
+            PRIMARY KEY (session_id),
+            INDEX idx_session_retrieval_context_scope (user_id, course_id, updated_at),
+            CONSTRAINT fk_session_retrieval_context_session FOREIGN KEY (session_id)
+                REFERENCES chat_sessions(id) ON DELETE CASCADE,
+            CONSTRAINT fk_session_retrieval_context_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_session_retrieval_context_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _upgrade_conversation_summary_blocks(cursor) -> None:
+    """Add durable incremental conversation summaries and their coverage watermark."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_context_states (
+            session_id BIGINT NOT NULL,
+            user_id INT NOT NULL,
+            course_id INT NOT NULL,
+            covered_until_message_id INT NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                ON UPDATE CURRENT_TIMESTAMP(6),
+            PRIMARY KEY (session_id),
+            INDEX idx_session_context_scope (user_id, course_id, updated_at),
+            CONSTRAINT fk_session_context_state_session FOREIGN KEY (session_id)
+                REFERENCES chat_sessions(id) ON DELETE CASCADE,
+            CONSTRAINT fk_session_context_state_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_session_context_state_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_summary_blocks (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            course_id INT NOT NULL,
+            session_id BIGINT NOT NULL,
+            start_message_id INT NOT NULL,
+            end_message_id INT NOT NULL,
+            summary_text LONGTEXT NOT NULL,
+            summary_json JSON NULL,
+            token_count INT NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            summary_version INT NOT NULL DEFAULT 1,
+            level INT NOT NULL DEFAULT 0,
+            source_block_ids_json JSON NULL,
+            compacted_by_id BIGINT NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                ON UPDATE CURRENT_TIMESTAMP(6),
+            UNIQUE KEY uk_conversation_summary_range (session_id, start_message_id, end_message_id, summary_version),
+            INDEX idx_conversation_summary_active (user_id, course_id, session_id, status, end_message_id),
+            CONSTRAINT fk_conversation_summary_user FOREIGN KEY (user_id)
+                REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_conversation_summary_course FOREIGN KEY (course_id)
+                REFERENCES courses(id) ON DELETE CASCADE,
+            CONSTRAINT fk_conversation_summary_session FOREIGN KEY (session_id)
+                REFERENCES chat_sessions(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
 MIGRATIONS = [
     Migration("0001", "non_destructive_baseline", _upgrade_baseline),
     Migration("0002", "course_learning_foundation", _upgrade_course_learning_foundation),
@@ -1562,6 +1646,8 @@ MIGRATIONS = [
     Migration("0024", "two_tier_learning_memory", _upgrade_two_tier_learning_memory),
     Migration("0025", "user_llm_configs", _upgrade_user_llm_configs),
     Migration("0026", "complex_document_blocks", _upgrade_complex_document_blocks),
+    Migration("0027", "session_retrieval_context", _upgrade_session_retrieval_context),
+    Migration("0028", "conversation_summary_blocks", _upgrade_conversation_summary_blocks),
 ]
 
 

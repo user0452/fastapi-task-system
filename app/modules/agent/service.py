@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -20,15 +21,17 @@ from app.core.metrics import inc_counter, observe
 from app.integrations.llm.agent_responder import generate_agent_reply
 from app.integrations.llm.agent_runtime import RiskConfirmationMiddleware
 from app.integrations.llm.mysql_checkpointer import get_mysql_checkpointer
-from app.jobs.learning_memory_job import enqueue_course_memory_extraction
+from app.jobs.learning_memory_job import (
+    enqueue_conversation_summary_if_needed,
+    enqueue_course_memory_extraction,
+)
 from app.modules.account.service import get_user_server_time
 from app.modules.agent import repository
 from app.modules.agent.context_manager import (
-    RECENT_TURNS,
     build_agent_context,
-    build_rolling_summary,
     select_relevant_memories,
 )
+from app.modules.agent.fast_rag import FastRagFallback, prepare_fast_rag
 from app.modules.agent.memory_service import (
     delete_chat_memory,
     list_course_agent_memories,
@@ -48,6 +51,8 @@ from app.modules.agent.memory_service import (
     update_course_agent_memory as update_course_agent_memory,
 )
 from app.modules.agent.native_tool_agent import build_course_tool_agent
+from app.modules.agent.query_resolver import resolve_course_query
+from app.modules.agent.rag_router import choose_rag_route
 from app.modules.agent.schemas import (
     AgentChatRequest,
 )
@@ -97,6 +102,7 @@ from app.modules.resources.service import search_external_resources
 TOOL_REGISTRY = build_default_tool_registry()
 TOOL_EXECUTOR = ToolExecutor(TOOL_REGISTRY)
 PYTHON_SANDBOX = SandboxExecutor()
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -354,16 +360,58 @@ def _prepare_context(
                     if run.get("assistant_message_id")
                     else None
                 )
-                return {
-                    "session": session,
-                    "course": course,
-                    "user_message": user_message,
-                    "agent": agent,
-                    "run": run,
-                    "existing_assistant_message": assistant_message,
-                    "server_time": server_time,
-                    "duplicate_request": True,
-                }
+                run_status = run.get("status")
+                if run_status == "completed" and assistant_message:
+                    return {
+                        "session": session,
+                        "course": course,
+                        "user_message": user_message,
+                        "agent": agent,
+                        "run": run,
+                        "existing_assistant_message": assistant_message,
+                        "server_time": server_time,
+                        "duplicate_request": True,
+                    }
+                if run_status == "waiting_confirmation" and assistant_message:
+                    return {
+                        "session": session,
+                        "course": course,
+                        "user_message": user_message,
+                        "agent": agent,
+                        "run": run,
+                        "existing_assistant_message": assistant_message,
+                        "server_time": server_time,
+                        "duplicate_request": True,
+                    }
+                if run_status == "completed" and not assistant_message:
+                    raise AppError(
+                        "上一次请求结果不完整，请重新发送",
+                        409,
+                        "AGENT_RESULT_INCOMPLETE",
+                    )
+                if run_status == "running":
+                    raise AppError(
+                        "相同请求正在处理中，请等待完成",
+                        409,
+                        "AGENT_REQUEST_IN_PROGRESS",
+                    )
+                if run_status == "failed":
+                    raise AppError(
+                        "相同请求之前执行失败，请修改后重新发送",
+                        409,
+                        "AGENT_PREVIOUS_REQUEST_FAILED",
+                    )
+                if run_status == "cancelled":
+                    raise AppError(
+                        "相同请求已被取消，请重新发送",
+                        409,
+                        "AGENT_PREVIOUS_REQUEST_CANCELLED",
+                    )
+                raise AppError(
+                    "请求状态异常，请重新发送",
+                    409,
+                    "AGENT_REQUEST_STATE_INVALID",
+                )
 
         user_message = repository.add_message(
             cursor,
@@ -413,13 +461,22 @@ def _prepare_context(
             if course
             else []
         )
-        recent_messages = repository.list_messages(
-            cursor,
-            user_id,
-            session["id"],
-            user_message["id"],
-            12,
+        context_messages = repository.list_session_messages_for_context(
+            cursor, user_id=user_id, session_id=session["id"], limit=200
         )
+        # The live user request is supplied separately to both responder paths;
+        # keep it out of ``recent_messages`` to preserve that API contract, while
+        # still letting round-aware context assembly protect its pending original.
+        recent_messages = [item for item in context_messages if item.get("id") != user_message["id"]]
+        summary_blocks = []
+        context_state = {"covered_until_message_id": None}
+        if course is not None:
+            summary_blocks = repository.list_active_conversation_summary_blocks(
+                cursor, user_id=user_id, course_id=course["id"], session_id=session["id"]
+            )
+            context_state = repository.get_session_context_state(
+                cursor, user_id=user_id, course_id=course["id"], session_id=session["id"]
+            )
         if agent is not None:
             repository.touch_course_agent(cursor, agent["id"], user_id)
 
@@ -446,8 +503,10 @@ def _prepare_context(
         profile=profile,
         mastery=mastery,
         memories=memories,
-        messages=recent_messages,
+        messages=context_messages,
         conversation_summary=agent.get("conversation_summary") if agent else None,
+        summary_blocks=summary_blocks,
+        covered_until_message_id=context_state.get("covered_until_message_id"),
         server_time=server_time,
     )
     return {
@@ -461,6 +520,8 @@ def _prepare_context(
         "memories": memories,
         "prompt_context": prompt_context,
         "context_report": context_report,
+        "summary_blocks": summary_blocks,
+        "context_state": context_state,
         "run": run,
         "server_time": server_time,
         "web_search_mode": web_search_mode,
@@ -891,6 +952,7 @@ def _persist_assistant_in_transaction(
         "confirmation": confirmation,
         "context": context_report,
         "execution_summary": _execution_summary(context, citations, resources),
+        "rag_trace": context.get("rag_trace"),
     }
     server_time_utc = _utc_now().isoformat(timespec="milliseconds") + "Z"
     # Keep the same lock order as _prepare_context: agent before session.
@@ -970,28 +1032,14 @@ def _persist_assistant_in_transaction(
                 session_id=context["session"]["id"],
                 assistant_message_id=message["id"],
             )
-    if context.get("agent"):
-        current_agent = repository.get_course_agent(
-            cursor, context["course"]["id"], user_id
-        )
-        unsummarized = repository.list_messages_after(
+    if message_created and complete_run and context.get("agent") and course:
+        enqueue_conversation_summary_if_needed(
             cursor,
-            user_id,
-            context["session"]["id"],
-            current_agent.get("last_summarized_message_id") if current_agent else None,
+            user_id=user_id,
+            course_id=course["id"],
+            agent_id=context["agent"]["id"],
+            session_id=context["session"]["id"],
         )
-        summarizable = unsummarized[:-RECENT_TURNS]
-        if summarizable:
-            repository.update_conversation_summary(
-                cursor,
-                context["agent"]["id"],
-                user_id,
-                build_rolling_summary(
-                    current_agent.get("conversation_summary") if current_agent else None,
-                    summarizable,
-                ),
-                int(summarizable[-1]["id"]),
-            )
     return message
 
 
@@ -1504,7 +1552,15 @@ def _load_native_resume_context(user_id: int, action: dict) -> dict:
                 ],
             }
         mastery = learning_repository.list_points_with_mastery(cursor, user_id, course["id"])
-        recent_messages = repository.list_messages(cursor, user_id, session["id"], None, 12)
+        recent_messages = repository.list_session_messages_for_context(
+            cursor, user_id=user_id, session_id=session["id"], limit=200
+        )
+        summary_blocks = repository.list_active_conversation_summary_blocks(
+            cursor, user_id=user_id, course_id=course["id"], session_id=session["id"]
+        )
+        context_state = repository.get_session_context_state(
+            cursor, user_id=user_id, course_id=course["id"], session_id=session["id"]
+        )
     memories = select_relevant_memories(action["tool_name"], memories)
     if isinstance(profile, dict) and "course_memories" in profile:
         profile["course_memories"] = [
@@ -1523,6 +1579,8 @@ def _load_native_resume_context(user_id: int, action: dict) -> dict:
         memories=memories,
         messages=recent_messages,
         conversation_summary=agent.get("conversation_summary"),
+        summary_blocks=summary_blocks,
+        covered_until_message_id=context_state.get("covered_until_message_id"),
         server_time=server_time,
     )
     return {
@@ -1536,6 +1594,8 @@ def _load_native_resume_context(user_id: int, action: dict) -> dict:
         "memories": memories,
         "prompt_context": prompt_context,
         "context_report": context_report,
+        "summary_blocks": summary_blocks,
+        "context_state": context_state,
         "run": run,
         "server_time": server_time,
     }
@@ -1661,6 +1721,165 @@ def _native_confirmation(
         "expires_at": action["expires_at"],
     }
     return reply, confirmation
+
+
+def _load_retrieval_state(user_id: int, context: dict) -> dict | None:
+    course = context.get("course")
+    if not course:
+        return None
+    try:
+        with get_cursor() as cursor:
+            return repository.get_session_retrieval_context(
+                cursor,
+                user_id=user_id,
+                course_id=int(course["id"]),
+                session_id=int(context["session"]["id"]),
+            )
+    except Exception:
+        # Fast RAG may safely continue without a prior focus, provided the query is complete.
+        logger.info("fast_rag_retrieval_context_unavailable", exc_info=True)
+        return None
+
+
+def _knowledge_point_names(citations: list[dict]) -> list[str]:
+    names: list[str] = []
+    for citation in citations:
+        for point in citation.get("knowledge_points") or []:
+            name = str(point.get("name") or "").strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+def _persist_retrieval_state(
+    user_id: int,
+    context: dict,
+    *,
+    original_query: str,
+    resolved_query: str,
+    focus_topic: str | None,
+    citations: list[dict],
+) -> None:
+    course = context.get("course")
+    if not course:
+        return
+    with get_cursor() as cursor:
+        repository.upsert_session_retrieval_context(
+            cursor,
+            user_id=user_id,
+            course_id=int(course["id"]),
+            session_id=int(context["session"]["id"]),
+            original_query=original_query,
+            resolved_query=resolved_query,
+            focus_topic=focus_topic,
+            anchor_chunk_ids=[int(item["chunk_id"]) for item in citations if item.get("chunk_id")],
+            knowledge_point_names=_knowledge_point_names(citations),
+        )
+
+
+def _fast_rag_reply(
+    user_id: int,
+    request: AgentChatRequest,
+    context: dict,
+    *,
+    on_delta: Callable[[str], None] | None = None,
+) -> dict | None:
+    """Answer an eligible request with one final responder call, or return None.
+
+    This function is intentionally before the native graph invocation so a fallback
+    reuses the already-claimed Agent Run and already-persisted user message.
+    """
+    settings = get_settings()
+    resolver_started = perf_counter()
+    state = _load_retrieval_state(user_id, context)
+    resolution = resolve_course_query(
+        request.message,
+        retrieval_state=state,
+        recent_messages=context.get("recent_messages"),
+        rolling_summary=(context.get("agent") or {}).get("conversation_summary"),
+    )
+    resolver_ms = (perf_counter() - resolver_started) * 1000
+    route = choose_rag_route(
+        message=request.message,
+        course=context.get("course"),
+        resolution=resolution,
+        confidence_threshold=settings.fast_rag_confidence_threshold,
+        enabled=settings.fast_rag_enabled,
+        web_search_mode=str(context.get("web_search_mode") or "auto"),
+    )
+    trace = {
+        "rag_route": route.route,
+        "route_reason": route.reason,
+        "original_query": resolution.original_query[:500],
+        "resolved_query": resolution.resolved_query[:500],
+        "resolution_confidence": resolution.confidence,
+        "resolution_source": resolution.resolution_source,
+        "resolver_ms": round(resolver_ms, 3),
+        "signals": route.signals,
+    }
+    context["rag_trace"] = trace
+    if route.route != "fast_rag":
+        return None
+    course = context["course"]
+    try:
+        prepared = prepare_fast_rag(
+            user_id=user_id,
+            course_id=int(course["id"]),
+            resolved_query=resolution.resolved_query,
+            search_materials=search_course_materials,
+            read_evidence=get_course_evidence_context,
+            max_anchors=settings.fast_rag_max_anchors,
+            neighbor_window=settings.fast_rag_neighbor_window,
+            min_retrieval_score=settings.fast_rag_min_retrieval_score,
+        )
+        trace["retrieval_ms"] = round(prepared.retrieval_ms, 3)
+        trace["evidence_ms"] = round(prepared.evidence_ms, 3)
+    except FastRagFallback as exc:
+        trace.update({"rag_route": "agentic_rag", "fallback_to_agent": True, "fallback_reason": str(exc)})
+        logger.info("rag_route_fallback reason=%s", str(exc))
+        return None
+    except Exception:
+        trace.update({"rag_route": "agentic_rag", "fallback_to_agent": True, "fallback_reason": "fast_rag_recoverable_error"})
+        logger.warning("fast_rag_preparation_failed", exc_info=True)
+        return None
+
+    answer_started = perf_counter()
+    reply = generate_agent_reply(
+        resolution.resolved_query,
+        course,
+        context.get("profile"),
+        context.get("mastery") or [],
+        context.get("recent_messages") or [],
+        prepared.citations,
+        context.get("server_time"),
+        evidence_context=prepared.evidence,
+    )
+    trace["answer_ms"] = round((perf_counter() - answer_started) * 1000, 3)
+    reply = _normalize_native_agent_reply(reply)
+    if on_delta is not None and reply:
+        on_delta(reply)
+    message = _persist_assistant(
+        user_id, context, reply, "fast_rag", "read", prepared.citations,
+        [], [], [], None, context.get("context_report"),
+    )
+    _persist_retrieval_state(
+        user_id, context,
+        original_query=resolution.original_query,
+        resolved_query=resolution.resolved_query,
+        focus_topic=resolution.focus_topic,
+        citations=prepared.citations,
+    )
+    logger.info(
+        "rag_route route=fast_rag resolver_ms=%.3f retrieval_ms=%.3f evidence_ms=%.3f answer_ms=%.3f",
+        resolver_ms, prepared.retrieval_ms, prepared.evidence_ms, trace["answer_ms"],
+    )
+    return {
+        "session": {**context["session"], "course_id": course["id"]}, "course": course,
+        "agent": context.get("agent"), "message": message, "reply": reply,
+        "intent": "fast_rag", "risk_level": "read", "citations": prepared.citations,
+        "cards": [], "resources": [], "actions": [], "confirmation": None,
+        "current_time": context["server_time"], "run_id": context["run"]["id"],
+    }
 
 
 def _build_native_agent(user_id: int, context: dict):
@@ -1903,6 +2122,11 @@ def run_native_tool_agent_chat(
         return _existing_run_response(context, request)
     context["cancel_event"] = cancel_event
     context["on_status"] = on_status
+    if on_status is not None:
+        on_status({"message": "正在判断课程检索路径", "phase": "thinking"})
+    fast_result = _fast_rag_reply(user_id, request, context, on_delta=on_delta)
+    if fast_result is not None:
+        return fast_result
     course = context.get("course")
     artifacts = None
     confirmation = None
@@ -2031,6 +2255,14 @@ async def run_native_tool_agent_chat_async(
         return _existing_run_response(context, request)
     context["cancel_event"] = cancel_event
     context["on_status"] = on_status
+    if on_status is not None:
+        on_status({"message": "正在判断课程检索路径", "phase": "thinking"})
+    # The deterministic Fast RAG preparation is synchronous and has no remote
+    # model call; emitting the completed answer as one stream delta preserves
+    # the existing SSE response contract.
+    fast_result = _fast_rag_reply(user_id, request, context, on_delta=on_delta)
+    if fast_result is not None:
+        return fast_result
     course = context.get("course")
     artifacts = None
     confirmation = None
