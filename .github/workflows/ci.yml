@@ -31,6 +31,8 @@ jobs:
       DATABASE_NAME: a3_ci_test
       A3_TEST_DATABASE_NAME: a3_ci_test
       A3_E2E_DATABASE_NAME: a3_e2e_test
+      A3_E2E_BACKEND_PORT: 8021
+      A3_E2E_FRONTEND_PORT: 5186
       SECRET_KEY: ci-only-secret-key-with-at-least-32-characters
       A3_MOCK_LLM: "true"
       A3_MOCK_EMBEDDING: "true"
@@ -93,12 +95,14 @@ jobs:
           BACKEND_PID=$!
           (
             cd frontend
-            VITE_API_TARGET=http://127.0.0.1:8011 \
-              npm run dev -- --host 127.0.0.1 --port 5176 > ../var/e2e-frontend.log 2>&1
+            VITE_API_TARGET="http://127.0.0.1:$A3_E2E_BACKEND_PORT" \
+              npm run dev -- --host 127.0.0.1 --port "$A3_E2E_FRONTEND_PORT" > ../var/e2e-frontend.log 2>&1
           ) &
           FRONTEND_PID=$!
           trap 'kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true' EXIT
-          for url in http://127.0.0.1:8011/health/ready http://127.0.0.1:5176; do
+          for url in \
+            "http://127.0.0.1:$A3_E2E_BACKEND_PORT/health/ready" \
+            "http://127.0.0.1:$A3_E2E_FRONTEND_PORT"; do
             for attempt in $(seq 1 60); do
               if curl --fail --silent "$url" >/dev/null; then
                 break
