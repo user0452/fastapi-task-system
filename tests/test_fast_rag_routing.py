@@ -78,6 +78,15 @@ def _citation(chunk_id: int, *, score: float = 0.8, material_id: int = 1, headin
     return {"chunk_id": chunk_id, "rerank_score": score, "material_id": material_id, "heading_path": heading}
 
 
+def _fast_query_context(message: str) -> dict:
+    resolution = resolve_course_query(message)
+    return {
+        "query_resolution": resolution,
+        "retrieval_query": resolution.resolved_query,
+        "context_report": {"query_resolution": {"query_resolution_fallback": False}},
+    }
+
+
 def test_fast_rag_reads_final_reranked_anchors_before_neighbors():
     calls = []
 
@@ -123,11 +132,11 @@ def test_fast_rag_invokes_only_final_answer_provider_and_persists_once(monkeypat
         "profile": None, "mastery": [], "recent_messages": [], "server_time": "now", "agent": None,
         "web_search_mode": "auto", "context_report": {},
     }
+    context.update(_fast_query_context("TCP is what?"))
     monkeypatch.setattr(service, "get_settings", lambda: SimpleNamespace(
         fast_rag_enabled=True, fast_rag_confidence_threshold=0.85, fast_rag_max_anchors=2,
         fast_rag_neighbor_window=1, fast_rag_min_retrieval_score=0.1,
     ))
-    monkeypatch.setattr(service, "_load_retrieval_state", lambda *_args: None)
     monkeypatch.setattr(service, "prepare_fast_rag", lambda **_kwargs: FastRagPrepared(
         citations=[_citation(8)], anchor_chunk_ids=[8], evidence={"evidence_blocks": [{"evidence_text": "证据"}]},
         retrieval_ms=1, evidence_ms=1,
@@ -151,11 +160,11 @@ def test_fast_rag_recoverable_preparation_failure_returns_none(monkeypatch):
         "course": {"id": 2}, "session": {"id": 3}, "run": {"id": 4}, "recent_messages": [],
         "agent": None, "web_search_mode": "auto", "context_report": {},
     }
+    context.update(_fast_query_context("TCP is what?"))
     monkeypatch.setattr(service, "get_settings", lambda: SimpleNamespace(
         fast_rag_enabled=True, fast_rag_confidence_threshold=0.85, fast_rag_max_anchors=2,
         fast_rag_neighbor_window=1, fast_rag_min_retrieval_score=0.1,
     ))
-    monkeypatch.setattr(service, "_load_retrieval_state", lambda *_args: None)
     monkeypatch.setattr(service, "prepare_fast_rag", lambda **_kwargs: (_ for _ in ()).throw(FastRagFallback("no_hits")))
 
     assert service._fast_rag_reply(1, SimpleNamespace(message="TCP 是什么？"), context) is None

@@ -257,6 +257,49 @@ def _classify_intent(message: str) -> tuple[str, str]:
     return "course_qa", "read"
 
 
+def _resolve_retrieval_query(
+    original_query: str,
+    *,
+    retrieval_state: dict | None,
+    recent_messages: list[dict],
+    conversation_summary: str | None,
+) -> tuple[dict, str]:
+    """Produce one scoped query resolution shared by every retrieval consumer.
+
+    This intentionally wraps the deterministic resolver behind one boundary so a
+    future LLM rewriter can replace it without changing memory/RAG call sites.
+    """
+    started = perf_counter()
+    resolution = resolve_course_query(
+        original_query,
+        retrieval_state=retrieval_state,
+        recent_messages=recent_messages,
+        rolling_summary=conversation_summary,
+    )
+    threshold = get_settings().fast_rag_confidence_threshold
+    resolved = str(resolution.resolved_query or "").strip()
+    fallback_reason = None
+    if not resolved:
+        fallback_reason = "empty_resolved_query"
+    elif resolution.unresolved_references:
+        fallback_reason = "unresolved_references"
+    elif resolution.confidence < threshold:
+        fallback_reason = "resolution_confidence_below_threshold"
+    retrieval_query = resolved if fallback_reason is None else original_query
+    trace = {
+        "original_query": str(resolution.original_query or original_query)[:500],
+        "resolved_query": resolved[:500],
+        "retrieval_query": str(retrieval_query)[:500],
+        "query_resolution_confidence": resolution.confidence,
+        "query_resolution_source": resolution.resolution_source,
+        "query_resolution_unresolved_references": list(resolution.unresolved_references),
+        "query_resolution_fallback": fallback_reason is not None,
+        "query_resolution_fallback_reason": fallback_reason,
+        "query_resolution_ms": round((perf_counter() - started) * 1000, 3),
+    }
+    return {"resolution": resolution, "trace": trace}, retrieval_query
+
+
 def _prepare_context(
     user_id: int,
     request: AgentChatRequest,
@@ -470,6 +513,7 @@ def _prepare_context(
         recent_messages = [item for item in context_messages if item.get("id") != user_message["id"]]
         summary_blocks = []
         context_state = {"covered_until_message_id": None}
+        retrieval_state = None
         if course is not None:
             summary_blocks = repository.list_active_conversation_summary_blocks(
                 cursor, user_id=user_id, course_id=course["id"], session_id=session["id"]
@@ -477,11 +521,28 @@ def _prepare_context(
             context_state = repository.get_session_context_state(
                 cursor, user_id=user_id, course_id=course["id"], session_id=session["id"]
             )
+            retrieval_state = repository.get_session_retrieval_context(
+                cursor, user_id=user_id, course_id=course["id"], session_id=session["id"]
+            )
         if agent is not None:
             repository.touch_course_agent(cursor, agent["id"], user_id)
 
+    # Only session-scoped summary blocks participate in reference resolution.
+    # The course agent's legacy rolling summary can span sessions, so using it
+    # here would risk carrying a focus topic across conversation boundaries.
+    session_summary = "\n".join(
+        str(block.get("summary_text") or "").strip()
+        for block in summary_blocks
+        if str(block.get("summary_text") or "").strip()
+    ) or None
+    query_resolution, retrieval_query = _resolve_retrieval_query(
+        request.message,
+        retrieval_state=retrieval_state,
+        recent_messages=recent_messages,
+        conversation_summary=session_summary,
+    )
     if memories:
-        selected_memories = select_relevant_memories(request.message, memories)
+        selected_memories = select_relevant_memories(retrieval_query, memories)
         if isinstance(profile, dict) and "baseline_profile" in profile:
             base_profile = profile
         else:
@@ -509,6 +570,7 @@ def _prepare_context(
         covered_until_message_id=context_state.get("covered_until_message_id"),
         server_time=server_time,
     )
+    context_report["query_resolution"] = query_resolution["trace"]
     return {
         "session": session,
         "course": course,
@@ -522,6 +584,9 @@ def _prepare_context(
         "context_report": context_report,
         "summary_blocks": summary_blocks,
         "context_state": context_state,
+        "retrieval_state": retrieval_state,
+        "query_resolution": query_resolution["resolution"],
+        "retrieval_query": retrieval_query,
         "run": run,
         "server_time": server_time,
         "web_search_mode": web_search_mode,
@@ -1331,8 +1396,8 @@ def run_agent_chat(
                         context,
                         "search_course_knowledge",
                         "read",
-                        {"course_id": course["id"], "query": request.message, "top_k": 5},
-                        lambda: search_provider(user_id, course["id"], request.message, 5),
+                        {"course_id": course["id"], "query": context["retrieval_query"], "top_k": 5},
+                        lambda: search_provider(user_id, course["id"], context["retrieval_query"], 5),
                     )
                     citations = search_result.get("citations", [])
                 except Exception:
@@ -1342,11 +1407,11 @@ def run_agent_chat(
                     context,
                     "search_external_videos",
                     "read",
-                    {"course_id": course["id"], "topic": request.message, "max_results": 4},
+                    {"course_id": course["id"], "topic": context["retrieval_query"], "max_results": 4},
                     lambda: external_search_provider(
                         user_id,
                         course["id"],
-                        ExternalResourceSearchRequest(topic=request.message, max_results=4),
+                        ExternalResourceSearchRequest(topic=context["retrieval_query"], max_results=4),
                     ),
                 )
                 resources = external_result.get("resources", [])
@@ -1372,8 +1437,8 @@ def run_agent_chat(
                         context,
                         "search_course_knowledge",
                         "read",
-                        {"course_id": course["id"], "query": request.message, "top_k": 5},
-                        lambda: search_provider(user_id, course["id"], request.message, 5),
+                        {"course_id": course["id"], "query": context["retrieval_query"], "top_k": 5},
+                        lambda: search_provider(user_id, course["id"], context["retrieval_query"], 5),
                     )
                     citations = search_result.get("citations", [])
                 except Exception:
@@ -1723,24 +1788,6 @@ def _native_confirmation(
     return reply, confirmation
 
 
-def _load_retrieval_state(user_id: int, context: dict) -> dict | None:
-    course = context.get("course")
-    if not course:
-        return None
-    try:
-        with get_cursor() as cursor:
-            return repository.get_session_retrieval_context(
-                cursor,
-                user_id=user_id,
-                course_id=int(course["id"]),
-                session_id=int(context["session"]["id"]),
-            )
-    except Exception:
-        # Fast RAG may safely continue without a prior focus, provided the query is complete.
-        logger.info("fast_rag_retrieval_context_unavailable", exc_info=True)
-        return None
-
-
 def _knowledge_point_names(citations: list[dict]) -> list[str]:
     names: list[str] = []
     for citation in citations:
@@ -1790,15 +1837,8 @@ def _fast_rag_reply(
     reuses the already-claimed Agent Run and already-persisted user message.
     """
     settings = get_settings()
-    resolver_started = perf_counter()
-    state = _load_retrieval_state(user_id, context)
-    resolution = resolve_course_query(
-        request.message,
-        retrieval_state=state,
-        recent_messages=context.get("recent_messages"),
-        rolling_summary=(context.get("agent") or {}).get("conversation_summary"),
-    )
-    resolver_ms = (perf_counter() - resolver_started) * 1000
+    resolution = context["query_resolution"]
+    retrieval_query = context["retrieval_query"]
     route = choose_rag_route(
         message=request.message,
         course=context.get("course"),
@@ -1807,14 +1847,21 @@ def _fast_rag_reply(
         enabled=settings.fast_rag_enabled,
         web_search_mode=str(context.get("web_search_mode") or "auto"),
     )
+    resolution_trace = (context.get("context_report") or {}).get("query_resolution", {})
     trace = {
         "rag_route": route.route,
         "route_reason": route.reason,
         "original_query": resolution.original_query[:500],
         "resolved_query": resolution.resolved_query[:500],
+        "retrieval_query": retrieval_query[:500],
         "resolution_confidence": resolution.confidence,
         "resolution_source": resolution.resolution_source,
-        "resolver_ms": round(resolver_ms, 3),
+        "query_resolution_confidence": resolution.confidence,
+        "query_resolution_source": resolution.resolution_source,
+        "query_resolution_fallback": bool(
+            resolution_trace.get("query_resolution_fallback")
+        ),
+        "resolver_ms": resolution_trace.get("query_resolution_ms"),
         "signals": route.signals,
     }
     context["rag_trace"] = trace
@@ -1825,7 +1872,7 @@ def _fast_rag_reply(
         prepared = prepare_fast_rag(
             user_id=user_id,
             course_id=int(course["id"]),
-            resolved_query=resolution.resolved_query,
+            resolved_query=retrieval_query,
             search_materials=search_course_materials,
             read_evidence=get_course_evidence_context,
             max_anchors=settings.fast_rag_max_anchors,
@@ -1845,7 +1892,7 @@ def _fast_rag_reply(
 
     answer_started = perf_counter()
     reply = generate_agent_reply(
-        resolution.resolved_query,
+        request.message,
         course,
         context.get("profile"),
         context.get("mastery") or [],
@@ -1865,13 +1912,18 @@ def _fast_rag_reply(
     _persist_retrieval_state(
         user_id, context,
         original_query=resolution.original_query,
-        resolved_query=resolution.resolved_query,
+        resolved_query=retrieval_query,
         focus_topic=resolution.focus_topic,
         citations=prepared.citations,
     )
     logger.info(
         "rag_route route=fast_rag resolver_ms=%.3f retrieval_ms=%.3f evidence_ms=%.3f answer_ms=%.3f",
-        resolver_ms, prepared.retrieval_ms, prepared.evidence_ms, trace["answer_ms"],
+        float(
+            resolution_trace.get("query_resolution_ms") or 0.0
+        ),
+        prepared.retrieval_ms,
+        prepared.evidence_ms,
+        trace["answer_ms"],
     )
     return {
         "session": {**context["session"], "course_id": course["id"]}, "course": course,
@@ -2128,6 +2180,7 @@ def run_native_tool_agent_chat(
     if fast_result is not None:
         return fast_result
     course = context.get("course")
+    agent_input_query = context["retrieval_query"]
     artifacts = None
     confirmation = None
     llm_started = perf_counter()
@@ -2149,12 +2202,12 @@ def run_native_tool_agent_chat(
         }
         _raise_if_cancelled(context)
         if on_delta is None:
-            state = agent.invoke({"messages": [("user", request.message)]}, config=config)
+            state = agent.invoke({"messages": [("user", agent_input_query)]}, config=config)
         else:
             if on_status is not None:
                 on_status({"message": "正在生成回答", "phase": "answering"})
             for chunk, _metadata in agent.stream(
-                {"messages": [("user", request.message)]},
+                {"messages": [("user", agent_input_query)]},
                 config=config,
                 stream_mode="messages",
             ):
@@ -2264,6 +2317,7 @@ async def run_native_tool_agent_chat_async(
     if fast_result is not None:
         return fast_result
     course = context.get("course")
+    agent_input_query = context["retrieval_query"]
     artifacts = None
     confirmation = None
     llm_started = perf_counter()
@@ -2286,7 +2340,7 @@ async def run_native_tool_agent_chat_async(
         _raise_if_cancelled(context)
         answering_started = False
         async for chunk, _metadata in agent.astream(
-            {"messages": [("user", request.message)]},
+            {"messages": [("user", agent_input_query)]},
             config=config,
             stream_mode="messages",
         ):
