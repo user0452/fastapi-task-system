@@ -59,6 +59,8 @@ jobs:
         run: |
           uv run ruff check app tests scripts alembic packaging/competition_launcher.py
           uv run mypy app
+      - name: Adaptive Learning Benchmark
+        run: uv run python scripts/evaluate_adaptive.py --check
       - name: Backend tests and critical coverage
         run: >-
           uv run pytest
@@ -69,6 +71,7 @@ jobs:
           --cov=app.modules.agent.native_tool_agent
           --cov=app.modules.agent.router
           --cov=app.jobs.material_index_job
+          --cov=app.modules.adaptive
           --cov-fail-under=70
           --cov-report=term-missing
           -q

@@ -15,35 +15,28 @@ function mountRail(courses) {
   })
 }
 
-describe('CourseRail roadmap summaries', () => {
-  it('shows the current durable stage and its real progress', () => {
+describe('CourseRail adaptive course navigation', () => {
+  it('shows evidence-driven learning status instead of a roadmap stage', () => {
     const wrapper = mountRail([{
       id: 3,
       name: '软件测试',
       daily_minutes: 30,
-      roadmap_summary: {
-        status: 'ready',
-        current_stage_name: '核心知识构建',
-        current_stage_progress: 62,
-        overall_progress: 48
-      }
+      status: 'active'
     }])
 
-    expect(wrapper.text()).toContain('核心知识构建 · 总进度 48%')
-    const progress = wrapper.get('[role="progressbar"]')
-    expect(progress.attributes('aria-valuenow')).toBe('48')
-    expect(progress.get('i').attributes('style')).toContain('width: 48%')
+    expect(wrapper.text()).toContain('30 分钟/天 · 证据驱动学习')
+    expect(wrapper.text()).not.toContain('总进度')
+    expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
   })
 
-  it('surfaces failed generation instead of displaying a fabricated stage', () => {
+  it('shows material and diagnostic readiness states', () => {
     const wrapper = mountRail([{
       id: 4,
-      name: '失败课程',
+      name: '新课程',
       daily_minutes: 30,
-      roadmap_summary: { status: 'failed', last_error: '生成失败' }
+      status: 'diagnostic_pending'
     }])
 
-    expect(wrapper.text()).toContain('路线生成失败 · 可在计划页重试')
-    expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('等待初始诊断')
   })
 })

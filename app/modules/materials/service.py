@@ -36,6 +36,8 @@ from app.integrations.embedding.service import (
 )
 from app.integrations.file_storage import StoredUpload, remove_upload, resolve_upload_path
 from app.integrations.llm.knowledge_extractor import extract_knowledge_structure
+from app.integrations.llm.objective_extractor import extract_learning_objectives
+from app.modules.adaptive import repository as adaptive_repository
 from app.modules.audit.service import record_audit
 from app.modules.courses.service import (
     get_material_writable_course,
@@ -869,6 +871,16 @@ def process_material(
         else:
             extracted = list(extraction or [])
             extracted_relations = []
+        # V2 Curriculum is a separate, assessable domain.  Its failure is
+        # recorded as degraded/failed rather than silently turning headings or
+        # arbitrary text into objectives.  Legacy knowledge points continue to
+        # be materialized only for old clients during the migration window.
+        curriculum_extraction = extract_learning_objectives(
+            material["course_name"],
+            material["title"],
+            stored_chunks,
+            user_id=user_id,
+        )
         _processing_checkpoint(user_id, material_id, renew_lease)
         index_to_id = {chunk["chunk_index"]: chunk["id"] for chunk in stored_chunks}
         points = []
@@ -962,6 +974,14 @@ def process_material(
                     stored_points,
                     relations,
                 )
+                curriculum = adaptive_repository.persist_curriculum(
+                    cursor,
+                    user_id=user_id,
+                    course_id=material["course_id"],
+                    material_id=material_id,
+                    chunks=stored_chunks,
+                    extraction=curriculum_extraction,
+                )
                 repository.replace_material_search_terms(
                     cursor,
                     user_id,
@@ -995,6 +1015,8 @@ def process_material(
                         "chunk_count": len(stored_chunks),
                         "reused_chunk_embeddings": reused_chunk_count,
                         "knowledge_point_count": len(points),
+                        "learning_objective_count": curriculum["objective_count"],
+                        "curriculum_status": curriculum["status"],
                         "reused_point_embeddings": reused_point_count,
                     },
                     cursor=cursor,
@@ -1010,6 +1032,9 @@ def process_material(
             "material": completed,
             "chunk_count": len(stored_chunks),
             "knowledge_point_count": len(points),
+            "learning_objective_count": curriculum["objective_count"],
+            "curriculum_status": curriculum["status"],
+            "curriculum_build_id": curriculum["build_id"],
             "reused_chunk_embeddings": reused_chunk_count,
             "reused_knowledge_point_embeddings": reused_point_count,
             "vector_index_count": vector_index_count,

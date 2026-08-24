@@ -24,14 +24,11 @@ function initial(name) {
   return String(name || '课').trim().slice(0, 1).toUpperCase()
 }
 
-function roadmapLine(course) {
-  const summary = course.roadmap_summary
-  if (!summary) return `${course.daily_minutes} 分钟/天 · 持续学习`
-  if (summary.status === 'failed') return '路线生成失败 · 可在计划页重试'
-  if (['pending', 'generating'].includes(summary.status)) return '正在生成长期学习路线'
-  if (!summary.current_stage_name) return '长期路线已完成'
-  const overall = Math.round(summary.overall_progress ?? summary.current_stage_progress ?? 0)
-  return `${summary.current_stage_name} · 总进度 ${overall}%`
+function courseLine(course) {
+  if (course.status === 'draft') return '等待课程资料'
+  if (course.status === 'preparing') return '资料处理中'
+  if (course.status === 'diagnostic_pending') return '等待初始诊断'
+  return `${course.daily_minutes || 25} 分钟/天 · 证据驱动学习`
 }
 </script>
 
@@ -52,7 +49,7 @@ function roadmapLine(course) {
       <router-link to="/today" class="today-link" active-class="active" title="今日总览" @click="$emit('close')">
         <CalendarCheck2 :size="19" />
         <span>
-          <strong>今日总览</strong>
+          <strong>下一动作</strong>
           <small>所有课程</small>
         </span>
       </router-link>
@@ -80,18 +77,7 @@ function roadmapLine(course) {
           <span class="course-glyph" :class="tone(index)">{{ initial(course.name) }}</span>
           <span class="course-copy">
             <strong>{{ course.name }}</strong>
-            <small>{{ roadmapLine(course) }}</small>
-            <span
-              v-if="Number(currentId) === Number(course.id) && course.roadmap_summary?.status === 'ready'"
-              class="course-progress"
-              role="progressbar"
-              :aria-label="`${course.name} 当前路线总进度`"
-              :aria-valuenow="Math.round(course.roadmap_summary.overall_progress ?? course.roadmap_summary.current_stage_progress ?? 0)"
-              aria-valuemin="0"
-              aria-valuemax="100"
-            >
-              <i :style="{ width: `${course.roadmap_summary.overall_progress ?? course.roadmap_summary.current_stage_progress ?? 0}%` }"></i>
-            </span>
+            <small>{{ courseLine(course) }}</small>
           </span>
         </router-link>
       </div>

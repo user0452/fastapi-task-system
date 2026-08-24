@@ -76,6 +76,7 @@ function Invoke-BackendTestBatches {
                 "--cov=app.modules.agent.native_tool_agent",
                 "--cov=app.modules.agent.router",
                 "--cov=app.jobs.material_index_job",
+                "--cov=app.modules.adaptive",
                 "--cov-append",
                 "--cov-report="
             )
@@ -94,6 +95,9 @@ function Invoke-BackendTestBatches {
 Push-Location $root
 try {
     Invoke-Checked "Database migrations" { Invoke-Python @("-m", "alembic", "upgrade", "head") }
+    Invoke-Checked "Adaptive Learning Benchmark" {
+        Invoke-Python @("scripts/evaluate_adaptive.py", "--check")
+    }
     Invoke-Checked "Python compile check" {
         Invoke-Python @(
             "-m", "compileall", "-q",

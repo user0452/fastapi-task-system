@@ -22,6 +22,8 @@ const title = ref('')
 const content = ref('')
 const selectedFile = ref(null)
 let pollTimer = null
+let loadSequence = 0
+let hasLoadedOnce = false
 
 const hasProcessing = computed(() => materials.value.some(item =>
   !['ready', 'failed'].includes(item.processing_status)
@@ -55,14 +57,26 @@ function schedulePoll() {
 }
 
 async function load(showLoading = true) {
+  const sequence = ++loadSequence
   if (showLoading) loading.value = true
   const response = await getCourseMaterials(props.courseId)
-  if (showLoading) loading.value = false
+  // Uploading starts a background job while the initial list request may
+  // still be in flight. Ignore an older snapshot so it cannot overwrite a
+  // newer ready/failed status in the UI.
+  if (sequence !== loadSequence) {
+    if (showLoading) loading.value = false
+    return
+  }
+  loading.value = false
   if (response.code >= 200 && response.code < 300) {
     const previousReady = materials.value.filter(item => item.processing_status === 'ready').length
     materials.value = response.data?.items || []
     const currentReady = materials.value.filter(item => item.processing_status === 'ready').length
-    if (currentReady > previousReady) emit('processed')
+    // A ready material already present on first mount is not a new processing
+    // event. Emitting for it would make the parent hide/remount this child,
+    // which in turn would emit forever on every remount.
+    if (hasLoadedOnce && currentReady > previousReady) emit('processed')
+    hasLoadedOnce = true
     schedulePoll()
   } else {
     if (showLoading) showToast({ type: 'error', message: response.message })
@@ -135,7 +149,13 @@ async function remove(material) {
   }
 }
 
-watch(() => props.courseId, () => load(), { immediate: true })
+watch(() => props.courseId, (newCourseId, previousCourseId) => {
+  if (previousCourseId !== undefined && newCourseId !== previousCourseId) {
+    hasLoadedOnce = false
+    materials.value = []
+  }
+  load()
+}, { immediate: true })
 onBeforeUnmount(() => clearTimeout(pollTimer))
 </script>
 

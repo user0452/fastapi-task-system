@@ -20,12 +20,12 @@ const routes = [
       {
         path: 'today',
         name: 'today',
-        component: () => import('../features/today/GlobalTodayPage.vue')
+        component: () => import('../features/adaptive/AdaptiveHomePage.vue')
       },
       {
         path: 'learn/:courseId(\\d+)',
         name: 'course-ai-workspace',
-        component: () => import('../features/workspace/CourseAIWorkspace.vue')
+        component: () => import('../features/adaptive/AdaptiveTutorPage.vue')
       },
       {
         path: 'settings',

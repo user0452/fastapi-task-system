@@ -35,6 +35,17 @@ REQUIRED_TABLES = {
     "roadmap_stage_points",
     "roadmap_stage_sessions",
     "roadmap_adjustments",
+    "curriculum_builds",
+    "learning_objectives",
+    "objective_relations",
+    "objective_evidence",
+    "questions",
+    "question_objectives",
+    "learning_actions",
+    "question_attempts",
+    "learning_evidence",
+    "student_objective_states",
+    "misconceptions",
     "course_material_blocks",
     "session_retrieval_contexts",
     "session_context_states",
@@ -55,6 +66,8 @@ ALEMBIC_INTERNAL_TARGETS = {
     "20260807_10_fast_rag_session_context.py": "0027",
     "20260807_11_conversation_summary_blocks.py": "0028",
 }
+
+ADAPTIVE_ALEMBIC_REVISIONS = {"20260825_12_adaptive_learning_v2.py"}
 
 
 def _alembic_internal_target(path: Path) -> str:
@@ -123,13 +136,21 @@ def test_alembic_revisions_have_immutable_internal_targets():
     revision_paths = {
         path.name: path for path in version_dir.glob("*.py") if path.name != "__init__.py"
     }
-    assert set(revision_paths) == set(ALEMBIC_INTERNAL_TARGETS)
+    assert set(revision_paths) - set(ALEMBIC_INTERNAL_TARGETS) == ADAPTIVE_ALEMBIC_REVISIONS
 
     registered_versions = {migration.version for migration in MIGRATIONS}
     for name, expected_target in ALEMBIC_INTERNAL_TARGETS.items():
         actual_target = _alembic_internal_target(revision_paths[name])
         assert actual_target == expected_target
         assert actual_target in registered_versions
+
+
+def test_adaptive_revision_is_a_schema_only_alembic_boundary():
+    revision = ROOT_DIR / "alembic" / "versions" / "20260825_12_adaptive_learning_v2.py"
+    source = revision.read_text(encoding="utf-8")
+    assert 'revision = "20260825_12"' in source
+    assert 'down_revision = "20260807_11"' in source
+    assert "run_migrations(" not in source
 
 
 def test_alembic_offline_mode_fails_without_connecting_or_exposing_credentials():

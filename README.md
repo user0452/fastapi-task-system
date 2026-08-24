@@ -1,56 +1,77 @@
-# A3 学习 AI
+# A3 Adaptive Tutor
 
-面向多课程学习的 AI 工作台。每门课程拥有独立的会话、长期记忆、资料索引、知识结构、练习与掌握度；聊天 Agent 可以自主选择只读工具，破坏性操作由 LangGraph Human-in-the-loop 中断并在用户确认后从持久化检查点恢复。
+> A learning system that maintains an evidence-backed student model and continuously selects the next best learning action.
 
-## 主要能力
+A3 是一个轻量、垂直、可评测的自适应课程 Tutor：用户上传课程资料和题库后，系统建立可评估的 Learning Objectives 及其前置关系；每次诊断、练习、复习或 Tutor check 都先生成 Learning Evidence，再更新 Student Model，最后重新决定“下一步学什么、应该怎么学”。
 
-- V1 Cookie 认证：HttpOnly Cookie、登录限流、统一失败提示、用户状态校验和令牌撤销。
-- 真流式聊天：模型 token 增量传输、有界并发和队列、超时、断连取消及前端 `AbortController`。
-- Agentic RAG：持久化课程级 FAISS 候选索引、关键词倒排召回、融合重排、邻接证据、章节目录和完整章节读取。
-- 分层知识提取：章节 map、全文 reduce、topic/concept/skill/example 层级及带原始片段证据的关系。
-- 上下文管理：明确 token 预算、增量滚动摘要、语义长期记忆和最近消息分层装配。
-- 可靠异步任务：资料处理 job、原子 claim、lease、heartbeat、重试、worker owner 和启动恢复。
-- 学习闭环：诊断、练习、LLM 事务外评估、幂等 attempt、掌握度和后续计划调整。
-- 课程级工作台：当前会话用户消息目录、独立历史对话抽屉、URL 会话恢复、九个课程面板，以及按课程隔离的草稿与历史。
-- 长期学习路线：课程创建时生成四阶段路线，关联真实知识点和每日学习单元，并根据诊断、练习与掌握度保存调整原因。
-- 可交互知识图谱：缩放、拖拽、筛选、列表替代视图、资料证据和从节点直接发起讲解或练习。
-- 统一工具平台：工具注册、策略守卫、超时、确认、审计、受限计算器与实验性的受限 Python 执行器；回答可展开查看工具、来源、上下文和数据更新摘要。
-- 透明长期记忆：展示来源与更新时间，支持逐条添加、修正、暂停、恢复、删除和按类型停用。
-- 用户级模型配置：设置页可填写任意 OpenAI Chat Completions 兼容的 Base URL、模型和 API Key，支持连接测试、加密存储、掩码回显和服务端默认模型回退。
-- 可观测性：JSON 日志、请求 ID，以及 HTTP、数据库、LLM、工具和资料任务指标。
+系统的价值不是聊天本身，而是持续回答一个可验证的问题：
+
+> 基于目前的学习证据，这个学生下一步最值得完成什么动作？
+
+## 核心闭环
+
+```text
+课程资料 ──> Curriculum / Learning Objectives
+题库     ──> 可评估 Questions + Objective Alignment
+                         │
+                         ▼
+              Student Model
+       mastery + confidence + misconceptions
+                         │
+                         ▼
+              Learning Policy
+        Objective Selector + Action Selector
+                         │
+                         ▼
+       Next Learning Action / Tutor / Practice
+                         │
+                         ▼
+       Evaluation ──> Learning Evidence ──> State Update
+```
+
+核心领域只有五块：
+
+- `Curriculum`：描述学生应该能够完成什么，而不是教材出现了什么词。
+- `Student Model`：分离 `mastery` 与 `confidence`，记录掌握状态和错误模式。
+- `Learning Evidence`：所有持久状态变化的事实来源，拒绝 LLM 直接写 mastery。
+- `Question Bank`：真实题库优先，生成题只在没有合适题时兜底。
+- `Learning Policy`：先选 Objective，再选 Action；策略为确定性、可解释、可测试的 baseline。
+
+Tutor 是教学交互层，负责解释、举例、提问、反馈和 scaffold。它不负责路线、schedule、mastery 或数据库 CRUD。RAG 保留为 evidence retrieval layer，为 Curriculum provenance、Tutor 解释和题目生成 fallback 提供课程资料证据。
+
+## 产品界面
+
+每门课程主界面只有三个区域：
+
+- `Learn`：展示 Next Action，完成讲解、题目、反馈和重试。
+- `Progress`：查看 Objective 的 mastery、confidence、Evidence、misconception 和 prerequisite。
+- `Sources`：上传课程资料和 Question Bank，查看来源、关联和 unmatched 题目。
+
+主页以跨课程 `Next Best Learning Action` 为入口，不再把长期 Roadmap、知识图谱或聊天窗口作为产品主叙事。
 
 ## 目录
 
 ```text
-app/
-  api/v1/                 V1 API 聚合
-  core/                   配置、数据库、迁移、认证响应、日志、指标
-  integrations/           LLM、Embedding、FAISS、文件与文档解析
-  jobs/                   持久化资料与学习记忆任务 worker
-  modules/                account/auth/courses/materials/learning/roadmaps/agent/resources
-frontend/src/
-  features/               当前产品页面与组件
-  api/                    仅调用 /api/v1
-  stores/                 Cookie 认证状态和课程状态
-sql/migrations/           增量迁移 SQL
-tests/                    后端回归测试
-scripts/verify_all.ps1    完整本地验收
+app/modules/adaptive/          Curriculum、Question、Evidence、Student Model、Policy
+app/integrations/llm/          Objective extraction 和 LLM 结构化输出
+app/modules/materials/         资料解析、分块、索引和课程 provenance
+app/evaluation/adaptive.py     冻结 fixture 的 Adaptive Learning Benchmark
+frontend/src/features/adaptive Learn / Progress / Sources
+alembic/versions/               唯一新增的 V2 schema migration
+docs/adaptive-learning-v2.md    领域模型和运行边界
+docs/evaluation.md               benchmark、baseline、指标和限制
+docs/benchmark-report.md         最近一次真实运行结果
 ```
 
-根目录的 `routers/`、`agents/` 和 `services/` 仅用于旧客户端迁移。生产环境默认不注册这些路由；设置 `ENABLE_LEGACY_ROUTES=true` 才会临时启用。
+旧的 Roadmap、Resource、generic Memory、旧 Agent/Router/Service 仍可能因迁移兼容保留在仓库中，但不再属于默认 Adaptive Tutor 主流程；旧入口只做兼容重定向，正式部署可以关闭 legacy routes。
 
-## 全新 clone 后启动
+## 启动
 
 要求 Python 3.13、Node.js 20+、MySQL 8.x 和 `uv`。
 
 ```powershell
-git clone https://github.com/user0452/fastapi-task-system.git
-Set-Location fastapi-task-system
 Copy-Item .env.example .env
-
-# 编辑 .env，至少填写数据库密码和一个稳定的 SECRET_KEY；数据库名可按需修改
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_db2 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-
+# 在 .env 中设置数据库连接、SECRET_KEY 和可选的 LLM 配置
 uv sync --locked --dev
 Set-Location frontend
 npm ci
@@ -58,90 +79,65 @@ Set-Location ..
 uv run alembic upgrade head
 ```
 
-上面的建库命令使用 `.env.example` 默认库名；若修改 `DATABASE_NAME`，请同步修改命令。数据库账户需要拥有目标库的建库/迁移权限。Alembic 是唯一迁移入口，`alembic upgrade head` 会自动处理空数据库、尚未 stamp 的历史数据库，以及已停留在旧 Alembic 基线的数据库，不需要手工运行历史迁移或 `stamp`。依赖以 `pyproject.toml` 为声明真源、`uv.lock` 为可复现锁文件，不再维护并行的 `requirements.txt`。
-
-后端：
+启动后端和前端：
 
 ```powershell
 uv run python -m uvicorn main:app --reload --host 127.0.0.1 --port 8010
-```
 
-前端：
-
-```powershell
 Set-Location frontend
 $env:VITE_API_TARGET='http://127.0.0.1:8010'
 npm run dev -- --host 127.0.0.1 --port 5175
 ```
 
-访问 `http://127.0.0.1:5175/#/today`。健康检查为 `/health/live`、`/health/ready`，Prometheus 指标为 `/metrics`。`/health/ready` 只有在数据库可连接且 `alembic_version` 等于当前 Alembic head 时才返回 200。
+打开 `http://127.0.0.1:5175/#/today`。健康检查为 `/health/live` 和 `/health/ready`。
 
-## 关键配置
-
-```env
-APP_ENV=development
-ENABLE_LEGACY_ROUTES=true
-DATABASE_HOST=127.0.0.1
-DATABASE_PORT=3306
-DATABASE_USER=root
-DATABASE_PASSWORD=your_password
-DATABASE_NAME=task_db2
-SECRET_KEY=replace-with-a-long-random-secret
-
-DEEPSEEK_API_KEY=your_api_key
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=your-model
-LLM_TIMEOUT_SECONDS=30
-LLM_MAX_RETRIES=2
-
-# 可选外部能力；未配置时会明确返回 unconfigured，不会模拟成功
-A3_MCP_ENABLED=false
-A3_MCP_ENDPOINT=
-A3_IMAGE_TOOL_ENABLED=false
-A3_IMAGE_TOOL_ENDPOINT=
-```
-
-自动化或离线演示可使用 `A3_MOCK_LLM=true` 和 `A3_MOCK_EMBEDDING=true`。生产环境必须使用足够长的随机 `SECRET_KEY`，保持 `ENABLE_LEGACY_ROUTES=false`，并通过 HTTPS 提供服务。
-
-## OpenAI 兼容 API 设置
-
-注册并登录后访问 `http://127.0.0.1:5175/#/settings`，在“模型服务”中填写：
-
-- Base URL：包含 API 版本前缀，例如 `https://api.openai.com/v1`；应用会在其后调用 `/chat/completions`。
-- 模型：填写提供方支持的模型名称。
-- API Key：仅在保存或更换时输入；服务端加密保存，读取设置时只返回尾号掩码。
-
-可以先“测试连接”再保存。配置启用后仅对当前用户生效；停用或删除后回退到 `.env` 中的 `DEEPSEEK_*` 服务端默认配置。因此个人使用时不必把自己的 API Key 写入仓库或 `.env`。`SECRET_KEY` 同时用于加密已保存的用户 API Key，部署后必须稳定保管；直接更换会导致旧密钥无法解密，需要用户重新保存。
-
-MCP 与图片工具当前只完成统一策略和配置状态接口，尚未实现对外部 MCP Server 或图片服务的真实请求执行。配置开关和 endpoint 后，状态仍为 `configured_not_implemented`，不会被 Agent 或前端当作可调用工具，也不会返回模拟成功结果。只有接入真实执行适配器后才能显示 `available`。Tavily、YouTube 和真实 LLM 则需要各自密钥，缺失或调用失败时按可控降级处理。
-
-受限 Python 执行器在独立进程中运行，并继续限制导入、文件、网络、子进程、执行时长、内存和输出。它只提供应用级限制，未使用容器、cgroup、seccomp 或独立虚拟机，不是生产级绝对安全沙箱，属于实验性能力，不得面向不可信公网用户开放。
-
-## 资料限制
-
-- 单文件最大 100MB，支持 TXT、Markdown、文本型 PDF 和 DOCX。
-- 上传按块落盘；解析直接读取路径，不把 100MB 文件整体复制到内存。
-- PDF 限制 2000 页；DOCX 校验文件签名、成员数量和解压后体积，防止压缩炸弹。
-- 扫描版 PDF 暂不支持 OCR。
-
-## 验证
-
-首次运行完整 E2E 前安装 Playwright Chromium：
+离线演示可使用：
 
 ```powershell
-Set-Location frontend
-npx playwright install chromium
-Set-Location ..
+$env:A3_MOCK_LLM='true'
+$env:A3_MOCK_EMBEDDING='true'
+uv run python scripts/seed_demo.py
 ```
+
+## 评测和验证
+
+运行 Adaptive Benchmark：
+
+```powershell
+uv run python scripts/evaluate_adaptive.py --check
+uv run python scripts/evaluate_adaptive.py --output docs/benchmark-report.md
+```
+
+该 benchmark 冻结 Curriculum、学生状态、prerequisite、misconception 和题库 fixture，并比较：
+
+- `Baseline A`：只选择 mastery 最低的 Objective。
+- `V2`：prerequisite-aware Objective Selector + Action Selector + retrieval-first Question Selector。
+
+完整本地检查：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1
 ```
 
-该脚本执行迁移、编译、Ruff、Mypy、关键路径覆盖率、前端 ESLint/Vitest、生产构建和 Playwright。快速验证可加 `-SkipE2E -SkipCoverage`。
+前端单独检查：
 
-pytest 默认创建随机 `a3_pytest_*` 数据库并在会话结束后删除；CI 使用显式的 `a3_ci_test`，Playwright 使用 `a3_e2e_test`。删除测试库和 E2E 清理命令都会拒绝不含明确 `test` 标识的数据库名。
+```powershell
+Set-Location frontend
+npm run lint
+npm run test:run
+npm run build
+npx playwright install chromium
+npm run test:e2e
+```
 
-CI 定义在 `.github/workflows/ci.yml`，使用 MySQL 8.4、锁定依赖和 Playwright 自带 Chromium，执行后端测试、前端单测、生产构建和 E2E；失败时上传 trace、截图与前后端日志。
+底层 RAG 仍有独立评测，见 [docs/rag-evaluation.md](docs/rag-evaluation.md)；Adaptive 评测定义见 [docs/evaluation.md](docs/evaluation.md)。
 
-更多运行细节见 [docs/operations.md](docs/operations.md)，API 状态见 [docs/api-and-states.md](docs/api-and-states.md)，RAG 评测见 [docs/rag-evaluation.md](docs/rag-evaluation.md)。
+## 工程边界
+
+- Alembic 是 schema migration 的唯一正式入口；资料处理保留事务、异步 job、重试、审计、trace 和 ownership 检查。
+- LLM 只负责抽取、标注、主观评分、错误解释、Tutor 交互和生成 fallback；结构化输出必须经过 schema、validator 和 service。
+- 课程学习状态只通过 `Interaction → Evaluation → Evidence → Student Model Update` 变化。
+- Objective extraction 失败时 curriculum 标记为 degraded/failed，不使用标题或正文前缀静默伪造学习目标。
+- 生成题必须记录 model、prompt version、Objective 和 evidence chunks，并经过题目 validator；真实题库永远优先。
+
+更多实现细节见：[Adaptive architecture](docs/adaptive-learning-v2.md)、[Evaluation](docs/evaluation.md)、[Operations](docs/operations.md) 和 [API/state notes](docs/api-and-states.md)。

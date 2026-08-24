@@ -28,6 +28,20 @@ ALEMBIC_INTERNAL_BOUNDARIES = [
     ("20260807_11", "0028"),
 ]
 
+ADAPTIVE_TABLES = {
+    "curriculum_builds",
+    "learning_objectives",
+    "objective_relations",
+    "objective_evidence",
+    "questions",
+    "question_objectives",
+    "learning_actions",
+    "question_attempts",
+    "learning_evidence",
+    "student_objective_states",
+    "misconceptions",
+}
+
 
 def _connection(database_name: str):
     settings = get_settings()
@@ -67,7 +81,7 @@ def test_alembic_upgrade_head_builds_a_fresh_database():
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260807_11"
+                assert cursor.fetchone()["version_num"] == "20260825_12"
                 cursor.execute("SELECT COUNT(*) AS total FROM schema_migrations")
                 assert cursor.fetchone()["total"] >= 23
                 cursor.execute(
@@ -79,6 +93,13 @@ def test_alembic_upgrade_head_builds_a_fresh_database():
                     (database_name,),
                 )
                 assert cursor.fetchone()["total"] >= 24
+                cursor.execute(
+                    "SELECT table_name AS name FROM information_schema.tables "
+                    "WHERE table_schema = %s AND table_name IN (" +
+                    ",".join(["%s"] * len(ADAPTIVE_TABLES)) + ")",
+                    (database_name, *sorted(ADAPTIVE_TABLES)),
+                )
+                assert {row["name"] for row in cursor.fetchall()} == ADAPTIVE_TABLES
         finally:
             connection.close()
     finally:
@@ -127,7 +148,7 @@ def test_alembic_upgrades_a_previously_stamped_historical_database():
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260807_11"
+                assert cursor.fetchone()["version_num"] == "20260825_12"
                 cursor.execute(
                     "SELECT COUNT(*) AS total FROM schema_migrations "
                     "WHERE version IN "
@@ -238,7 +259,7 @@ def test_alembic_serializes_concurrent_upgrade_processes():
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone()["version_num"] == "20260807_11"
+                assert cursor.fetchone()["version_num"] == "20260825_12"
                 cursor.execute("SELECT version FROM schema_migrations ORDER BY version")
                 assert [row["version"] for row in cursor.fetchall()] == [
                     migration.version for migration in MIGRATIONS
