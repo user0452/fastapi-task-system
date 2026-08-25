@@ -31,6 +31,7 @@ import {
   tagAdaptiveQuestion
 } from '../../api/adaptive'
 import { showToast } from '../../components/common/toast'
+import { renderSafeMarkdown } from '../../utils/markdown'
 import MaterialWorkspace from '../courses/components/MaterialWorkspace.vue'
 import { useCourseStore } from '../../stores/course'
 
@@ -82,6 +83,7 @@ const questionForm = ref({
 
 const view = computed(() => props.pageMode)
 const action = computed(() => overview.value?.next_action || null)
+const tutorReplyHtml = computed(() => renderSafeMarkdown(tutorResponse.value?.reply))
 const objectives = computed(() => overview.value?.objectives || progress.value?.objectives || [])
 const materialCount = computed(() => Number(overview.value?.counts?.material_count || 0))
 const readyMaterialCount = computed(() => Number(overview.value?.counts?.ready_material_count || 0))
@@ -524,7 +526,7 @@ watch(view, nextView => {
                 </div>
                 <div v-if="tutorResponse" class="tutor-live-response" aria-live="polite">
                   <strong>{{ tutorResponse.provider === 'llm' ? 'Tutor' : 'Tutor（确定性兜底）' }}</strong>
-                  <p>{{ tutorResponse.reply }}</p>
+                  <div class="tutor-markdown" v-html="tutorReplyHtml"></div>
                   <small v-if="tutorResponse.citations?.length">课程引用：{{ tutorResponse.citations.map(item => item.title || item.heading_path || `chunk ${item.chunk_id}`).join(' · ') }}</small>
                 </div>
                 <div v-else class="tutor-live-response"><p>{{ tutorLoading ? 'Tutor 正在读取课程证据……' : '点击一个教学动作开始。' }}</p></div>
@@ -603,7 +605,7 @@ watch(view, nextView => {
               <button type="button" :disabled="tutorLoading" @click="askTutor('why_this_action', '告诉我这道题在检查什么')">为什么学这个 <ArrowRight :size="14" /></button>
               <button type="button" :disabled="tutorLoading" @click="requestTutorCheck">检查理解 <ArrowRight :size="14" /></button>
             </div>
-            <div v-if="tutorResponse" class="tutor-response"><span>学习助手</span><p>{{ tutorResponse.reply }}</p><small v-if="tutorResponse.citations?.length">来自课程资料：{{ tutorResponse.citations.map(item => item.material_title || item.heading_path || `资料片段 ${item.chunk_id}`).join(' · ') }}</small></div>
+            <div v-if="tutorResponse" class="tutor-response"><span>学习助手</span><div class="tutor-markdown" v-html="tutorReplyHtml"></div><small v-if="tutorResponse.citations?.length">来自课程资料：{{ tutorResponse.citations.map(item => item.material_title || item.heading_path || `资料片段 ${item.chunk_id}`).join(' · ') }}</small></div>
             <form v-if="tutorResponse?.tutor_check" class="tutor-check-form tutor-check-form-sidebar" @submit.prevent="submitTutorCheck">
               <span>理解检查</span>
               <strong>{{ tutorResponse.tutor_check.question }}</strong>
@@ -769,6 +771,20 @@ watch(view, nextView => {
 .tutor-response { margin-top: 18px; padding: 12px; border-radius: 8px; background: var(--accent-softer); }
 .tutor-response span { color: var(--accent-deep); font-size: 10px; font-weight: 750; }
 .tutor-response p { margin-top: 5px; color: var(--text-secondary); font-size: 11px; line-height: 1.6; }
+.tutor-markdown { margin-top: 4px; color: var(--text-primary); font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.tutor-markdown :deep(p) { margin: 10px 0 0; }
+.tutor-markdown :deep(p:first-child) { margin-top: 0; }
+.tutor-markdown :deep(h1), .tutor-markdown :deep(h2), .tutor-markdown :deep(h3), .tutor-markdown :deep(h4) { margin: 18px 0 8px; color: var(--text-primary); line-height: 1.35; }
+.tutor-markdown :deep(h1) { font-size: 21px; }
+.tutor-markdown :deep(h2) { font-size: 18px; }
+.tutor-markdown :deep(h3), .tutor-markdown :deep(h4) { font-size: 16px; }
+.tutor-markdown :deep(ul), .tutor-markdown :deep(ol) { display: grid; gap: 5px; margin: 10px 0 0; padding-left: 22px; }
+.tutor-markdown :deep(li) { padding-left: 2px; }
+.tutor-markdown :deep(pre) { margin: 14px 0 0; padding: 14px 15px; overflow-x: auto; border: 1px solid var(--border-subtle); border-radius: 10px; background: #101b18; color: #e7f2eb; font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.tutor-markdown :deep(pre code) { padding: 0; color: inherit; background: transparent; }
+.tutor-markdown :deep(code) { padding: 2px 5px; border-radius: 4px; background: var(--surface-secondary); color: var(--accent-deep); font: .9em ui-monospace, SFMono-Regular, Consolas, monospace; }
+.tutor-markdown :deep(blockquote) { margin: 12px 0 0; padding-left: 12px; border-left: 3px solid var(--border-accent); color: var(--text-secondary); }
+.tutor-markdown :deep(a) { color: var(--accent-deep); text-decoration: underline; }
 .context-foot { display: flex; align-items: center; gap: 6px; margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--border-subtle); color: var(--text-tertiary); font-size: 10px; }
 .progress-view, .sources-view { max-width: 1100px; }
 .status-line, .source-count-line { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 23px; padding: 13px 0; border-block: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: 11px; }
