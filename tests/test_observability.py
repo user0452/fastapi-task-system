@@ -17,42 +17,27 @@ def test_request_id_is_echoed_and_prometheus_metrics_are_exposed(api_client):
     assert "a3_http_request_duration_seconds" in metrics.text
 
 
-def test_production_disables_legacy_routes_by_default(monkeypatch):
+def test_retired_legacy_routes_are_not_registered(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.delenv("ENABLE_LEGACY_ROUTES", raising=False)
     settings = Settings.from_env()
     monkeypatch.setattr(app_main, "get_settings", lambda: settings)
 
     production_app = app_main.create_app()
     paths = {route.path for route in production_app.routes}
 
-    assert settings.enable_legacy_routes is False
     assert "/tasks" not in paths
+    assert "/api/v1/agent" not in paths
+    assert "/api/v1/roadmaps" not in paths
+    assert "/api/v1/resources" not in paths
     assert "/api/v1/courses" in paths
     assert "/api/v1/auth/login" in paths
 
 
-def test_production_explicitly_disabled_legacy_routes_stay_absent(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("ENABLE_LEGACY_ROUTES", "false")
-    settings = Settings.from_env()
-    monkeypatch.setattr(app_main, "get_settings", lambda: settings)
-
-    production_app = app_main.create_app()
-    paths = {route.path for route in production_app.routes}
-
-    assert settings.enable_legacy_routes is False
-    assert "/tasks" not in paths
-    assert "/api/v1/courses" in paths
-
-
 def test_production_alias_uses_fail_closed_security_defaults(monkeypatch):
     monkeypatch.setenv("APP_ENV", "prod")
-    monkeypatch.delenv("ENABLE_LEGACY_ROUTES", raising=False)
     settings = Settings.from_env()
 
     assert settings.environment == "production"
-    assert settings.enable_legacy_routes is False
 
 
 def test_unknown_environment_name_is_rejected(monkeypatch):
@@ -67,48 +52,3 @@ def test_security_boolean_typo_is_rejected(monkeypatch):
 
     with pytest.raises(RuntimeError, match="AUTH_RATE_LIMIT_ENABLED"):
         Settings.from_env()
-
-
-def test_production_explicit_legacy_routes_fail_startup(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("ENABLE_LEGACY_ROUTES", "true")
-    monkeypatch.setenv("SECRET_KEY", "production-secret-key-with-at-least-32-characters")
-    settings = Settings.from_env()
-    monkeypatch.setattr(app_main, "get_settings", lambda: settings)
-
-    with pytest.raises(RuntimeError, match="生产环境禁止启用旧版路由"):
-        settings.validate_startup()
-    with pytest.raises(RuntimeError, match="生产环境禁止启用旧版路由"):
-        app_main.create_app()
-
-
-def test_development_legacy_routes_remain_configurable(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "development")
-    monkeypatch.setenv("ENABLE_LEGACY_ROUTES", "true")
-    enabled = Settings.from_env()
-    monkeypatch.setattr(app_main, "get_settings", lambda: enabled)
-    enabled_paths = {route.path for route in app_main.create_app().routes}
-
-    monkeypatch.setenv("ENABLE_LEGACY_ROUTES", "false")
-    disabled = Settings.from_env()
-    monkeypatch.setattr(app_main, "get_settings", lambda: disabled)
-    disabled_paths = {route.path for route in app_main.create_app().routes}
-
-    assert "/tasks" in enabled_paths
-    assert "/tasks" not in disabled_paths
-    assert "/api/v1/courses" in enabled_paths
-    assert "/api/v1/courses" in disabled_paths
-
-
-def test_agent_lease_configuration_requires_a_safe_heartbeat(monkeypatch):
-    monkeypatch.setenv("AGENT_TOOL_LEASE_SECONDS", "0.3")
-    monkeypatch.setenv("AGENT_ACTION_LEASE_SECONDS", "0.6")
-    monkeypatch.setenv("AGENT_LEASE_HEARTBEAT_SECONDS", "0.11")
-    invalid = Settings.from_env()
-
-    with pytest.raises(RuntimeError, match="AGENT_LEASE_HEARTBEAT_SECONDS"):
-        invalid.validate_startup()
-
-    monkeypatch.setenv("AGENT_LEASE_HEARTBEAT_SECONDS", "0.1")
-    valid = Settings.from_env()
-    valid.validate_startup()

@@ -23,7 +23,6 @@ jobs:
           --health-retries=20
     env:
       APP_ENV: test
-      ENABLE_LEGACY_ROUTES: "true"
       DATABASE_HOST: 127.0.0.1
       DATABASE_PORT: 3306
       DATABASE_USER: root
@@ -66,10 +65,6 @@ jobs:
           uv run pytest
           --cov=app.modules.courses.service
           --cov=app.modules.materials.service
-          --cov=app.modules.learning.service
-          --cov=app.modules.agent.service
-          --cov=app.modules.agent.native_tool_agent
-          --cov=app.modules.agent.router
           --cov=app.jobs.material_index_job
           --cov=app.modules.adaptive
           --cov-fail-under=70

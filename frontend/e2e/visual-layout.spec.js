@@ -28,7 +28,7 @@ test('Adaptive Tutor 核心页面保持可读、无横向溢出并输出验收�
   }
 
   await page.setViewportSize(viewports[0])
-  await page.locator('.course-link').filter({ hasText: '软件测试冲刺' }).click()
+  await page.locator('.course-link').filter({ hasText: '计算机网络 Mini Course' }).click()
   await expect(page.locator('.adaptive-tutor')).toBeVisible()
 
   for (const viewport of viewports) {

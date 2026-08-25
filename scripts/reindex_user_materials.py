@@ -44,7 +44,7 @@ def main() -> None:
         result = process_material(user_id, int(material["id"]))
         print(
             f"material_id={material['id']} chunks={result['chunk_count']} "
-            f"points={result['knowledge_point_count']}",
+            f"objectives={result.get('learning_objective_count', 0)}",
             flush=True,
         )
     print(f"completed={len(materials)} version={CHUNKER_VERSION}", flush=True)

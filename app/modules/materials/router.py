@@ -11,10 +11,8 @@ from app.modules.materials.service import (
     create_text_material,
     create_uploaded_material,
     delete_user_material,
-    get_course_knowledge_graph,
     get_course_material_chunk,
     get_user_material,
-    list_course_knowledge_points,
     list_user_course_materials,
     material_public_view,
     request_material_retry,
@@ -92,20 +90,9 @@ def retry_material(
     return success(data=material_public_view(material), message="已重新提交资料处理", code=202)
 
 
-@router.get("/courses/{course_id}/knowledge-points")
-def knowledge_points(course_id: int, user=Depends(get_current_user)):
-    items = list_course_knowledge_points(user["id"], course_id)
-    return success(data={"items": items, "total": len(items)})
-
-
 @router.get("/courses/{course_id}/materials/chunks/{chunk_id}")
 def material_chunk(course_id: int, chunk_id: int, user=Depends(get_current_user)):
     return success(data=get_course_material_chunk(user["id"], course_id, chunk_id))
-
-
-@router.get("/courses/{course_id}/knowledge-graph")
-def knowledge_graph(course_id: int, user=Depends(get_current_user)):
-    return success(data=get_course_knowledge_graph(user["id"], course_id))
 
 
 @router.post("/courses/{course_id}/materials/search")

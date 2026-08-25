@@ -107,5 +107,5 @@ def test_adaptive_loop_retrieves_question_records_evidence_and_changes_action(tw
         )
         evidence = cursor.fetchone()
     assert evidence["source_type"] == "practice"
-    assert evidence["grader_type"] == "deterministic-keyword"
+    assert evidence["grader_type"] == "deterministic-rubric-fallback"
     assert evidence["mastery_after"] > evidence["mastery_before"]

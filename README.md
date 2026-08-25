@@ -63,7 +63,7 @@ docs/evaluation.md               benchmark、baseline、指标和限制
 docs/benchmark-report.md         最近一次真实运行结果
 ```
 
-旧的 Roadmap、Resource、generic Memory、旧 Agent/Router/Service 仍可能因迁移兼容保留在仓库中，但不再属于默认 Adaptive Tutor 主流程；旧入口只做兼容重定向，正式部署可以关闭 legacy routes。
+旧 Roadmap、Resource、generic Memory、Knowledge Graph UI、旧 Agent/Router/Service 主线已从正式运行时和前端移除。历史数据库表不再作为 V2 Student Model、Curriculum 或 Policy 状态；资料 RAG 仅为兼容已有 chunk provenance 读取必要的旧索引元数据。当前正式 API 只有 Adaptive Tutor 学习闭环。
 
 ## 启动
 

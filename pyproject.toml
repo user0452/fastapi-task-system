@@ -61,8 +61,3 @@ check_untyped_defs = true
 no_implicit_optional = true
 warn_unused_ignores = true
 show_error_codes = true
-
-[[tool.mypy.overrides]]
-module = ["agents.*", "llm_client", "models", "routers.*", "services.*", "utils"]
-follow_imports = "skip"
-ignore_errors = true

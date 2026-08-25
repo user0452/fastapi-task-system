@@ -1,49 +1,11 @@
-# 改进方案落地记录
+# 后续改进边界
 
-日期：2026-07-19  
-分支：`feature/a3-competition`
+当前 V2 主闭环已经可运行和评测；以下事项不属于本次产品主线完成条件，必须有新的证据后再扩展：
 
-## 已完成
+1. 用 50–500 个 simulated learners 比较随机、lowest-mastery、V2 的 time-to-mastery 和 action cost。
+2. 用冻结 prompt、模型、verifier 和运行环境做 live-provider grader 与 generated-question quality 评测。
+3. 扩充题库版权合规的公开题源 metadata/link 检索，但不把视频推荐做成一级产品。
+4. 基于真实学习数据校准 BKT 参数和 confidence calibration；在此之前不引入 DKT 等复杂模型。
+5. 对 Objective extraction 和 question tagging 建立人工抽样集，报告 precision、recall 和 unmatched rate。
 
-### P0 前端设计系统收敛
-- 删除 `PlanPanel` / `KnowledgePanel` / `SettingsPage` / `OverviewPanel` 的双层 “Learning OS visual layer” 覆盖写法，合并为单层 token 样式。
-- 在 `frontend/src/styles/components.css` 增加共享 panel 原语（`.panel-state` / `.panel-empty` / `.panel-heading`）。
-- 继续统一 `PracticePanel` / `WrongAnswersPanel` / `MemoryPanel` / `SettingsPage` / `CourseInspector` 的圆角、阴影与色板。
-
-### P0 仓库与文档
-- 新增本文件作为改进方案执行记录。
-- 清理根目录过程文件（若存在）：临时报告、一次性 memory 脚本、无效 `=3.0` 等。
-- 架构文档尺寸描述改为与当前工作台一致（课程栏 264px / 检查器 460px）。
-
-### P1 今日总览与课程概览聚合
-- `GET /api/v1/study/today-overview`：批量拉取课程今日单元，避免前端 N+1。
-- 后端 `list_today_sessions_for_user` + 批量 hydrate questions，降低多课程循环查询。
-- `GET /api/v1/courses/{id}/workspace-overview`：一次返回 progress / practice / plan / roadmap / today。
-- `GlobalTodayPage` 与 `OverviewPanel` 均改为单请求。
-
-### P1 前端交互
-- `SessionList`：点击外部与 Esc 关闭操作菜单。
-- `MessageAnchorRail`：中间态/线形目录补 `aria-label`。
-- `AppShell` 创建课程对话框复用公共 `Modal`。
-- Overview 最近掌握度变化展示 `formula` / `weight`。
-
-### P1 后端可维护与闭环
-- 抽出 `app/modules/agent/memory_service.py`，`service.py` 仅再导出兼容导入。
-- 掌握度更新增加短时重复练习权重衰减（6 小时内），并返回 `formula` / `weight`。
-- 薄弱点（&lt;60）次日复习 item 标注 `spaced_review`。
-
-## 验证建议
-
-```powershell
-uv run python -m pytest tests/test_learning_loop.py tests/test_agent_memories.py tests/test_course_ai_workspace.py -q
-Set-Location frontend
-npm run lint
-npm run test:run
-npm run build
-```
-
-## 后续可继续
-- 继续拆分 `agent/service.py` 的会话/工具/流式编排。
-- 逐步隔离并退役 `routers/` / `agents/` / `services/` legacy 层。
-- 压测课程级 FAISS 与聚合 Today 接口在多课程下的延迟。
-- 清理未使用的全局 MD3 样式块，准备暗色主题。
+每一项都必须先回答：它是否显著提高系统选择 Next Best Learning Action 的能力？不能以增加 Agent、图谱、Memory 或 UI 数量作为目标。

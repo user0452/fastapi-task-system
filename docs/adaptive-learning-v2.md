@@ -143,8 +143,8 @@ Tutor 不可以任意写 mastery、confidence、prerequisite、review schedule�
 
 ## UI and migration boundary
 
-默认课程 UI 只有 Learn、Progress、Sources。Course Goal/Exam Date 仍可作为 Policy constraint，但不再预生成 28 天假精确 Roadmap。旧 Roadmap、Resource、generic Memory 和旧 Agent 代码以兼容方式保留时，不得重新成为默认主流程；legacy route 只负责迁移期重定向。
+默认课程 UI 只有 Learn、Progress、Sources。Course Goal/Exam Date 仍可作为 Policy constraint，但不再预生成 28 天假精确 Roadmap。Roadmap、Resource、generic Memory、Knowledge Graph Canvas 和旧 Agent 主线已退出正式运行时；历史表仅作为数据迁移兼容边界，不被 V2 学习服务读取。
 
 ## Reliability
 
-V2 继续使用 ownership、事务、幂等 attempt、结构化错误、audit、trace、异步 material job、retry 和 Alembic。新 schema 在 [20260825_12_adaptive_learning_v2.py](../alembic/versions/20260825_12_adaptive_learning_v2.py) 中，Adaptive 领域 service/repository 不绕过这些边界直接访问其他用户数据。
+V2 继续使用 ownership、事务、幂等 attempt、结构化错误、audit、trace、异步 material job、retry 和 Alembic。新 schema 在 [`20260825_12_adaptive_learning_v2.py`](../alembic/versions/20260825_12_adaptive_learning_v2.py) 和 [`20260825_13_adaptive_tutor_stage2.py`](../alembic/versions/20260825_13_adaptive_tutor_stage2.py) 中，Adaptive 领域 service/repository 不绕过这些边界直接访问其他用户数据。V2 新增迁移只使用 Alembic；历史内部迁移表仅用于旧库基线兼容。

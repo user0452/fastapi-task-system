@@ -5,7 +5,7 @@ from app.integrations.embedding.hybrid_search import (
     build_query_variants,
     hybrid_search,
 )
-from services.rag_service import serialize_embedding
+from app.integrations.embedding.service import serialize_embedding
 
 
 def test_query_variants_keep_question_and_extract_quoted_scenario():

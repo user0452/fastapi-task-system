@@ -9,7 +9,6 @@ import './styles/layout.css'
 import './styles/components.css'
 import './styles/surfaces.css'
 import './styles/pages.css'
-import './styles/reference-aesthetic.css'
 
 const app = createApp(App)
 

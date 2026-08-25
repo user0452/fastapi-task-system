@@ -4,14 +4,6 @@ export function getCourseMaterials(courseId) {
   return request(`/api/v1/courses/${courseId}/materials`)
 }
 
-export function getKnowledgePoints(courseId) {
-  return request(`/api/v1/courses/${courseId}/knowledge-points`)
-}
-
-export function getKnowledgeGraph(courseId) {
-  return request(`/api/v1/courses/${courseId}/knowledge-graph`)
-}
-
 export function searchCourseMaterials(courseId, query, topK = 5) {
   return request(`/api/v1/courses/${courseId}/materials/search`, {
     method: 'POST',

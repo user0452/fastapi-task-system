@@ -14,15 +14,8 @@ export default defineConfig({
     proxy: {
       '/api': apiTarget,
       '/users': apiTarget,
-      '/tasks': apiTarget,
       '/materials': apiTarget,
-      '/profiles': apiTarget,
-      '/resources': apiTarget,
-      '/external-resources': apiTarget,
-      '/quizzes': apiTarget,
       '/evaluations': apiTarget,
-      '/plans': apiTarget,
-      '/agent': apiTarget,
       '/ai': apiTarget
     }
   },

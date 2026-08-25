@@ -60,7 +60,7 @@ async function createCourse() {
     await courses.select(course.id)
     Object.assign(form, { name: '', goal: '', exam_at: '', daily_minutes: 30 })
     creatorOpen.value = false
-    await router.push(`/learn/${course.id}?panel=materials`)
+  await router.push(`/learn/${course.id}?view=sources`)
     showToast({ type: 'success', message: '课程助手已创建' })
   } catch (error) {
     showToast({ type: 'error', message: error.message })

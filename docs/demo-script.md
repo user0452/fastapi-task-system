@@ -1,84 +1,75 @@
-# 3 分钟比赛演示脚本
+# Adaptive Tutor 产品演示脚本
 
 ## 演示前准备
 
-1. 启动 MySQL、后端和前端。
-2. 执行 `.venv\Scripts\python.exe scripts\seed_demo.py --username-prefix a3_demo --reset`。
-3. 登录脚本输出的账号，密码为 `A3Demo123!`。
-4. 比赛现场可设置 `A3_MOCK_LLM=true` 和 `A3_MOCK_EMBEDDING=true` 保证可重复性。
+1. 启动 MySQL、后端和前端，并执行 `uv run alembic upgrade head`。
+2. 使用 `A3_MOCK_LLM=true`、`A3_MOCK_EMBEDDING=true` 保证本地演示可重复。
+3. 执行 `uv run python scripts/seed_demo.py --username-prefix a3_demo --reset`。
+4. 登录脚本输出的账号，密码为 `A3Demo123!`。
 
-## 0:00-0:25 产品形态
+## 0:00–0:30 先看 Next Action
 
-操作：从 Today 打开一门课程，展示左侧课程 AI 列表、中央聊天和可开关的右侧课程面板。
-
-话术：
-
-> 这里的课程不是管理条目。每一门课都是一个长期存在的专科学习 AI，有独立资料、记忆、对话、掌握度和计划。聊天不是附加功能，而是所有学习业务的入口。
-
-验收点：一级结构只有跨课程 Today、课程 AI 列表和设置。
-
-## 0:25-0:55 课程内部问答
-
-操作：提问“根据课程资料解释边界值分析”，展示回答下方的资料标题、页码、片段和知识点引用，点击引用打开资料面板。
+打开 `计算机网络 Mini Course` 的 Learn 页面。
 
 话术：
 
-> 检索先强制限定当前用户和当前课程，再融合关键词、片段向量和知识点向量。三门课做 100 次交叉检索，错误引用为 0。
+> 这个系统的中心不是聊天，而是下一步学习决策。它先看课程 Objective、前置关系和学生证据，再决定当前最值得学什么，以及是讲解、练习、验证、复习还是错误模式修复。
 
-验收点：回答至少带一条可跳转内部引用。
+验收点：页面第一屏展示 Next Action、原因、预计时间和当前目标，不展示固定 28 天路线。
 
-## 0:55-1:25 外部学习资源
+## 0:30–1:00 看 Student Model
 
-操作：输入“我想去网上学边界值分析，推荐几个视频”，展示 4 张视频卡；依次演示收藏、标记看完和“看完做题”。
-
-话术：
-
-> Bilibili、YouTube 和 Tavily 使用同一 Provider 接口。服务端做相关度筛选、URL 去重、缓存和失效检测；封面失败只显示统一占位，不会破坏卡片或聊天。
-
-验收点：返回 3-6 张卡，显示来源、作者、时长、推荐原因和持久化交互状态。
-
-## 1:25-1:55 资料与知识图谱
-
-操作：打开“资料”面板，在同一编辑器中切换手动输入和上传文件；展示 `uploaded -> parsing -> indexing -> ready`，再切到“知识点”查看掌握度和依赖关系。
+切到 Progress，打开“拥塞控制”或“慢启动”目标。
 
 话术：
 
-> 上传后自动分块、提取知识点并向量化。再次处理未变化资料时 embedding 调用为 0，只重建变化内容。
+> mastery 表示当前表现估计，confidence 表示证据够不够。两者分离后，0.85 mastery/0.25 confidence 会触发验证，而不是直接标记掌握。
 
-验收点：资料 ready；至少三个知识点；依赖关系可见。
+验收点：Objective 列表显示 mastery、confidence、状态、最近 Evidence、Misconception 和 Prerequisites。
 
-## 1:55-2:30 聊天内练习闭环
+## 1:00–1:35 演示真实题库优先
 
-操作：输入“围绕边界值分析给我出 3 道题”，直接在聊天卡片作答并提交；打开练习、错题、计划面板查看变化。
-
-话术：
-
-> 提交后由确定性业务规则批改并更新掌握度，错题保存用户答案和原因，后续计划按薄弱项重排。大模型不能直接改核心学习数据。
-
-验收点：聊天显示得分和掌握度变化；错题新增；计划出现调整原因。
-
-## 2:30-2:50 隔离与恢复
-
-操作：切换另一门课程，展示不同历史；切回原课程并刷新，确认卡片、练习结果和当前面板仍在。
+切到 Sources，展示课程资料和题库来源，确认题目带有 `textbook`/`user_upload` provenance 与 Objective 关联。
 
 话术：
 
-> 一门课程只有一个助手，但可以维护多条可切换、归档和恢复的历史会话。所有读写都校验所有权，每次运行和工具调用都有课程级审计。
+> Practice 先在真实题库中按目标、题型覆盖、难度、历史尝试和来源质量检索。只有没有合适题时，才调用 evidence-grounded generator，并经过 validator；有合适真实题时生成调用为 0。
 
-验收点：两门课程消息不混合；刷新后状态恢复。
+验收点：Sources 显示题目数量、已关联/未关联、来源和导入批次；重新导入相同 idempotency key 不重复创建。
 
-## 2:50-3:00 结论
+## 1:35–2:05 演示 Tutor 不直接写状态
+
+回到 Learn，点击 Tutor 的“换一个例子”或“拆开判断步骤”。
 
 话术：
 
-> 这不是“聊天框加几个页面”，而是以课程 AI 为中心的完整学习工作区。后端 66 项测试、前端 17 项测试，6 条浏览器场景连续三轮共 18 项通过；10 路同课程并发也验证了消息和运行记录不丢失。
+> Tutor 只负责基于课程证据解释和提问。本次响应会显示课程引用，但不会直接写入 Evidence，也不会修改 mastery。
 
-收尾画面：课程聊天左侧显示历史，右侧停在掌握度与下一目标。
+随后点击“开始 Tutor Check”，回答检查问题并提交。
 
-## 现场故障切换
+验收点：普通 Tutor 响应标记“本次对话未写入 Evidence”；只有 Tutor Check 提交后才出现 Evidence、grader 和新的 Next Action。
 
-- LLM 不稳定：以 `A3_MOCK_LLM=true` 启动验收后端。
-- 外部 Provider 不可用：继续演示内部引用；资源区域显示部分结果或降级说明。
-- 封面网络失败：卡片自动显示占位，链接和交互仍可用。
-- 新资料首次 embedding 较慢：使用 seed 中的 ready 资料。
-- 演示数据被修改：重新执行 seed `--reset`，不要手工修改业务表。
+## 2:05–2:35 演示错误模式修复
+
+在固定演示数据中展示 `confuse_cwnd_rwnd`，观察 Next Action 变为错误模式修复；开始练习并提交回答。
+
+话术：
+
+> 系统不只记录答错，还保存 bounded misconception code、描述、置信度、出现次数和 resolved_at。这个错误模式会影响下一个 Objective 内的 action 选择。
+
+验收点：提交后 Evidence 数量、mastery/confidence、错误模式生命周期和 Next Action 都可在 Progress 解释。
+
+## 2:35–3:00 结论与评测
+
+展示 `docs/benchmark-report.md`。
+
+话术：
+
+> V2 使用确定性 Learning Policy，因此可以和 lowest-mastery、random/simple、mastery+prerequisite 三个 baseline 做可重复比较。当前 50 个 policy fixture 中，V2 的 objective/action accuracy 都是 100%，prerequisite violation 和 unnecessary practice 都是 0%；这是真实运行的 simulation benchmark，不是伪造的学生实验结果。
+
+## 故障切换
+
+- LLM 不稳定：使用 `A3_MOCK_LLM=true`，Tutor 和结构化 fixture 仍可重复。
+- RAG 索引暂不可用：Tutor 回退到 Objective provenance chunk，不会无引用编造课程事实。
+- 题库导入失败：保留 `failed/needs_review` 状态，修正文件后使用新的幂等 key 重试。
+- 演示数据被修改：重新执行 seed 的 `--reset`，不要手动改业务表。

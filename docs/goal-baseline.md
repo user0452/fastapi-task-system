@@ -1,4 +1,6 @@
-# A3 Goal 基线报告
+# A3 Goal 基线报告（历史审计）
+
+> 本文记录 V2 重构前的仓库状态，仅作为迁移证据，不是当前产品架构或可用 API 文档。当前实现以 `README.md`、`docs/adaptive-learning-v2.md` 和 `docs/api-and-states.md` 为准。
 
 记录日期：2026-07-11
 

@@ -13,7 +13,6 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 os.environ.setdefault("APP_ENV", "test")
-os.environ.setdefault("ENABLE_LEGACY_ROUTES", "true")
 os.environ.setdefault("A3_MOCK_LLM", "true")
 os.environ.setdefault("A3_MOCK_EMBEDDING", "true")
 os.environ.setdefault("AUTH_RATE_LIMIT_ENABLED", "false")

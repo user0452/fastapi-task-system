@@ -18,10 +18,6 @@ from app.core.database import get_conn
 from app.core.errors import AppError, app_error_handler, error_payload
 from app.core.logging import bind_request_id, configure_logging, reset_request_id
 from app.core.metrics import inc_counter, observe, render_prometheus
-from app.jobs.learning_memory_job import (
-    learning_memory_job_worker,
-    recover_pending_learning_memory_jobs,
-)
 from app.jobs.material_index_job import material_job_worker, recover_pending_material_jobs
 
 logger = logging.getLogger(__name__)
@@ -33,24 +29,19 @@ STATIC_ROOT = ROOT_DIR / "static"
 async def lifespan(_: FastAPI):
     configure_logging()
     get_settings().validate_startup()
-    from app.modules.agent.service import gc_agent_checkpoints
 
     worker_stop = asyncio.Event()
     recovery_task = asyncio.create_task(asyncio.to_thread(recover_pending_material_jobs))
-    memory_recovery_task = asyncio.create_task(asyncio.to_thread(recover_pending_learning_memory_jobs))
-    checkpoint_gc_task = asyncio.create_task(asyncio.to_thread(gc_agent_checkpoints))
     worker_task = asyncio.create_task(material_job_worker(worker_stop))
-    memory_worker_task = asyncio.create_task(learning_memory_job_worker(worker_stop))
     yield
     worker_stop.set()
-    for task in (recovery_task, memory_recovery_task, checkpoint_gc_task, worker_task, memory_worker_task):
+    for task in (recovery_task, worker_task):
         if not task.done():
             task.cancel()
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    settings.validate_route_policy()
     application = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -110,38 +101,6 @@ def create_app() -> FastAPI:
 
     application.add_exception_handler(pymysql.MySQLError, database_exception_handler)
     application.add_exception_handler(SQLAlchemyError, database_exception_handler)
-
-    if settings.enable_legacy_routes:
-        from routers import (
-            agent,
-            ai,
-            evaluations,
-            external_resources,
-            materials,
-            memories,
-            plans,
-            profiles,
-            quizzes,
-            resources,
-            tasks,
-            users,
-        )
-
-        for legacy_router in [
-            materials.router,
-            agent.router,
-            evaluations.router,
-            external_resources.router,
-            plans.router,
-            quizzes.router,
-            resources.router,
-            profiles.router,
-            users.router,
-            tasks.router,
-            ai.router,
-            memories.router,
-        ]:
-            application.include_router(legacy_router, deprecated=True)
 
     application.include_router(api_router)
     application.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")

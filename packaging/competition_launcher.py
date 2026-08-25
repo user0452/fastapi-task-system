@@ -108,7 +108,6 @@ def configure_database() -> bool:
 
         lines = [
             "APP_ENV=development",
-            "ENABLE_LEGACY_ROUTES=false",
             f"DATABASE_HOST={values['DATABASE_HOST'].get().strip()}",
             f"DATABASE_PORT={port}",
             f"DATABASE_USER={values['DATABASE_USER'].get().strip()}",
@@ -123,7 +122,6 @@ def configure_database() -> bool:
             "RAG_CHUNK_TARGET_TOKENS=96",
             "RAG_CHUNK_MAX_TOKENS=120",
             "RAG_CHUNK_OVERLAP_TOKENS=20",
-            "LEARNING_MEMORY_WORKER_ENABLED=true",
         ]
         (ROOT / ".env").write_text("\n".join(lines) + "\n", encoding="utf-8")
         for line in lines:
@@ -232,7 +230,6 @@ def main() -> int:
         return bundle_check()
 
     load_env_file(ROOT / ".env")
-    os.environ.setdefault("ENABLE_LEGACY_ROUTES", "false")
     if not required_database_env_present() and not configure_database():
         return 1
 

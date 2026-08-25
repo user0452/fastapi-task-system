@@ -1,6 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { useCourseStore } from '../stores/course'
 import { safePostLoginRoute } from './redirect'
 
 
@@ -37,14 +36,15 @@ const routes = [
         name: 'logs',
         component: () => import('../pages/LogsPage.vue')
       },
-      { path: 'courses', name: 'legacy-courses', component: () => import('../features/today/GlobalTodayPage.vue'), meta: { legacyPanel: 'materials' } },
-      { path: 'agent', name: 'legacy-agent', component: () => import('../features/today/GlobalTodayPage.vue'), meta: { legacyPanel: '' } },
-      { path: 'progress', name: 'legacy-progress', component: () => import('../features/today/GlobalTodayPage.vue'), meta: { legacyPanel: 'overview' } },
-      { path: 'materials', name: 'legacy-materials', component: () => import('../features/today/GlobalTodayPage.vue'), meta: { legacyPanel: 'materials' } },
-      { path: 'resources', name: 'legacy-resources', component: () => import('../features/today/GlobalTodayPage.vue'), meta: { legacyPanel: 'materials' } },
-      { path: 'quizzes', name: 'legacy-quizzes', component: () => import('../features/today/GlobalTodayPage.vue'), meta: { legacyPanel: 'practice' } },
-      { path: 'plans', name: 'legacy-plans', component: () => import('../features/today/GlobalTodayPage.vue'), meta: { legacyPanel: 'plan' } },
-      { path: 'tasks', name: 'legacy-tasks', component: () => import('../features/today/GlobalTodayPage.vue'), meta: { legacyPanel: 'plan' } },
+      // Keep bookmarks working without loading any retired roadmap/resource/agent UI.
+      { path: 'courses', name: 'legacy-courses', redirect: '/today' },
+      { path: 'agent', name: 'legacy-agent', redirect: '/today' },
+      { path: 'progress', name: 'legacy-progress', redirect: '/today' },
+      { path: 'materials', name: 'legacy-materials', redirect: '/today' },
+      { path: 'resources', name: 'legacy-resources', redirect: '/today' },
+      { path: 'quizzes', name: 'legacy-quizzes', redirect: '/today' },
+      { path: 'plans', name: 'legacy-plans', redirect: '/today' },
+      { path: 'tasks', name: 'legacy-tasks', redirect: '/today' },
       { path: 'overview', redirect: '/today' },
       { path: 'profile', redirect: '/settings' }
     ]
@@ -67,14 +67,6 @@ router.beforeEach(async to => {
     return safePostLoginRoute(to.query.redirect) || '/today'
   }
 
-  if (Object.prototype.hasOwnProperty.call(to.meta, 'legacyPanel')) {
-    const courses = useCourseStore()
-    await courses.ensureLoaded()
-    if (!courses.current?.id) return '/today'
-    const query = { ...to.query }
-    if (to.meta.legacyPanel) query.panel = to.meta.legacyPanel
-    return { path: `/learn/${courses.current.id}`, query, replace: true }
-  }
   return true
 })
 

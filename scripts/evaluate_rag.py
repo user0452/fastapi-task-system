@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from app.evaluation.rag import deterministic_embeddings, evaluate_bundle
-from services.rag_service import EMBEDDING_MODEL_NAME, embed_texts
+from app.integrations.embedding.service import EMBEDDING_MODEL_NAME, embed_texts
 
 
 def evaluate_quality_gates(

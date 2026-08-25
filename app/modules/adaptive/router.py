@@ -1,8 +1,9 @@
 """Public Adaptive Tutor API."""
 
-from fastapi import Depends, status
+from fastapi import Depends, File, Header, UploadFile, status
 
 from app.core.responses import V1APIRouter, success
+from app.integrations.file_storage import read_limited_upload
 from app.modules.adaptive import service
 from app.modules.adaptive.schemas import (
     AdaptiveAnswerRequest,
@@ -10,6 +11,10 @@ from app.modules.adaptive.schemas import (
     DiagnosticStartRequest,
     DiagnosticSubmitRequest,
     QuestionBankCreateRequest,
+    QuestionImportCommitRequest,
+    QuestionObjectiveTagRequest,
+    TutorCheckSubmitRequest,
+    TutorRequest,
 )
 from app.modules.auth.dependencies import get_current_user
 
@@ -71,6 +76,59 @@ def add_question_bank(
     )
 
 
+@router.post("/courses/{course_id}/question-bank/import", status_code=status.HTTP_202_ACCEPTED)
+async def preview_question_bank(
+    course_id: int,
+    file: UploadFile = File(...),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    user=Depends(get_current_user),
+):
+    try:
+        content = await read_limited_upload(file)
+    except ValueError as exc:
+        from app.core.errors import AppError
+
+        raise AppError(str(exc), 400, "INVALID_UPLOAD") from exc
+    return success(
+        data=await service.preview_question_bank_upload(
+            user["id"],
+            course_id,
+            file.filename or "question-bank.txt",
+            content,
+            idempotency_key,
+        ),
+        message="题库已解析，等待确认导入",
+        code=202,
+    )
+
+
+@router.post("/courses/{course_id}/question-bank/import/commit")
+def commit_question_bank(
+    course_id: int,
+    request: QuestionImportCommitRequest,
+    user=Depends(get_current_user),
+):
+    return success(
+        data=service.commit_question_import(user["id"], course_id, request.batch_id),
+        message="题库导入完成",
+    )
+
+
+@router.patch("/courses/{course_id}/questions/{question_id}/objectives")
+def tag_question(
+    course_id: int,
+    question_id: int,
+    request: QuestionObjectiveTagRequest,
+    user=Depends(get_current_user),
+):
+    return success(
+        data=service.tag_question_objectives(
+            user["id"], course_id, question_id, request.objective_ids
+        ),
+        message="题目 Objective 关联已更新",
+    )
+
+
 @router.post("/courses/{course_id}/diagnostic")
 def start_diagnostic(
     course_id: int,
@@ -110,4 +168,41 @@ def submit_action(
     return success(
         data=service.submit_action(user["id"], action_id, request.model_dump()),
         message="学习证据已记录，下一步动作已重新计算",
+    )
+
+
+@router.post("/courses/{course_id}/tutor")
+def adaptive_tutor(
+    course_id: int,
+    request: TutorRequest,
+    user=Depends(get_current_user),
+):
+    return success(
+        data=service.tutor_chat(
+            user["id"],
+            course_id,
+            message=request.message,
+            intent=request.intent,
+            action_id=request.action_id,
+            objective_id=request.objective_id,
+        )
+    )
+
+
+@router.post("/courses/{course_id}/tutor/checks/{check_id}/submit")
+def submit_tutor_check(
+    course_id: int,
+    check_id: int,
+    request: TutorCheckSubmitRequest,
+    user=Depends(get_current_user),
+):
+    return success(
+        data=service.submit_tutor_check(
+            user["id"],
+            course_id,
+            check_id,
+            request.response,
+            request.idempotency_key,
+        ),
+        message="Tutor Check 已评分并写入 Evidence",
     )

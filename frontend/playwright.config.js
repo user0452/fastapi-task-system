@@ -44,7 +44,6 @@ export default defineConfig({
           url: `${backendURL}/health/ready`,
           env: {
             APP_ENV: 'test',
-            ENABLE_LEGACY_ROUTES: 'true',
             A3_MOCK_LLM: 'true',
             A3_MOCK_EMBEDDING: 'true',
             AUTH_RATE_LIMIT_ENABLED: 'false',

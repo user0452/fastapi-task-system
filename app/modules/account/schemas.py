@@ -1,6 +1,6 @@
 from urllib.parse import urlsplit
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from app.core.request_models import TrimmedRequestModel
 from app.core.time_utils import validate_timezone_name
@@ -30,19 +30,6 @@ class AccountSettingsUpdate(TrimmedRequestModel):
     @classmethod
     def validate_timezone(cls, value: str) -> str:
         return validate_timezone_name(value)
-
-
-class UserMemorySettingsUpdate(TrimmedRequestModel):
-    model_config = ConfigDict(extra="forbid")
-
-    course_auto_memory_enabled: bool | None = None
-    cross_course_profile_enabled: bool | None = None
-
-    @model_validator(mode="after")
-    def validate_consistent_settings(self):
-        if self.cross_course_profile_enabled and self.course_auto_memory_enabled is False:
-            raise ValueError("启用跨课程画像时不能同时关闭自动课程记忆")
-        return self
 
 
 class UserLlmConfigUpdate(TrimmedRequestModel):
@@ -86,5 +73,4 @@ __all__ = [
     "AccountSettingsUpdate",
     "UserLlmConfigTest",
     "UserLlmConfigUpdate",
-    "UserMemorySettingsUpdate",
 ]

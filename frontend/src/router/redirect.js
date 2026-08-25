@@ -1,6 +1,16 @@
-const VALID_PANELS = new Set([
-  'overview', 'today', 'diagnostic', 'knowledge', 'plan', 'practice', 'wrong', 'memory', 'materials'
-])
+const LEGACY_PANEL_TO_VIEW = {
+  overview: 'progress',
+  progress: 'progress',
+  materials: 'sources',
+  resources: 'sources',
+  plan: 'learn',
+  practice: 'learn',
+  today: 'learn',
+  diagnostic: 'learn',
+  knowledge: 'progress',
+  wrong: 'progress',
+  memory: 'learn'
+}
 
 
 export function safePostLoginRoute(value) {
@@ -11,9 +21,9 @@ export function safePostLoginRoute(value) {
 
   const result = new URLSearchParams()
   const incoming = new URLSearchParams(match[2] || '')
-  const panel = incoming.get('panel')
-  if (VALID_PANELS.has(panel)) result.set('panel', panel)
-  for (const key of ['session', 'material_id', 'chunk']) {
+  const view = incoming.get('view') || LEGACY_PANEL_TO_VIEW[incoming.get('panel')]
+  if (['learn', 'progress', 'sources'].includes(view)) result.set('view', view)
+  for (const key of ['material_id', 'chunk']) {
     const field = incoming.get(key)
     if (field && /^\d+$/.test(field)) result.set(key, field)
   }

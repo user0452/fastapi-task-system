@@ -1,140 +1,35 @@
-# A3 Goal 实施状态
+# Adaptive Tutor V2 实现状态
 
-本文件持续记录 Goal 各阶段的完成证据。只有具备代码、自动化测试或运行结果的项目才标记完成。
+更新时间：2026-08-25
 
-阶段 0-5 保留前一版课程冲刺产品的历史验收记录；当前产品结构以阶段 8 为准，阶段 6-8 已替代“五个一级入口”和移动端底部导航。
+## 已完成
 
-## 阶段 0：基线
+- Curriculum 以 Learning Objective 为核心，保存 importance、difficulty、extraction confidence、prerequisite relation 和 material/chunk provenance。
+- Objective extraction 使用结构化 schema、证据 chunk 校验、去重和失败状态；不会静默回退为标题/正文摘要。
+- Question Bank 支持 JSON、JSONL、Markdown、TXT 预览/确认导入、幂等批次、来源记录、六种题型、自动/手动 Objective tagging 和质量状态。
+- Student Model 使用 `StudentObjectiveState`，显式分离 mastery/confidence，并保存五个 confidence components。
+- Learning Evidence 是状态变化唯一事实来源；Grader 输出经过 schema/service 边界后才能更新 Student Model。
+- Misconception 有 code、bounded text、confidence、occurrence、success/failure 和 resolved 生命周期。
+- Learning Policy 拆分 Objective Selector 与 Action Selector，包含 prerequisite gating、spacing、goal relevance、uncertainty 和 unnecessary-practice penalty。
+- Practice retrieval-first；高质量真实题存在时不会调用 generator，生成 fallback 经过 grounded validator。
+- Diagnostic 使用 importance、uncertainty、coverage、prerequisite hub 和 diversity 选择题目。
+- Tutor 已收敛为真实课程 endpoint：带 Student Model、当前 action、misconception、prerequisite 和 RAG/provenance citations；普通 Tutor 不写 Evidence，Tutor Check 才能写入。
+- 前端正式课程区域为 Learn、Progress、Sources；没有 Roadmap、知识图谱画布、资源推荐或 generic Memory 页面。
+- 固定 Mini Course seed、Adaptive Benchmark、baseline/ablation、闭环 E2E、迁移测试和文档已加入仓库。
 
-状态：完成
+## 已退出正式主线
 
-- 使用冻结 `uv.lock` 建立 Python 3.13 `.venv`。
-- 数据库连接验证：`SELECT 1` 成功。
-- FastAPI 应用导入成功，基线为 46 条路由。
-- 根路径验证：`307 /static/vue/index.html`。
-- 前端验证：Vite 生产构建通过，1784 个模块转换成功。
-- 基线报告：`docs/goal-baseline.md`。
-- 目标架构：`docs/target-architecture.md`。
+- Roadmap、固定阶段计划、Study Plan/Today schedule 作为课程核心。
+- Resource/Bilibili/YouTube recommendation 及交互系统。
+- Generic Memory CRUD、跨课程学习记忆聚合和 Memory worker。
+- Knowledge Graph Canvas、图布局和筛选器。
+- 旧 Agent/Router/Service 顶层兼容层、旧课程聊天工具注册和通用工具 marketplace。
+- 旧 Quiz/Knowledge Point 学习闭环；V2 只消费 Learning Objective、Question、Evidence 和 Student State。
 
-## 阶段 1：结构与数据基础
+历史库中的旧表仍由基础迁移兼容边界识别，但正式 V2 service/router 不读写它们；新字段与业务表变化只通过 Alembic revision 发布。
 
-状态：完成
+## 仍需真实环境验证的内容
 
-- 新增 `app/core`、`app/api/v1`、`app/modules`、`app/integrations`、`app/jobs`。
-- 根 `main.py` 保留原启动命令兼容，实际应用工厂迁移到 `app/main.py`。
-- 数据库实现迁移到 `app/core/database.py`，旧 `db.py` 仅做兼容导出。
-- 增加配置校验、统一 `AppError`、真实 HTTP 错误状态和健康检查。
-- 增加版本化课程 API：创建、列表、详情、更新、选择当前课程、归档。
-- 增加无 `DROP TABLE` 的版本迁移 0001、0002、0003。
-- 迁移前后旧表记录计数一致。
-- 从现有资料、资源和题集提取出 10 个课程，相关记录 `course_id` 无遗漏回填。
-- 迁移在临时空数据库完整执行，并验证第二次执行无变更。
-- 自动化测试结果：`10 passed`。
-
-## 阶段 2：自动资料链路
-
-状态：完成
-
-完成证据：
-
-- 上传文件按块落盘，并在完整读入前阻止超过 100MB 的内容；解析阶段直接读取文件路径，并限制 PDF 页数、DOCX 解压体积和抽取文本长度。
-- 文本与文件资料创建后自动进入解析、分块、Embedding、索引和知识点提取任务。
-- 持久化 `processing_status`、失败原因、页码、片段向量及模型版本。
-- RAG 查询复用数据库中的片段向量，仅生成一次查询向量。
-- 课程资料检索返回标准化引用，包含资料、片段、页码、得分和摘要。
-- 自动化覆盖成功、失败重试、上传上限、确定性知识点降级和引用结构。
-
-## 阶段 3：学习闭环
-
-状态：完成
-
-完成证据：
-
-- 每门课程可生成 5 到 8 道诊断题，并校验至少覆盖 3 个知识点。
-- 诊断提交后保存逐题依据、知识点掌握度和掌握度变化记录。
-- 默认生成 7 天计划；考试日期较近时压缩到 3 到 14 天范围。
-- 今日学习单元可开始、提交和评估，重复提交返回 409。
-- 后续掌握度采用 `旧值 × 0.7 + 本次得分 × 0.3` 的确定性公式。
-- 低于 60 分时，次日插入复习、基础讲解和基础练习。
-- 连续两次低于 60 分时，额外插入例题并记录降低新知识占比的原因。
-- 完成今日单元后不会把明日单元误显示为今日任务。
-- 自动化测试覆盖题目数量、覆盖度、答案隐藏、掌握度依据、计划、自适应、重复提交和跨用户隔离。
-- 当前后端自动化结果：`24 passed`。
-
-## 阶段 4：Agent 与前端收敛
-
-状态：完成
-
-完成证据：
-
-- 一级导航收敛为今日学习、我的课程、AI 助教、学习进度、设置。
-- 当前课程在五个入口之间共享，旧页面 URL 保留重定向兼容。
-- 资料上传与手动输入改为同一编辑区的分段切换，不再绑定侧栏或页面滚动。
-- 新 Agent 使用独立 `router/schemas/service/repository` 分层，并保留旧接口兼容层。
-- 聊天会话、消息、引用和客户端时间提示均保存到后端，刷新后可恢复。
-- Agent 默认绑定当前课程，加载画像、掌握度和最近会话，RAG 命中时保存并显示引用。
-- 破坏性删除先生成待确认动作，确认前数据库不变，确认后幂等执行并写服务端 UTC 审计。
-- 服务重启后自动恢复处于 uploaded/parsing/indexing 的资料处理任务。
-- 桌面与 390×844 手机视口检查无横向溢出；移动端使用五项底部导航。
-- 真实浏览器闭环完成：课程 → 资料 ready → 6 题诊断 → 9 天计划 → 今日练习 → 掌握度变化 → 次日任务增加。
-- 当前后端自动化结果达到 31 项以上；生产前端构建通过。
-
-## 阶段 5：测试与比赛验收
-
-状态：完成
-
-完成证据：
-
-- 后端自动化 `51 passed`，超过 30 项要求。
-- 核心 service 覆盖率：courses 100%、materials 79%、learning 90%、agent 84%，合计 86.27%。
-- 前端 4 个组件测试文件、8 个断言全部通过；Vitest 与 Playwright 测试目录已显式隔离。
-- Playwright 建立 5 条核心 E2E，单轮 5 项通过，连续 3 轮共 15 项通过。
-- 20 并发非 AI API P95 为 54.33ms；10 并发 Mock 流式聊天首事件最大 34.13ms，连接池未耗尽。
-- 900KB 文本资料热启动处理 56.49 秒；冷启动短文本 17.446 秒，满足目标阈值。
-- Tavily、封面接口和 LLM 失败降级由 5 项专项测试及离线 E2E 覆盖。
-- 提供 `scripts/seed_demo.py`、`scripts/verify_performance.py` 和 `scripts/verify_all.ps1`。
-- 已完成 API/状态、运行部署、3 分钟演示、架构、限制与验收报告。
-
-## 阶段 6：AI-first 专科学习工作区
-
-状态：完成
-
-完成证据：
-
-- 新增 `CourseAIWorkspace`。一级结构收敛为跨课程 Today、左侧课程 AI 列表和设置；旧业务 URL 重定向到课程右侧面板。
-- 每门课程唯一绑定 `course_agents` 和主会话；课程记忆、运行与工具调用分别持久化到 `course_agent_memories`、`agent_runs` 和 `agent_tool_calls`。
-- 迁移已推进到 0017，补齐评估 attempt、持久化资料 job、规范化知识来源、认证撤销字段、MySQL LangGraph checkpoint、倒排索引、知识层级、关系证据和语义记忆向量。
-- 资料片段与知识点同时 embedding，检索采用课程强过滤、关键词 + 向量 + 知识点融合与重排；100 次三课程检索跨课程引用为 0。
-- 内容哈希支持增量重建；资料不变时片段与知识点 embedding 调用均为 0，并复用原记录。
-- Bilibili、YouTube、Tavily 统一 Provider，完成 URL 规范化、去重、缓存、相关度筛选、失效检测、封面降级和交互记录。
-- 右侧面板提供概览、知识点、计划、练习、错题、资料资源六个真实业务视图。
-- 聊天内完成讲解、引用、视频卡、收藏/看完、生成三题、答题、批改、掌握度更新、错题和计划重排。
-- 每次发送都附带精确到分钟且含 UTC 偏移的客户端时间提示，服务端审计仍使用 UTC。
-- 数据库连接显式事务，统一 Agent/会话锁顺序；10 路同课程并发完整保存 10 对消息和 10 个唯一完成运行。
-- 后端 `66 passed`，前端 `19 passed`，Vite 生产构建通过；6 条 Playwright 场景连续三轮 `18 passed`。
-- 390x844 移动端采用课程抽屉和不透明全宽二级面板，真实 Chrome 截图与横向溢出断言通过。
-- 最终证据和复现命令见 `docs/verification-report.md`。
-
-## 阶段 7：课程级个人学习操作系统
-
-状态：完成
-
-完成证据：
-
-- `46fddac`：课程会话从唯一主会话升级为可创建、切换、归档和刷新恢复的真实历史；该阶段曾使用悬浮历史会话轨道，阶段 8 已将其替换为当前会话用户消息目录和独立历史抽屉，当前 `session` 仍写入 URL。
-- `1c0357a`：新增四阶段长期学习路线、生成任务、阶段与真实知识点/每日单元关联、失败重试和诊断/练习后的幂等调整记录。
-- `1777a66`：知识图谱改为可缩放、拖拽、筛选和自动布局的真实图，保留可访问列表视图；节点详情展示资料摘录与关系，可直接发起讲解或练习。
-- `dbfdb89`：新增统一工具注册表、策略守卫、风险与确认校验、超时、计算器和受限 Python 沙箱；消息持久化 `execution_summary`，前端区分工具、课程资料、外部来源、学习上下文和数据更新。
-- `d6a3bb7`：课程长期记忆支持来源、更新时间、逐条添加/修正/暂停/恢复/软删除和类型级开关；课程概览只展示真实路线、计划、掌握度、练习和错题数据。
-- 迁移推进到 Alembic `20260718_06`，覆盖会话、路线、图谱证据、执行摘要和记忆透明度所需字段与索引。
-- 新增课程列表与当前课程并发初始化路线图回归测试；课程级锁、幂等插入和当前读避免首次登录竞态产生 500 或空摘要。
-- Playwright 覆盖注册、资料处理、图谱节点操作、回答依据、路线调整、会话恢复/归档、记忆完整生命周期、练习闭环与移动端九面板。
-- 最新统一验收通过：Mypy 检查 92 个源文件无问题，后端 5 个隔离批次共 `214 passed`、核心模块聚合覆盖率 `83%`，前端 19 个测试文件 `60 passed`，Vite 转换 2412 个模块并成功构建，Playwright `11 passed (1.4m)`。
-
-范围边界：
-
-- 已完成：本地课程工具、计算器、实验性的受限 Python 执行器、Tavily/视频 Provider、工具审计和回答依据。
-- 需要外部配置：真实 LLM、Embedding、Tavily 和 YouTube 实时调用。
-- 仅完成接口：MCP 与图片工具的策略和配置状态；状态区分 `unconfigured`、`misconfigured`、`configured_not_implemented`、`available` 和 `disabled`。
-- 尚未实现：MCP Server 与外部图片生成服务的真实执行适配器，不返回模拟成功结果。
-- 安全边界：受限 Python 执行器只有应用级隔离，未使用容器、cgroup、seccomp 或独立虚拟机，不得面向不可信公网用户开放。
+- 外部 LLM provider 的主观评分、Objective extraction 和生成题质量。
+- 真实学生纵向学习效果和 calibration，不由当前 fixture benchmark 证明。
+- 公共题源搜索的版权许可与保存策略；当前主流程以用户上传题库为优先。

@@ -71,10 +71,6 @@ function Invoke-BackendTestBatches {
             $arguments += @(
                 "--cov=app.modules.courses.service",
                 "--cov=app.modules.materials.service",
-                "--cov=app.modules.learning.service",
-                "--cov=app.modules.agent.service",
-                "--cov=app.modules.agent.native_tool_agent",
-                "--cov=app.modules.agent.router",
                 "--cov=app.jobs.material_index_job",
                 "--cov=app.modules.adaptive",
                 "--cov-append",
@@ -101,8 +97,8 @@ try {
     Invoke-Checked "Python compile check" {
         Invoke-Python @(
             "-m", "compileall", "-q",
-            "app", "agents", "routers", "services", "scripts", "alembic",
-            "packaging", "main.py", "models.py"
+            "app", "scripts", "alembic",
+            "packaging", "main.py"
         )
     }
     Invoke-Checked "Backend lint" {

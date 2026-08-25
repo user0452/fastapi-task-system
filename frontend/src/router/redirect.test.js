@@ -3,22 +3,19 @@ import { postLoginRouteFromHash, safePostLoginRoute } from './redirect'
 
 
 describe('safePostLoginRoute', () => {
-  it('restores a valid course panel and citation location', () => {
-    expect(safePostLoginRoute('/learn/42?panel=materials&material_id=8&chunk=13')).toBe(
-      '/learn/42?panel=materials&material_id=8&chunk=13'
+  it('restores one of the three Adaptive Tutor areas', () => {
+    expect(safePostLoginRoute('/learn/42?view=sources&material_id=8&chunk=13')).toBe(
+      '/learn/42?view=sources&material_id=8&chunk=13'
     )
   })
 
-  it('restores the active session and every current workspace panel', () => {
-    for (const panel of ['overview', 'today', 'diagnostic', 'knowledge', 'plan', 'practice', 'wrong', 'memory', 'materials']) {
-      expect(safePostLoginRoute(`/learn/42?session=17&panel=${panel}`)).toBe(
-        `/learn/42?panel=${panel}&session=17`
-      )
-    }
+  it('maps old bookmarks to a core area without restoring retired panels', () => {
+    expect(safePostLoginRoute('/learn/42?panel=plan')).toBe('/learn/42?view=learn')
+    expect(safePostLoginRoute('/learn/42?panel=memory')).toBe('/learn/42?view=learn')
   })
 
-  it('drops unknown parameters and invalid panels', () => {
-    expect(safePostLoginRoute('/learn/42?panel=admin&next=https://example.com')).toBe('/learn/42')
+  it('drops unknown parameters and invalid views', () => {
+    expect(safePostLoginRoute('/learn/42?view=admin&next=https://example.com')).toBe('/learn/42')
   })
 
   it.each(['https://example.com', '//example.com', '/learn/not-a-number', '/settings', ''])(
@@ -29,8 +26,8 @@ describe('safePostLoginRoute', () => {
 
 
 describe('postLoginRouteFromHash', () => {
-  it('keeps the original course route across repeated 401 redirects', () => {
-    const route = '/learn/42?panel=practice'
+  it('keeps the core course route across repeated 401 redirects', () => {
+    const route = '/learn/42?view=progress'
     expect(postLoginRouteFromHash(`#${route}`)).toBe(route)
     expect(postLoginRouteFromHash(`#/login?redirect=${encodeURIComponent(route)}`)).toBe(route)
   })

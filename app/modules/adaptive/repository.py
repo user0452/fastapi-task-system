@@ -21,6 +21,17 @@ def _row(cursor) -> dict[str, Any] | None:
     return cursor.fetchone()
 
 
+def _json_value(value: Any, default: Any = None) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return default
+
+
 def create_curriculum_build(
     cursor,
     *,
@@ -238,6 +249,11 @@ def list_objectives(cursor, user_id: int, course_id: int) -> list[dict[str, Any]
                objective.created_at, objective.updated_at,
                COALESCE(state.mastery, 0) AS mastery,
                COALESCE(state.confidence, 0) AS confidence,
+               COALESCE(state.quantity_confidence, 0) AS quantity_confidence,
+               COALESCE(state.consistency_confidence, 0) AS consistency_confidence,
+               COALESCE(state.diversity_confidence, 0) AS diversity_confidence,
+               COALESCE(state.quality_confidence, 0) AS quality_confidence,
+               COALESCE(state.recency_confidence, 0) AS recency_confidence,
                COALESCE(state.attempt_count, 0) AS attempt_count,
                COALESCE(state.correct_count, 0) AS correct_count,
                COALESCE(state.incorrect_count, 0) AS incorrect_count,
@@ -260,7 +276,15 @@ def list_objectives(cursor, user_id: int, course_id: int) -> list[dict[str, Any]
     for row in rows:
         row["id"] = int(row["id"])
         row["mastery"] = float(row.get("mastery") or 0)
-        row["confidence"] = float(row.get("confidence") or 0)
+        for key in (
+            "confidence",
+            "quantity_confidence",
+            "consistency_confidence",
+            "diversity_confidence",
+            "quality_confidence",
+            "recency_confidence",
+        ):
+            row[key] = float(row.get(key) or 0)
         row["importance"] = float(row.get("importance") or 0)
         row["extraction_confidence"] = float(row.get("extraction_confidence") or 0)
         row["state"] = row.pop("learner_state")
@@ -321,8 +345,9 @@ def list_objective_evidence(cursor, user_id: int, course_id: int) -> dict[int, l
 def get_question(cursor, user_id: int, course_id: int, question_id: int) -> dict[str, Any] | None:
     cursor.execute(
         """
-        SELECT id, content, question_type, answer, rubric, explanation,
-               difficulty, source_type, source_material_id, source_url,
+        SELECT id, content, question_type, options_json, answer, tolerance, rubric, explanation,
+               difficulty, source_type, source_material_id, source_url, source_file,
+               import_batch_id, raw_provenance_json, validation_json,
                quality_score, status, model, prompt_version,
                generation_context_json, created_at
         FROM questions
@@ -334,13 +359,15 @@ def get_question(cursor, user_id: int, course_id: int, question_id: int) -> dict
     if question is None:
         return None
     question["quality_score"] = float(question.get("quality_score") or 0)
-    if isinstance(question.get("generation_context_json"), str):
-        try:
-            question["generation_context"] = json.loads(question.pop("generation_context_json"))
-        except json.JSONDecodeError:
-            question["generation_context"] = None
-    else:
-        question["generation_context"] = question.pop("generation_context_json", None)
+    if question.get("tolerance") is not None:
+        question["tolerance"] = float(question["tolerance"])
+    for source_key, public_key in (
+        ("options_json", "options"),
+        ("generation_context_json", "generation_context"),
+        ("raw_provenance_json", "raw_provenance"),
+        ("validation_json", "validation"),
+    ):
+        question[public_key] = _json_value(question.pop(source_key, None), [] if public_key == "options" else None)
     cursor.execute(
         """
         SELECT link.objective_id, link.relevance, link.coverage_type,
@@ -372,8 +399,8 @@ def list_questions(cursor, user_id: int, course_id: int, limit: int = 200) -> li
     cursor.execute(
         """
         SELECT q.id, q.content, q.question_type, q.difficulty, q.source_type,
-               q.source_material_id, q.source_url, q.quality_score, q.status,
-               q.created_at, COUNT(DISTINCT attempt.id) AS attempt_count,
+               q.source_material_id, q.source_url, q.source_file, q.import_batch_id,
+               q.quality_score, q.status, q.created_at, COUNT(DISTINCT attempt.id) AS attempt_count,
                GROUP_CONCAT(DISTINCT objective.title ORDER BY objective.id SEPARATOR ', ') AS objective_titles
         FROM questions q
         LEFT JOIN question_attempts attempt ON attempt.question_id = q.id
@@ -381,7 +408,8 @@ def list_questions(cursor, user_id: int, course_id: int, limit: int = 200) -> li
         LEFT JOIN learning_objectives objective ON objective.id = link.objective_id
         WHERE q.user_id = %s AND q.course_id = %s
         GROUP BY q.id, q.content, q.question_type, q.difficulty, q.source_type,
-                 q.source_material_id, q.source_url, q.quality_score, q.status, q.created_at
+                 q.source_material_id, q.source_url, q.source_file, q.import_batch_id,
+                 q.quality_score, q.status, q.created_at
         ORDER BY q.created_at DESC, q.id DESC
         LIMIT %s
         """,
@@ -402,6 +430,43 @@ def question_exists(cursor, user_id: int, course_id: int, content: str) -> bool:
     return _row(cursor) is not None
 
 
+def replace_question_objectives(
+    cursor,
+    *,
+    user_id: int,
+    course_id: int,
+    question_id: int,
+    objective_links: list[dict[str, Any]],
+) -> bool:
+    cursor.execute(
+        "SELECT id FROM questions WHERE id = %s AND user_id = %s AND course_id = %s FOR UPDATE",
+        (question_id, user_id, course_id),
+    )
+    if _row(cursor) is None:
+        return False
+    cursor.execute("DELETE FROM question_objectives WHERE question_id = %s", (question_id,))
+    for link in objective_links:
+        cursor.execute(
+            """
+            INSERT INTO question_objectives
+                (question_id, objective_id, relevance, coverage_type, confidence)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (
+                question_id,
+                int(link["objective_id"]),
+                float(link.get("relevance") or 0.5),
+                str(link.get("coverage_type") or "direct"),
+                float(link.get("confidence") or 0.5),
+            ),
+        )
+    cursor.execute(
+        "UPDATE questions SET status = %s WHERE id = %s AND user_id = %s AND course_id = %s",
+        ("active" if objective_links else "unmatched", question_id, user_id, course_id),
+    )
+    return True
+
+
 def create_question(
     cursor,
     *,
@@ -410,29 +475,43 @@ def create_question(
     item: dict[str, Any],
     objective_ids: list[int],
     generation_context: dict[str, Any] | None = None,
+    import_batch_id: int | None = None,
 ) -> dict[str, Any]:
-    status = "active" if objective_ids else "unmatched"
+    status = "active" if objective_ids and item.get("parse_status", "ready") == "ready" else (
+        "needs_review" if item.get("parse_status") == "needs_review" else "unmatched"
+    )
     cursor.execute(
         """
         INSERT INTO questions
-            (user_id, course_id, content, question_type, answer, rubric,
+            (user_id, course_id, content, question_type, options_json, answer, tolerance, rubric,
              explanation, difficulty, source_type, source_material_id,
-             source_url, quality_score, status, model, prompt_version,
+             source_url, source_file, import_batch_id, raw_provenance_json,
+             validation_json, quality_score, status, model, prompt_version,
              generation_context_json)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s)
         """,
         (
             user_id,
             course_id,
             item["content"],
             item.get("question_type", "short_answer"),
-            item["answer"],
+            json.dumps(item.get("options") or [], ensure_ascii=False),
+            item.get("answer") or "",
+            item.get("tolerance"),
             item.get("rubric"),
             item.get("explanation"),
             item.get("difficulty", "medium"),
             item.get("source_type", "user_upload"),
             item.get("source_material_id"),
             item.get("source_url"),
+            item.get("source_file"),
+            import_batch_id or item.get("import_batch_id"),
+            json.dumps(item.get("raw_provenance") or {}, ensure_ascii=False),
+            json.dumps(item.get("validation") or {}, ensure_ascii=False),
             float(item.get("quality_score", 0.8)),
             status,
             item.get("model"),
@@ -471,6 +550,9 @@ def find_best_question(
     objective_id: int,
     desired_difficulty: str,
     coverage_types: list[str] | None = None,
+    action_type: str | None = None,
+    recent_question_ids: set[int] | None = None,
+    recent_question_contents: list[str] | None = None,
 ) -> dict[str, Any] | None:
     cursor.execute(
         """
@@ -486,6 +568,7 @@ def find_best_question(
           ON attempt.question_id = q.id AND attempt.user_id = %s
         WHERE q.user_id = %s AND q.course_id = %s
           AND link.objective_id = %s AND q.status = 'active'
+          AND link.relevance >= 0.35 AND link.confidence >= 0.35
         GROUP BY q.id, q.content, q.question_type, q.answer, q.rubric,
                  q.explanation, q.difficulty, q.source_type, q.source_material_id,
                  q.source_url, q.quality_score, link.relevance,
@@ -498,6 +581,9 @@ def find_best_question(
         candidates,
         desired_difficulty=desired_difficulty,
         coverage_types=coverage_types,
+        action_type=action_type,
+        recent_question_ids=recent_question_ids,
+        recent_question_contents=recent_question_contents,
     )
     if selected is None:
         return None
@@ -599,10 +685,25 @@ def complete_action(cursor, user_id: int, action_id: int) -> None:
     )
 
 
+def supersede_queued_actions(cursor, user_id: int, course_id: int) -> int:
+    """Invalidate policy snapshots made before new course evidence arrived."""
+    cursor.execute(
+        """
+        UPDATE learning_actions
+        SET status = 'superseded', completed_at = CURRENT_TIMESTAMP(6)
+        WHERE user_id = %s AND course_id = %s AND status = 'queued'
+        """,
+        (user_id, course_id),
+    )
+    return int(cursor.rowcount or 0)
+
+
 def get_state(cursor, user_id: int, course_id: int, objective_id: int) -> dict[str, Any] | None:
     cursor.execute(
         """
-        SELECT id, mastery, confidence, attempt_count, correct_count,
+        SELECT id, mastery, confidence, quantity_confidence, consistency_confidence,
+               diversity_confidence, quality_confidence, recency_confidence,
+               attempt_count, correct_count,
                incorrect_count, success_streak, failure_streak,
                last_practiced_at, last_success_at, last_failure_at,
                state, model_version
@@ -614,7 +715,15 @@ def get_state(cursor, user_id: int, course_id: int, objective_id: int) -> dict[s
     )
     row = _row(cursor)
     if row is not None:
-        for key in ("mastery", "confidence"):
+        for key in (
+            "mastery",
+            "confidence",
+            "quantity_confidence",
+            "consistency_confidence",
+            "diversity_confidence",
+            "quality_confidence",
+            "recency_confidence",
+        ):
             row[key] = float(row.get(key) or 0)
     return row
 
@@ -624,12 +733,22 @@ def save_state(cursor, user_id: int, course_id: int, objective_id: int, state: d
         """
         INSERT INTO student_objective_states
             (user_id, course_id, objective_id, mastery, confidence,
+             quantity_confidence, consistency_confidence, diversity_confidence,
+             quality_confidence, recency_confidence,
              attempt_count, correct_count, incorrect_count, success_streak,
              failure_streak, last_practiced_at, last_success_at,
              last_failure_at, state, model_version)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
             mastery = VALUES(mastery), confidence = VALUES(confidence),
+            quantity_confidence = VALUES(quantity_confidence),
+            consistency_confidence = VALUES(consistency_confidence),
+            diversity_confidence = VALUES(diversity_confidence),
+            quality_confidence = VALUES(quality_confidence),
+            recency_confidence = VALUES(recency_confidence),
             attempt_count = VALUES(attempt_count), correct_count = VALUES(correct_count),
             incorrect_count = VALUES(incorrect_count), success_streak = VALUES(success_streak),
             failure_streak = VALUES(failure_streak), last_practiced_at = VALUES(last_practiced_at),
@@ -642,6 +761,11 @@ def save_state(cursor, user_id: int, course_id: int, objective_id: int, state: d
             objective_id,
             state["mastery"],
             state["confidence"],
+            state.get("quantity_confidence", 0),
+            state.get("consistency_confidence", 0),
+            state.get("diversity_confidence", 0),
+            state.get("quality_confidence", 0),
+            state.get("recency_confidence", 0),
             state["attempt_count"],
             state["correct_count"],
             state["incorrect_count"],
@@ -668,13 +792,18 @@ def create_question_attempt(
     grader_type: str,
     grader_version: str,
     feedback: str,
+    grader_model: str | None = None,
+    grader_prompt_version: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
 ) -> int:
     cursor.execute(
         """
         INSERT INTO question_attempts
             (user_id, course_id, question_id, action_id, response, score,
-             grader_type, grader_version, feedback)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             grader_type, grader_version, grader_model, grader_prompt_version,
+             feedback, metadata_json, idempotency_key)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             user_id,
@@ -685,7 +814,11 @@ def create_question_attempt(
             score,
             grader_type,
             grader_version,
+            grader_model,
+            grader_prompt_version,
             feedback[:5000],
+            json.dumps(metadata or {}, ensure_ascii=False),
+            idempotency_key[:160] if idempotency_key else None,
         ),
     )
     return int(cursor.lastrowid)
@@ -700,6 +833,8 @@ def create_learning_evidence(
     source_type: str,
     question_id: int | None,
     attempt_id: int | None,
+    action_id: int | None = None,
+    idempotency_key: str | None = None,
     response: str | None,
     score: float,
     difficulty: str,
@@ -709,17 +844,21 @@ def create_learning_evidence(
     misconception_text: str | None,
     misconception_confidence: float | None,
     update: dict[str, Any],
+    grader_model: str | None = None,
+    grader_prompt_version: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> int:
     cursor.execute(
         """
         INSERT INTO learning_evidence
             (user_id, course_id, objective_id, source_type, question_id,
-             attempt_id, response, score, difficulty, grader_type,
-             grader_version, misconception_code, misconception_text,
+            attempt_id, action_id, idempotency_key, response, score, difficulty, grader_type,
+             grader_version, grader_model, grader_prompt_version,
+             misconception_code, misconception_text,
              misconception_confidence, mastery_before, mastery_after,
-             confidence_before, confidence_after, update_reason)
+             confidence_before, confidence_after, update_reason, metadata_json)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s)
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             user_id,
@@ -728,11 +867,15 @@ def create_learning_evidence(
             source_type,
             question_id,
             attempt_id,
+            action_id,
+            idempotency_key[:160] if idempotency_key else None,
             response,
             score,
             difficulty,
             grader_type,
             grader_version,
+            grader_model,
+            grader_prompt_version,
             misconception_code,
             misconception_text,
             misconception_confidence,
@@ -741,6 +884,7 @@ def create_learning_evidence(
             update.get("confidence_before"),
             update.get("confidence"),
             update.get("update_reason"),
+            json.dumps(metadata or {}, ensure_ascii=False),
         ),
     )
     return int(cursor.lastrowid)
@@ -755,21 +899,58 @@ def upsert_misconception(
     code: str,
     description: str,
     confidence: float,
+    success_evidence: bool = False,
 ) -> None:
     cursor.execute(
         """
         INSERT INTO misconceptions
-            (user_id, course_id, objective_id, code, description, confidence)
-        VALUES (%s, %s, %s, %s, %s, %s)
+            (user_id, course_id, objective_id, code, description, confidence,
+             failure_evidence_count)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
             description = VALUES(description),
             confidence = GREATEST(confidence, VALUES(confidence)),
             occurrence_count = occurrence_count + 1,
+            failure_evidence_count = failure_evidence_count + VALUES(failure_evidence_count),
             last_seen_at = CURRENT_TIMESTAMP(6),
             resolved_at = NULL
         """,
-        (user_id, course_id, objective_id, code[:100], description[:500], confidence),
+        (
+            user_id,
+            course_id,
+            objective_id,
+            code[:100],
+            description[:500],
+            confidence,
+            0 if success_evidence else 1,
+        ),
     )
+
+
+def confirm_misconception(
+    cursor,
+    *,
+    user_id: int,
+    course_id: int,
+    objective_id: int,
+    code: str,
+) -> int:
+    """Count contrary targeted evidence and resolve only after two successes."""
+    cursor.execute(
+        """
+        UPDATE misconceptions
+        SET success_evidence_count = success_evidence_count + 1,
+            last_confirmed_at = CURRENT_TIMESTAMP(6),
+            resolved_at = CASE
+                WHEN success_evidence_count + 1 >= 2 THEN CURRENT_TIMESTAMP(6)
+                ELSE resolved_at
+            END
+        WHERE user_id = %s AND course_id = %s AND objective_id = %s
+          AND code = %s AND resolved_at IS NULL
+        """,
+        (user_id, course_id, objective_id, code[:100]),
+    )
+    return int(cursor.rowcount or 0)
 
 
 def resolve_misconceptions(
@@ -808,7 +989,8 @@ def list_misconceptions(cursor, user_id: int, course_id: int) -> dict[int, list[
     cursor.execute(
         """
         SELECT id, objective_id, code, description, confidence,
-               occurrence_count, first_seen_at, last_seen_at, resolved_at
+               occurrence_count, success_evidence_count, failure_evidence_count,
+               first_seen_at, last_seen_at, last_confirmed_at, resolved_at
         FROM misconceptions
         WHERE user_id = %s AND course_id = %s AND resolved_at IS NULL
         ORDER BY last_seen_at DESC, id DESC
@@ -821,6 +1003,8 @@ def list_misconceptions(cursor, user_id: int, course_id: int) -> dict[int, list[
         row["id"] = int(row["id"])
         row["confidence"] = float(row.get("confidence") or 0)
         row["occurrence_count"] = int(row.get("occurrence_count") or 0)
+        row["success_evidence_count"] = int(row.get("success_evidence_count") or 0)
+        row["failure_evidence_count"] = int(row.get("failure_evidence_count") or 0)
         grouped.setdefault(objective_id, []).append(row)
     return grouped
 
@@ -829,10 +1013,11 @@ def evidence_for_objective(cursor, user_id: int, course_id: int, objective_id: i
     cursor.execute(
         """
         SELECT id, source_type, question_id, attempt_id, response, score,
-               difficulty, grader_type, grader_version, misconception_code,
+               difficulty, grader_type, grader_version, grader_model,
+               grader_prompt_version, misconception_code,
                misconception_text, misconception_confidence, mastery_before,
                mastery_after, confidence_before, confidence_after,
-               update_reason, created_at
+               update_reason, metadata_json, created_at
         FROM learning_evidence
         WHERE user_id = %s AND course_id = %s AND objective_id = %s
         ORDER BY created_at DESC, id DESC
@@ -843,10 +1028,275 @@ def evidence_for_objective(cursor, user_id: int, course_id: int, objective_id: i
     rows = _rows(cursor)
     for row in rows:
         row["score"] = float(row.get("score") or 0)
+        row["metadata"] = _json_value(row.pop("metadata_json", None), {})
+        row["coverage_type"] = row["metadata"].get("coverage_type")
+        row["source_type"] = row.get("source_type")
         for key in ("mastery_before", "mastery_after", "confidence_before", "confidence_after"):
             if row.get(key) is not None:
                 row[key] = float(row[key])
     return rows
+
+
+def recent_evidence_for_objective(
+    cursor,
+    user_id: int,
+    course_id: int,
+    objective_id: int,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Load compact evidence facts used by confidence and Tutor context."""
+    return evidence_for_objective(cursor, user_id, course_id, objective_id, limit=limit)
+
+
+def get_import_batch(cursor, user_id: int, course_id: int, batch_id: int) -> dict[str, Any] | None:
+    cursor.execute(
+        """
+        SELECT id, user_id, course_id, filename, file_type, source_type,
+               idempotency_key, status, parsed_count, matched_count,
+               unmatched_count, invalid_count, items_json, created_at, completed_at
+        FROM question_import_batches
+        WHERE id = %s AND user_id = %s AND course_id = %s
+        """,
+        (batch_id, user_id, course_id),
+    )
+    row = _row(cursor)
+    if row is not None:
+        row["items"] = _json_value(row.pop("items_json", None), [])
+    return row
+
+
+def get_import_batch_by_key(cursor, user_id: int, course_id: int, idempotency_key: str) -> dict[str, Any] | None:
+    cursor.execute(
+        """
+        SELECT id, user_id, course_id, filename, file_type, source_type,
+               idempotency_key, status, parsed_count, matched_count,
+               unmatched_count, invalid_count, items_json, created_at, completed_at
+        FROM question_import_batches
+        WHERE user_id = %s AND course_id = %s AND idempotency_key = %s
+        LIMIT 1
+        """,
+        (user_id, course_id, idempotency_key[:160]),
+    )
+    row = _row(cursor)
+    if row is not None:
+        row["items"] = _json_value(row.pop("items_json", None), [])
+    return row
+
+
+def list_import_batches(
+    cursor,
+    user_id: int,
+    course_id: int,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT id, filename, file_type, source_type, idempotency_key, status,
+               parsed_count, matched_count, unmatched_count, invalid_count,
+               created_at, completed_at
+        FROM question_import_batches
+        WHERE user_id = %s AND course_id = %s
+        ORDER BY created_at DESC, id DESC
+        LIMIT %s
+        """,
+        (user_id, course_id, min(max(int(limit), 1), 50)),
+    )
+    return _rows(cursor)
+
+
+def create_import_batch(
+    cursor,
+    *,
+    user_id: int,
+    course_id: int,
+    filename: str,
+    file_type: str,
+    idempotency_key: str,
+    items: list[dict[str, Any]],
+    parsed_count: int,
+    matched_count: int,
+    unmatched_count: int,
+    invalid_count: int,
+) -> dict[str, Any]:
+    existing = get_import_batch_by_key(cursor, user_id, course_id, idempotency_key)
+    if existing is not None:
+        return existing
+    cursor.execute(
+        """
+        INSERT INTO question_import_batches
+            (user_id, course_id, filename, file_type, idempotency_key, status,
+             parsed_count, matched_count, unmatched_count, invalid_count, items_json)
+        VALUES (%s, %s, %s, %s, %s, 'preview', %s, %s, %s, %s, %s)
+        """,
+        (
+            user_id,
+            course_id,
+            filename[:255],
+            file_type[:20],
+            idempotency_key[:160],
+            parsed_count,
+            matched_count,
+            unmatched_count,
+            invalid_count,
+            json.dumps(items, ensure_ascii=False),
+        ),
+    )
+    return get_import_batch(cursor, user_id, course_id, int(cursor.lastrowid)) or {"id": int(cursor.lastrowid)}
+
+
+def mark_import_batch_imported(cursor, user_id: int, course_id: int, batch_id: int) -> None:
+    cursor.execute(
+        """
+        UPDATE question_import_batches
+        SET status = 'imported', completed_at = CURRENT_TIMESTAMP(6)
+        WHERE id = %s AND user_id = %s AND course_id = %s AND status = 'preview'
+        """,
+        (batch_id, user_id, course_id),
+    )
+
+
+def create_tutor_check(
+    cursor,
+    *,
+    user_id: int,
+    course_id: int,
+    objective_id: int,
+    action_id: int | None,
+    question: str,
+    reference_answer: str,
+    rubric: str | None,
+) -> dict[str, Any]:
+    cursor.execute(
+        """
+        INSERT INTO tutor_checks
+            (user_id, course_id, objective_id, action_id, question,
+             reference_answer, rubric)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (user_id, course_id, objective_id, action_id, question[:8000], reference_answer[:5000], rubric[:5000] if rubric else None),
+    )
+    return get_tutor_check(cursor, user_id, course_id, int(cursor.lastrowid)) or {"id": int(cursor.lastrowid)}
+
+
+def get_tutor_check(cursor, user_id: int, course_id: int, check_id: int) -> dict[str, Any] | None:
+    cursor.execute(
+        """
+        SELECT id, user_id, course_id, objective_id, action_id, question,
+               reference_answer, rubric, status, response, score,
+               grader_type, grader_version, grader_model, grader_prompt_version,
+               evidence_id, created_at, submitted_at
+        FROM tutor_checks
+        WHERE id = %s AND user_id = %s AND course_id = %s
+        """,
+        (check_id, user_id, course_id),
+    )
+    row = _row(cursor)
+    if row is not None and row.get("score") is not None:
+        row["score"] = float(row["score"])
+    return row
+
+
+def complete_tutor_check(
+    cursor,
+    *,
+    user_id: int,
+    course_id: int,
+    check_id: int,
+    response: str,
+    score: float,
+    grader_type: str,
+    grader_version: str,
+    grader_model: str | None,
+    grader_prompt_version: str | None,
+    evidence_id: int,
+) -> dict[str, Any] | None:
+    cursor.execute(
+        """
+        UPDATE tutor_checks
+        SET status = 'submitted', response = %s, score = %s,
+            grader_type = %s, grader_version = %s, grader_model = %s,
+            grader_prompt_version = %s, evidence_id = %s,
+            submitted_at = CURRENT_TIMESTAMP(6)
+        WHERE id = %s AND user_id = %s AND course_id = %s AND status = 'open'
+        """,
+        (
+            response[:5000], score, grader_type, grader_version, grader_model,
+            grader_prompt_version, evidence_id, check_id, user_id, course_id,
+        ),
+    )
+    return get_tutor_check(cursor, user_id, course_id, check_id)
+
+
+def recent_questions_for_objective(
+    cursor,
+    user_id: int,
+    course_id: int,
+    objective_id: int,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT q.id, q.content, q.question_type, q.difficulty, q.source_type,
+               link.coverage_type, MAX(attempt.created_at) AS last_attempt_at,
+               COUNT(attempt.id) AS attempt_count
+        FROM questions q
+        JOIN question_objectives link ON link.question_id = q.id
+        LEFT JOIN question_attempts attempt
+          ON attempt.question_id = q.id AND attempt.user_id = %s
+        WHERE q.user_id = %s AND q.course_id = %s AND link.objective_id = %s
+        GROUP BY q.id, q.content, q.question_type, q.difficulty, q.source_type, link.coverage_type
+        ORDER BY COALESCE(MAX(attempt.created_at), '1970-01-01') DESC, q.id DESC
+        LIMIT %s
+        """,
+        (user_id, user_id, course_id, objective_id, min(max(int(limit), 1), 50)),
+    )
+    return _rows(cursor)
+
+
+def get_evidence_by_idempotency(
+    cursor,
+    user_id: int,
+    course_id: int,
+    source_type: str,
+    idempotency_key: str,
+) -> dict[str, Any] | None:
+    cursor.execute(
+        """
+        SELECT id, objective_id, question_id, attempt_id, action_id, score,
+               grader_type, grader_version, grader_model, grader_prompt_version,
+               misconception_code, misconception_text, mastery_after,
+               confidence_after, update_reason, created_at
+        FROM learning_evidence
+        WHERE user_id = %s AND course_id = %s AND source_type = %s
+          AND idempotency_key = %s
+        LIMIT 1
+        """,
+        (user_id, course_id, source_type, idempotency_key[:160]),
+    )
+    row = _row(cursor)
+    if row is not None:
+        for key in ("score", "mastery_after", "confidence_after"):
+            if row.get(key) is not None:
+                row[key] = float(row[key])
+    return row
+
+
+def evidence_for_action(cursor, user_id: int, action_id: int) -> dict[str, Any] | None:
+    cursor.execute(
+        """
+        SELECT evidence.id, evidence.objective_id, evidence.question_id,
+               evidence.attempt_id, evidence.score, evidence.grader_type,
+               evidence.grader_version, evidence.response,
+               evidence.mastery_after, evidence.confidence_after,
+               evidence.update_reason, evidence.created_at
+        FROM learning_evidence evidence
+        WHERE evidence.user_id = %s AND evidence.action_id = %s
+        ORDER BY evidence.id DESC
+        LIMIT 1
+        """,
+        (user_id, action_id),
+    )
+    return _row(cursor)
 
 
 def course_counts(cursor, user_id: int, course_id: int) -> dict[str, int]:
@@ -871,6 +1321,33 @@ def course_counts(cursor, user_id: int, course_id: int) -> dict[str, int]:
         (user_id, course_id),
     )
     counts["unmatched_question_count"] = int((_row(cursor) or {}).get("total") or 0)
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM questions
+        WHERE user_id = %s AND course_id = %s AND status = 'needs_review'
+        """,
+        (user_id, course_id),
+    )
+    counts["needs_review_question_count"] = int((_row(cursor) or {}).get("total") or 0)
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM questions
+        WHERE user_id = %s AND course_id = %s AND source_type <> 'generated'
+        """,
+        (user_id, course_id),
+    )
+    counts["real_question_count"] = int((_row(cursor) or {}).get("total") or 0)
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM questions
+        WHERE user_id = %s AND course_id = %s AND source_type = 'generated'
+        """,
+        (user_id, course_id),
+    )
+    counts["generated_question_count"] = int((_row(cursor) or {}).get("total") or 0)
     return counts
 
 
@@ -879,25 +1356,40 @@ __all__ = [
     "create_action",
     "create_curriculum_build",
     "create_learning_evidence",
+    "create_import_batch",
     "create_question",
     "create_question_attempt",
+    "create_tutor_check",
     "evidence_for_objective",
+    "evidence_for_action",
     "find_best_question",
     "get_action",
     "get_active_action",
+    "get_import_batch",
+    "get_import_batch_by_key",
     "get_question",
     "get_state",
+    "get_evidence_by_idempotency",
+    "get_tutor_check",
     "latest_curriculum_build",
     "list_misconceptions",
+    "list_import_batches",
     "list_objective_evidence",
     "list_objectives",
     "list_questions",
     "list_relations",
+    "mark_import_batch_imported",
     "persist_curriculum",
     "question_exists",
+    "replace_question_objectives",
     "resolve_misconceptions",
     "save_state",
+    "complete_tutor_check",
+    "confirm_misconception",
+    "recent_evidence_for_objective",
+    "recent_questions_for_objective",
     "start_action",
     "complete_action",
+    "supersede_queued_actions",
     "upsert_misconception",
 ]

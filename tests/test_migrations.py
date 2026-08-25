@@ -46,6 +46,8 @@ REQUIRED_TABLES = {
     "learning_evidence",
     "student_objective_states",
     "misconceptions",
+    "question_import_batches",
+    "tutor_checks",
     "course_material_blocks",
     "session_retrieval_contexts",
     "session_context_states",
@@ -67,7 +69,10 @@ ALEMBIC_INTERNAL_TARGETS = {
     "20260807_11_conversation_summary_blocks.py": "0028",
 }
 
-ADAPTIVE_ALEMBIC_REVISIONS = {"20260825_12_adaptive_learning_v2.py"}
+ADAPTIVE_ALEMBIC_REVISIONS = {
+    "20260825_12_adaptive_learning_v2.py",
+    "20260825_13_adaptive_tutor_stage2.py",
+}
 
 
 def _alembic_internal_target(path: Path) -> str:

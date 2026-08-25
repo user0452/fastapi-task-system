@@ -8,12 +8,10 @@ from pydantic import ValidationError
 
 from app.integrations.embedding import service as embedding_service
 from app.main import STATIC_ROOT
-from app.modules.agent.schemas import AgentChatRequest, ChatSessionCreate
+from app.modules.adaptive.schemas import QuestionBankItem
 from app.modules.auth.schemas import AuthCredentials
 from app.modules.courses.schemas import CourseCreate
-from app.modules.learning.schemas import LearningAnswer
 from app.modules.materials.schemas import MaterialSearchRequest, TextMaterialCreate
-from app.modules.resources.schemas import ExternalResourceSearchRequest
 
 
 def test_public_string_inputs_are_trimmed_before_validation():
@@ -27,26 +25,21 @@ def test_public_string_inputs_are_trimmed_before_validation():
         "username": "learner",
         "password": "password-1",
     }
-    assert AgentChatRequest(message="  请讲解索引  ").message == "请讲解索引"
-    assert ChatSessionCreate(title="  复习会话  ").title == "复习会话"
-    assert LearningAnswer(question_id=1, user_answer="  我的答案  ").user_answer == "我的答案"
     assert MaterialSearchRequest(query="  事务隔离  ").query == "事务隔离"
     assert TextMaterialCreate(title="  讲义  ", content="  正文  ").content == "正文"
-    assert ExternalResourceSearchRequest(topic="  边界值  ").topic == "边界值"
+    assert QuestionBankItem(content="  判断一个网络场景  ", answer="  可以  ").content == "判断一个网络场景"
 
 
 @pytest.mark.parametrize(
     ("model", "payload"),
     [
         (CourseCreate, {"name": "   "}),
-        (AgentChatRequest, {"message": "\n\t"}),
-        (LearningAnswer, {"question_id": 1, "user_answer": "  "}),
         (MaterialSearchRequest, {"query": "  "}),
         (TextMaterialCreate, {"title": "标题", "content": "\r\n"}),
-        (ExternalResourceSearchRequest, {"topic": "  "}),
+        (QuestionBankItem, {"content": "短", "answer": "答案"}),
     ],
 )
-def test_required_string_inputs_reject_blank_content(model, payload):
+def test_required_string_inputs_reject_blank_or_too_short_content(model, payload):
     with pytest.raises(ValidationError):
         model.model_validate(payload)
 

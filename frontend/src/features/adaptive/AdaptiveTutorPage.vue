@@ -19,13 +19,18 @@ import {
 } from 'lucide-vue-next'
 import {
   addAdaptiveQuestions,
+  commitAdaptiveQuestionBank,
   getAdaptiveOverview,
   getAdaptiveProgress,
   getAdaptiveSources,
+  previewAdaptiveQuestionBank,
+  sendAdaptiveTutor,
   startAdaptiveAction,
   startAdaptiveDiagnostic,
   submitAdaptiveAction,
-  submitAdaptiveDiagnostic
+  submitAdaptiveDiagnostic,
+  submitAdaptiveTutorCheck,
+  tagAdaptiveQuestion
 } from '../../api/adaptive'
 import { showToast } from '../../components/common/toast'
 import MaterialWorkspace from '../courses/components/MaterialWorkspace.vue'
@@ -49,15 +54,25 @@ const actionAnswer = ref('')
 const actionStarted = ref(false)
 const actionSubmitting = ref(false)
 const actionResult = ref(null)
-const tutorPrompt = ref('')
+const tutorResponse = ref(null)
+const tutorLoading = ref(false)
+const tutorCheckResponse = ref('')
+const tutorCheckSubmitting = ref(false)
 const diagnostic = ref(null)
 const diagnosticAnswers = ref({})
 const diagnosticSubmitting = ref(false)
 const questionSubmitting = ref(false)
+const questionFile = ref(null)
+const importPreview = ref(null)
+const importLoading = ref(false)
+const importCommitting = ref(false)
+const manualObjectiveByQuestion = ref({})
 let overviewRequestSequence = 0
 const questionForm = ref({
   content: '',
   answer: '',
+  question_type: 'short_answer',
+  options: '',
   difficulty: 'medium',
   objective_id: '',
   source_type: 'user_upload'
@@ -106,6 +121,15 @@ const curriculumLabel = {
   ready: 'Curriculum 已就绪',
   degraded: 'Curriculum 需要复核',
   failed: 'Curriculum 构建失败'
+}
+
+const questionTypeLabel = {
+  multiple_choice: '选择题',
+  true_false: '判断题',
+  short_answer: '简答题',
+  calculation: '计算题',
+  scenario: '场景题',
+  essay: '论述题'
 }
 
 function masteryPercent(value) {
@@ -193,6 +217,10 @@ async function beginAction() {
     overview.value.next_action = response.data
     actionStarted.value = true
     actionResult.value = null
+    tutorResponse.value = null
+    if (!response.data?.question) {
+      await askTutor('explain', `请围绕“${actionObjectiveTitle(response.data?.objective_id)}”开始一段简短、基于课程资料的讲解。`)
+    }
   } catch (requestError) {
     showToast({ type: 'error', message: requestError.message || '学习动作无法开始' })
   }
@@ -200,9 +228,16 @@ async function beginAction() {
 
 async function submitAction() {
   if (!action.value?.id || !actionAnswer.value.trim() || actionSubmitting.value) return
+  if (!action.value.question) {
+    showToast({ type: 'info', message: '讲解动作请使用 Tutor Check 提交，普通聊天不会改变 Student Model' })
+    return
+  }
   actionSubmitting.value = true
   try {
-    const response = await submitAdaptiveAction(action.value.id, { response: actionAnswer.value.trim() })
+    const response = await submitAdaptiveAction(action.value.id, {
+      response: actionAnswer.value.trim(),
+      idempotency_key: `web-action-${action.value.id}-${btoa(unescape(encodeURIComponent(actionAnswer.value.trim()))).slice(0, 80)}`
+    })
     if (response.code !== 200) throw new Error(response.message || '答案提交失败')
     actionResult.value = response.data
     overview.value.next_action = response.data.next_action
@@ -216,8 +251,51 @@ async function submitAction() {
   }
 }
 
-function askTutor(prompt) {
-  tutorPrompt.value = prompt
+async function askTutor(intent, prompt) {
+  if (tutorLoading.value) return
+  tutorLoading.value = true
+  try {
+    const response = await sendAdaptiveTutor(courseId.value, {
+      message: prompt,
+      intent,
+      action_id: action.value?.id || null,
+      objective_id: action.value?.objective_id || selectedObjectiveId.value || null
+    })
+    if (response.code !== 200) throw new Error(response.message || 'Tutor 暂时无法回答')
+    tutorResponse.value = response.data
+    if (response.data?.tutor_check) tutorCheckResponse.value = ''
+  } catch (requestError) {
+    showToast({ type: 'error', message: requestError.message || 'Tutor 暂时无法回答' })
+  } finally {
+    tutorLoading.value = false
+  }
+}
+
+async function requestTutorCheck() {
+  await askTutor('check_understanding', '请检查我是否真正理解当前目标，并给我一个需要自己回答的问题。')
+}
+
+async function submitTutorCheck() {
+  const checkId = tutorResponse.value?.tutor_check?.id
+  if (!checkId || !tutorCheckResponse.value.trim() || tutorCheckSubmitting.value) return
+  tutorCheckSubmitting.value = true
+  try {
+    const response = await submitAdaptiveTutorCheck(courseId.value, checkId, {
+      response: tutorCheckResponse.value.trim(),
+      idempotency_key: `web-tutor-check-${checkId}-${Date.now()}`
+    })
+    if (response.code !== 200) throw new Error(response.message || 'Tutor Check 提交失败')
+    actionResult.value = response.data
+    overview.value.next_action = response.data.next_action
+    actionStarted.value = false
+    tutorResponse.value = null
+    tutorCheckResponse.value = ''
+    await loadProgress()
+  } catch (requestError) {
+    showToast({ type: 'error', message: requestError.message || 'Tutor Check 提交失败' })
+  } finally {
+    tutorCheckSubmitting.value = false
+  }
 }
 
 async function beginDiagnostic() {
@@ -262,19 +340,72 @@ async function addQuestion() {
     const response = await addAdaptiveQuestions(courseId.value, [{
       content: form.content.trim(),
       answer: form.answer.trim(),
+      question_type: form.question_type,
+      options: form.options.split(/\n|,/).map(item => item.trim()).filter(Boolean),
       difficulty: form.difficulty,
       source_type: form.source_type,
       objective_ids: [Number(form.objective_id)],
       coverage_type: 'scenario'
     }])
     if (response.code !== 201) throw new Error(response.message || '题目添加失败')
-    questionForm.value = { content: '', answer: '', difficulty: 'medium', objective_id: '', source_type: 'user_upload' }
+    questionForm.value = { content: '', answer: '', question_type: 'short_answer', options: '', difficulty: 'medium', objective_id: '', source_type: 'user_upload' }
     await Promise.all([loadSources(), loadOverview()])
     showToast({ type: 'success', message: '题目已加入题库，后续练习会优先检索它' })
   } catch (requestError) {
     showToast({ type: 'error', message: requestError.message || '题目添加失败' })
   } finally {
     questionSubmitting.value = false
+  }
+}
+
+function selectQuestionFile(event) {
+  questionFile.value = event.target.files?.[0] || null
+  importPreview.value = null
+}
+
+async function previewQuestionFile() {
+  if (!questionFile.value || importLoading.value) return
+  importLoading.value = true
+  try {
+    const response = await previewAdaptiveQuestionBank(courseId.value, questionFile.value)
+    if (response.code !== 202) throw new Error(response.message || '题库解析失败')
+    importPreview.value = response.data
+    showToast({ type: 'success', message: '题库已解析，请确认匹配和待复核项目后导入' })
+  } catch (requestError) {
+    showToast({ type: 'error', message: requestError.message || '题库解析失败' })
+  } finally {
+    importLoading.value = false
+  }
+}
+
+async function commitQuestionFile() {
+  const batchId = importPreview.value?.batch?.id
+  if (!batchId || importCommitting.value) return
+  importCommitting.value = true
+  try {
+    const response = await commitAdaptiveQuestionBank(courseId.value, batchId)
+    if (response.code !== 200) throw new Error(response.message || '题库导入失败')
+    importPreview.value = null
+    questionFile.value = null
+    await Promise.all([loadSources(), loadOverview()])
+    showToast({ type: 'success', message: `题库导入完成：${response.data?.created_count || 0} 道新题` })
+  } catch (requestError) {
+    showToast({ type: 'error', message: requestError.message || '题库导入失败' })
+  } finally {
+    importCommitting.value = false
+  }
+}
+
+async function tagQuestionManually(question) {
+  const objectiveId = manualObjectiveByQuestion.value[question.id]
+  if (!objectiveId) return
+  try {
+    const response = await tagAdaptiveQuestion(courseId.value, question.id, [Number(objectiveId)])
+    if (response.code !== 200) throw new Error(response.message || '手动关联失败')
+    await Promise.all([loadSources(), loadOverview()])
+    showToast({ type: 'success', message: '题目已关联到 Learning Objective' })
+  } catch (requestError) {
+    showToast({ type: 'error', message: requestError.message || '手动关联失败' })
   }
 }
 
@@ -361,18 +492,24 @@ watch(view, nextView => {
                 <button type="button" class="action-button" @click="beginAction">开始 <ArrowRight :size="16" /></button>
               </div>
 
-              <form v-else class="action-answer" @submit.prevent="submitAction">
-                <div v-if="action.question" class="question-block">
-                  <span>题库练习 · {{ action.question.source_type }}</span>
+              <form v-else-if="action.question" class="action-answer" @submit.prevent="submitAction">
+                <div class="question-block">
+                  <span>题库练习 · {{ questionTypeLabel[action.question.question_type] || action.question.question_type }} · {{ action.question.source_type }}</span>
                   <p>{{ action.question.content }}</p>
                 </div>
-                <div v-else class="explain-block">
-                  <span>讲解后的自检</span>
-                  <p>{{ objectiveForAction(action.objective_id)?.description || '用自己的话写下你现在的理解。' }}</p>
+                <div v-if="action.question.question_type === 'multiple_choice'" class="choice-list">
+                  <label v-for="(option, index) in action.question.options || []" :key="option" class="choice-option">
+                    <input v-model="actionAnswer" type="radio" name="adaptive-choice" :value="String.fromCharCode(65 + index)" />
+                    <span>{{ String.fromCharCode(65 + index) }}. {{ option }}</span>
+                  </label>
                 </div>
-                <label class="answer-field">
-                  <span>{{ action.question ? '你的回答' : '用一句话写下你的理解' }}</span>
-                  <textarea v-model="actionAnswer" rows="5" :placeholder="action.question ? '先写判断依据，再写结论……' : '我现在能够……'" autofocus></textarea>
+                <div v-else-if="action.question.question_type === 'true_false'" class="choice-list boolean-choice">
+                  <label class="choice-option"><input v-model="actionAnswer" type="radio" name="adaptive-true-false" value="true" /><span>正确</span></label>
+                  <label class="choice-option"><input v-model="actionAnswer" type="radio" name="adaptive-true-false" value="false" /><span>错误</span></label>
+                </div>
+                <label v-else class="answer-field">
+                  <span>你的回答</span>
+                  <textarea v-model="actionAnswer" rows="5" placeholder="先写判断依据，再写结论……" autofocus></textarea>
                 </label>
                 <div class="answer-actions">
                   <span>提交后会形成 Learning Evidence，并重新计算下一步。</span>
@@ -381,6 +518,30 @@ watch(view, nextView => {
                   </button>
                 </div>
               </form>
+              <section v-else class="tutor-learning-surface">
+                <div class="explain-block">
+                  <span>真实 Tutor 教学交互</span>
+                  <p>讲解、换例子和拆步骤只会返回带课程证据的教学内容，不会直接改写 Student Model。</p>
+                </div>
+                <div v-if="tutorResponse" class="tutor-live-response" aria-live="polite">
+                  <strong>{{ tutorResponse.provider === 'llm' ? 'Tutor' : 'Tutor（确定性兜底）' }}</strong>
+                  <p>{{ tutorResponse.reply }}</p>
+                  <small v-if="tutorResponse.citations?.length">课程引用：{{ tutorResponse.citations.map(item => item.title || item.heading_path || `chunk ${item.chunk_id}`).join(' · ') }}</small>
+                </div>
+                <div v-else class="tutor-live-response"><p>{{ tutorLoading ? 'Tutor 正在读取课程证据……' : '点击一个教学动作开始。' }}</p></div>
+                <div class="tutor-check-actions">
+                  <button type="button" class="quiet-button" :disabled="tutorLoading" @click="askTutor('reframe', '换一种更直观的方式解释当前目标')">换一种解释</button>
+                  <button type="button" class="quiet-button" :disabled="tutorLoading" @click="askTutor('example', '给我一个新的课程场景例子')">给个例子</button>
+                  <button type="button" class="quiet-button" :disabled="tutorLoading" @click="askTutor('break_down', '把这个判断过程拆成几个步骤')">拆开步骤</button>
+                  <button type="button" class="action-button" :disabled="tutorLoading" @click="requestTutorCheck">开始 Tutor Check</button>
+                </div>
+                <form v-if="tutorResponse?.tutor_check" class="tutor-check-form" @submit.prevent="submitTutorCheck">
+                  <span>理解检查 · 这一次回答才会进入 Evidence</span>
+                  <strong>{{ tutorResponse.tutor_check.question }}</strong>
+                  <textarea v-model="tutorCheckResponse" rows="4" placeholder="用自己的话回答，说明判断依据和一个场景……"></textarea>
+                  <button type="submit" class="action-button" :disabled="tutorCheckSubmitting || !tutorCheckResponse.trim()">{{ tutorCheckSubmitting ? '正在评分' : '提交 Tutor Check' }}</button>
+                </form>
+              </section>
             </article>
 
             <article v-else class="empty-action">
@@ -391,6 +552,12 @@ watch(view, nextView => {
               <div class="result-mark"><Check :size="18" /></div>
               <div><span>刚刚写入 Evidence</span><strong>{{ masteryPercent(actionResult.state.mastery) }} 掌握度 · {{ masteryPercent(actionResult.state.confidence) }} 置信度</strong><p>{{ actionResult.feedback }}</p></div>
               <small>{{ actionResult.update_reason }}</small>
+            </article>
+
+            <article v-if="diagnostic?.complete" class="evidence-result diagnostic-evidence-result" aria-live="polite">
+              <div class="result-mark"><Check :size="18" /></div>
+              <div><span>刚刚写入 Evidence</span><strong>{{ diagnostic.result?.count || 0 }} 条诊断证据已写入</strong><p>初始 Student Model 已更新，系统已根据诊断结果重新计算下一动作。</p></div>
+              <small>source_type=diagnostic · {{ diagnostic.result?.question_count || 0 }} 道诊断题</small>
             </article>
 
             <section class="diagnostic-strip">
@@ -418,11 +585,18 @@ watch(view, nextView => {
               <span>当前目标</span><strong>{{ actionObjectiveTitle(action.objective_id) }}</strong><p>{{ objectiveForAction(action.objective_id)?.description || '等待课程目标详情' }}</p>
             </div>
             <div class="tutor-prompts">
-              <button type="button" @click="askTutor('换一个更具体的例子')">换一个例子 <ArrowRight :size="14" /></button>
-              <button type="button" @click="askTutor('把判断步骤拆开')">拆开判断步骤 <ArrowRight :size="14" /></button>
-              <button type="button" @click="askTutor('告诉我这道题在检查什么')">解释这题在检查什么 <ArrowRight :size="14" /></button>
+              <button type="button" :disabled="tutorLoading" @click="askTutor('example', '换一个更具体的课程例子')">换一个例子 <ArrowRight :size="14" /></button>
+              <button type="button" :disabled="tutorLoading" @click="askTutor('break_down', '把判断步骤拆开')">拆开判断步骤 <ArrowRight :size="14" /></button>
+              <button type="button" :disabled="tutorLoading" @click="askTutor('why_this_action', '告诉我这道题在检查什么')">解释这题在检查什么 <ArrowRight :size="14" /></button>
+              <button type="button" :disabled="tutorLoading" @click="requestTutorCheck">开始 Tutor Check <ArrowRight :size="14" /></button>
             </div>
-            <div v-if="tutorPrompt" class="tutor-response"><span>教学提示</span><p>{{ tutorPrompt }}：先看目标要求的动作，再从资料证据里找判断条件，最后用一个新场景自检。</p></div>
+            <div v-if="tutorResponse" class="tutor-response"><span>教学响应 · {{ tutorResponse.intent }}</span><p>{{ tutorResponse.reply }}</p><small v-if="tutorResponse.citations?.length">课程引用：{{ tutorResponse.citations.map(item => item.material_title || item.heading_path || `chunk ${item.chunk_id}`).join(' · ') }}</small><small v-if="tutorResponse.evidence_written === false">本次对话未写入 Evidence</small></div>
+            <form v-if="tutorResponse?.tutor_check" class="tutor-check-form tutor-check-form-sidebar" @submit.prevent="submitTutorCheck">
+              <span>理解检查 · 这一次回答才会进入 Evidence</span>
+              <strong>{{ tutorResponse.tutor_check.question }}</strong>
+              <textarea v-model="tutorCheckResponse" rows="4" placeholder="用自己的话回答，说明判断依据和一个场景……"></textarea>
+              <button type="submit" class="action-button" :disabled="tutorCheckSubmitting || !tutorCheckResponse.trim()">{{ tutorCheckSubmitting ? '正在评分' : '提交 Tutor Check' }}</button>
+            </form>
             <div class="context-foot"><FileText :size="14" /><span>{{ curriculum.objective_count || 0 }} 个目标 · {{ overview?.counts?.evidence_count || 0 }} 条 Evidence</span></div>
           </aside>
         </section>
@@ -451,6 +625,7 @@ watch(view, nextView => {
             <aside v-if="selectedObjective" class="objective-detail">
               <span class="section-eyebrow">WHY THIS STATE</span><h3>{{ selectedObjective.title }}</h3><p>{{ selectedObjective.description }}</p>
               <div class="detail-metrics"><div><span>掌握度</span><strong>{{ masteryPercent(selectedObjective.mastery) }}</strong></div><div><span>置信度</span><strong>{{ masteryPercent(selectedObjective.confidence) }}</strong></div></div>
+              <p class="confidence-explanation">{{ selectedObjective.confidence_explanation || '置信度会随证据数量、一致性、题型覆盖、评分质量和近期性变化。' }}</p>
               <section><strong>最近 Evidence</strong><article v-for="item in selectedObjective.evidence || []" :key="item.id"><span>{{ item.source_type }} · {{ masteryPercent(item.score) }}</span><p>{{ item.update_reason || '已记录一次学习证据' }}</p></article><small v-if="!selectedObjective.evidence?.length">还没有可解释证据。</small></section>
               <section><strong>Misconceptions</strong><article v-for="item in selectedObjective.misconceptions || []" :key="item.id"><span>{{ item.code }} · {{ masteryPercent(item.confidence) }}</span><p>{{ item.description }}</p></article><small v-if="!selectedObjective.misconceptions?.length">当前没有 active misconception。</small></section>
               <section v-if="selectedObjective.prerequisites?.length"><strong>Prerequisites</strong><p v-for="relation in selectedObjective.prerequisites" :key="relation.id">{{ relation.source_title }} · prerequisite · {{ masteryPercent(relation.confidence) }}</p></section>
@@ -467,13 +642,25 @@ watch(view, nextView => {
           <div v-else class="sources-layout">
             <section class="materials-source"><header><div><span class="section-eyebrow">COURSE MATERIALS</span><h3>资料</h3></div><span>PDF · DOCX · Markdown · TXT</span></header><MaterialWorkspace :course-id="courseId" @processed="onMaterialProcessed" /></section>
             <section class="question-source"><header><div><span class="section-eyebrow">QUESTION BANK</span><h3>题库</h3></div><span>真实题目优先</span></header>
+              <form class="question-import-form" @submit.prevent="previewQuestionFile">
+                <label><span>批量导入题库</span><input type="file" accept=".json,.jsonl,.md,.markdown,.txt" @change="selectQuestionFile" /></label>
+                <small>支持 JSON / JSONL / Markdown / TXT；先预览 Objective 匹配、未关联和待复核，再确认导入。</small>
+                <button type="submit" class="secondary-button" :disabled="importLoading || !questionFile">{{ importLoading ? '正在解析' : '预览题库' }}</button>
+              </form>
+              <section v-if="importPreview" class="import-preview">
+                <div class="import-summary"><strong>导入预览</strong><span>{{ importPreview.batch.parsed_count }} 条解析</span><span>{{ importPreview.batch.matched_count }} 条已匹配</span><span>{{ importPreview.batch.unmatched_count }} 条未匹配</span><span>{{ importPreview.batch.invalid_count }} 条待复核/无效</span></div>
+                <article v-for="item in importPreview.items" :key="item.raw_provenance?.line_or_index || item.content" class="import-item"><strong>{{ item.content }}</strong><small>{{ item.tagging?.status === 'matched' ? `匹配 ${item.objective_ids?.length || 0} 个 Objective` : (item.parse_error || '导入后可手动关联') }}</small></article>
+                <button type="button" class="action-button" :disabled="importCommitting" @click="commitQuestionFile">{{ importCommitting ? '正在导入' : '确认导入这批题' }}</button>
+              </section>
               <form class="question-form" @submit.prevent="addQuestion">
                 <label><span>题目</span><textarea v-model="questionForm.content" rows="3" placeholder="给定一个场景，要求学生完成什么可验证判断？"></textarea></label>
                 <label><span>参考答案</span><textarea v-model="questionForm.answer" rows="3" placeholder="明确答案或评分依据"></textarea></label>
-                <div class="question-form-grid"><label><span>关联 Objective</span><select v-model="questionForm.objective_id" required><option value="" disabled>选择学习目标</option><option v-for="objective in objectives" :key="objective.id" :value="objective.id">{{ objective.title }}</option></select></label><label><span>难度</span><select v-model="questionForm.difficulty"><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label></div>
+                <div class="question-form-grid"><label><span>题型</span><select v-model="questionForm.question_type"><option v-for="(label, type) in questionTypeLabel" :key="type" :value="type">{{ label }}</option></select></label><label><span>难度</span><select v-model="questionForm.difficulty"><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label></div>
+                <label v-if="questionForm.question_type === 'multiple_choice'"><span>选项（每行一个）</span><textarea v-model="questionForm.options" rows="3" placeholder="选项 A\n选项 B\n选项 C"></textarea></label>
+                <label><span>关联 Objective</span><select v-model="questionForm.objective_id" required><option value="" disabled>选择学习目标</option><option v-for="objective in objectives" :key="objective.id" :value="objective.id">{{ objective.title }}</option></select></label>
                 <button type="submit" class="action-button" :disabled="questionSubmitting || !questionForm.objective_id"><Upload :size="15" /> {{ questionSubmitting ? '正在保存' : '添加到题库' }}</button>
               </form>
-              <div class="question-list"><article v-for="question in sources?.questions || []" :key="question.id"><div><span class="question-type">{{ question.source_type }}</span><span>{{ question.difficulty }}</span></div><strong>{{ question.content }}</strong><p>{{ question.objective_titles || '尚未关联 Objective' }}</p></article><div v-if="!sources?.questions?.length" class="inline-empty">还没有题目。添加一题后，Learning Policy 会优先检索它。</div></div>
+              <div class="question-list"><article v-for="question in sources?.questions || []" :key="question.id"><div><span class="question-type">{{ questionTypeLabel[question.question_type] || question.source_type }}</span><span>{{ question.difficulty }}</span><span>{{ question.status }}</span></div><strong>{{ question.content }}</strong><p>{{ question.objective_titles || '尚未关联 Objective' }}</p><div v-if="question.status === 'unmatched'" class="manual-tag"><select v-model="manualObjectiveByQuestion[question.id]"><option value="">选择 Objective 手动关联</option><option v-for="objective in objectives" :key="objective.id" :value="objective.id">{{ objective.title }}</option></select><button type="button" class="secondary-button" :disabled="!manualObjectiveByQuestion[question.id]" @click="tagQuestionManually(question)">关联</button></div></article><div v-if="!sources?.questions?.length" class="inline-empty">还没有题目。添加一题后，Learning Policy 会优先检索它。</div></div>
             </section>
           </div>
         </section>
@@ -589,4 +776,33 @@ watch(view, nextView => {
 .materials-source :deep(.materials-workspace) { margin-top: 15px; }.question-form { display: grid; gap: 11px; margin-top: 15px; padding-bottom: 20px; border-bottom: 1px solid var(--border-subtle); }.question-form label { display: grid; gap: 5px; }.question-form label > span { color: var(--text-secondary); font-size: 10px; font-weight: 650; }.question-form textarea, .question-form select { background: var(--surface-secondary); }.question-form select { width: 100%; height: 38px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 12px; }.question-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 9px; }.question-form .action-button { justify-self: start; min-height: 37px; }.question-list { display: grid; }.question-list article { display: grid; gap: 6px; padding: 13px 0; border-bottom: 1px solid var(--border-subtle); }.question-list article > div { display: flex; gap: 8px; color: var(--text-tertiary); font-size: 10px; }.question-type { color: var(--accent-deep); }.question-list article strong { color: var(--text-primary); font-size: 12px; line-height: 1.55; }.question-list article p { color: var(--text-tertiary); font-size: 10px; }
 @media (max-width: 900px) { .learn-layout, .progress-layout, .sources-layout { grid-template-columns: 1fr; gap: 30px; }.tutor-context { position: static; padding-top: 20px; border-top: 1px solid var(--border-subtle); }.objective-detail { padding: 22px 0 0; border-top: 1px solid var(--border-subtle); border-left: 0; }.sources-layout { gap: 42px; } }
 @media (max-width: 620px) { .adaptive-tutor { padding: 22px 14px 46px; }.adaptive-header { flex-direction: column; gap: 15px; }.adaptive-header-meta { justify-content: flex-start; }.adaptive-nav { gap: 15px; overflow-x: auto; }.adaptive-nav button { white-space: nowrap; }.action-surface { padding: 22px 18px; }.action-start-row, .answer-actions, .diagnostic-strip { align-items: stretch; flex-direction: column; }.action-button, .quiet-button { align-self: flex-start; }.evidence-result { grid-template-columns: 30px minmax(0, 1fr); }.evidence-result > small { grid-column: 1 / -1; }.objective-row { grid-template-columns: auto minmax(0, 1fr); }.objective-values { grid-column: 2; justify-items: start; display: flex; align-items: baseline; gap: 7px; }.question-form-grid { grid-template-columns: 1fr; } }
+.choice-list { display: grid; gap: 8px; margin-top: 16px; }
+.choice-option { display: flex; align-items: center; gap: 9px; padding: 11px 12px; border: 1px solid var(--border-subtle); border-radius: 9px; color: var(--text-secondary); background: var(--surface-secondary); font-size: 13px; }
+.choice-option:has(input:checked) { border-color: var(--border-accent); color: var(--accent-deep); background: var(--accent-softer); }
+.choice-option input { accent-color: var(--accent); }
+.tutor-learning-surface { display: grid; gap: 14px; margin-top: 25px; }
+.tutor-live-response { display: grid; gap: 7px; padding: 15px; border: 1px solid var(--border-accent); border-radius: 12px; background: var(--accent-softer); }
+.tutor-live-response strong { color: var(--accent-deep); font-size: 12px; }
+.tutor-live-response p { color: var(--text-primary); font-size: 14px; line-height: 1.75; white-space: pre-wrap; }
+.tutor-live-response small { color: var(--text-tertiary); font-size: 10px; line-height: 1.5; }
+.tutor-check-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.tutor-check-form { display: grid; gap: 9px; padding: 15px; border: 1px solid rgba(169, 101, 0, .22); border-radius: 12px; background: var(--warning-soft); }
+.tutor-check-form > span { color: var(--warning); font-size: 10px; font-weight: 700; }
+.tutor-check-form strong { color: var(--text-primary); font-size: 13px; line-height: 1.6; }
+.tutor-check-form textarea { width: 100%; padding: 11px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-primary); font-size: 13px; line-height: 1.6; resize: vertical; }
+.question-import-form { display: grid; gap: 8px; margin-top: 15px; padding: 14px; border: 1px dashed var(--border-strong); border-radius: 12px; background: var(--surface-secondary); }
+.question-import-form label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 11px; font-weight: 650; }
+.question-import-form input[type='file'] { width: 100%; font-size: 11px; }
+.question-import-form small { color: var(--text-tertiary); font-size: 10px; line-height: 1.5; }
+.question-import-form .secondary-button { justify-self: start; min-height: 35px; }
+.import-preview { display: grid; gap: 9px; margin-top: 12px; padding: 13px; border: 1px solid var(--border-accent); border-radius: 12px; background: var(--accent-softer); }
+.import-summary { display: flex; flex-wrap: wrap; gap: 7px 11px; align-items: center; color: var(--text-tertiary); font-size: 10px; }
+.import-summary strong { width: 100%; color: var(--accent-deep); font-size: 12px; }
+.import-item { display: grid; gap: 4px; padding: 8px 9px; border-radius: 8px; background: var(--surface-primary); }
+.import-item strong { color: var(--text-primary); font-size: 11px; line-height: 1.5; }
+.import-item small { color: var(--text-tertiary); font-size: 10px; }
+.manual-tag { display: flex; gap: 7px; align-items: center; }
+.manual-tag select { min-height: 32px; flex: 1; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface-primary); font-size: 11px; }
+.manual-tag .secondary-button { min-height: 32px; padding-inline: 10px; font-size: 11px; }
+.confidence-explanation { padding: 10px 11px; border-radius: 8px; color: var(--text-secondary); background: var(--surface-secondary); font-size: 11px; line-height: 1.6; }
 </style>

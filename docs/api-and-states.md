@@ -1,189 +1,68 @@
-# API 与业务状态说明
+# Adaptive Tutor API 与状态契约
 
-## 1. 通用约定
+## 正式产品 API
 
-- V1 前缀：`/api/v1`
-- 鉴权：V1 默认使用 HttpOnly Cookie；前端请求启用 credentials，不把令牌暴露给 JavaScript。
-- 时间：客户端发送的当前时间只作为时区提示；审计统一使用服务端 UTC。
-- 分页：所有分页接口限制 `size <= 100`。
-- 权限：课程、资料、诊断、计划、会话和动作都用当前 `user_id` 过滤。
-
-成功响应：
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {}
-}
-```
-
-业务错误使用真实 HTTP 状态码：
-
-```json
-{
-  "code": 409,
-  "message": "诊断已经提交，请直接进入今日学习",
-  "data": null,
-  "details": null,
-  "error_code": "DIAGNOSTIC_ALREADY_SUBMITTED"
-}
-```
-
-## 2. 核心 V1 API
-
-### 账户与模型配置
+所有接口都通过当前用户的 ownership 校验，统一返回 `{code, message, data}`。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `GET` | `/api/v1/account/llm-config` | 读取当前用户的 OpenAI 兼容配置和密钥尾号掩码 |
-| `PUT` | `/api/v1/account/llm-config` | 保存或更新 Base URL、模型、API Key 与启用状态 |
-| `POST` | `/api/v1/account/llm-config/test` | 使用提交的配置测试 `/chat/completions` 连接；未提交密钥时可复用已保存密钥 |
-| `DELETE` | `/api/v1/account/llm-config` | 删除当前用户配置并回退到服务端默认模型 |
-| `GET` | `/api/v1/account/memory-settings` | 读取当前用户的自动学习记忆设置 |
-| `PATCH` | `/api/v1/account/memory-settings` | 启用或停用自动学习记忆 |
+| `GET` | `/api/v1/adaptive/courses/{course_id}/overview` | Curriculum 摘要、Student Model 计数和 Next Action |
+| `GET` | `/api/v1/adaptive/courses/{course_id}/next-action` | 读取或重新生成下一动作 |
+| `GET` | `/api/v1/adaptive/courses/{course_id}/progress` | Objective 状态、Evidence、Misconception、Prerequisite |
+| `GET` | `/api/v1/adaptive/courses/{course_id}/sources` | 资料、题库、导入批次和 provenance 计数 |
+| `GET` | `/api/v1/adaptive/courses/{course_id}/objectives/{objective_id}` | 单个 Objective 的状态详情 |
+| `POST` | `/api/v1/adaptive/courses/{course_id}/curriculum/rebuild` | 从已就绪资料重新提取 Curriculum |
+| `POST` | `/api/v1/adaptive/courses/{course_id}/questions` | 添加一批题目并自动/显式关联 Objective |
+| `POST` | `/api/v1/adaptive/courses/{course_id}/question-bank/import` | 预览 JSON/JSONL/Markdown/TXT 题库 |
+| `POST` | `/api/v1/adaptive/courses/{course_id}/question-bank/import/commit` | 幂等确认导入题库 |
+| `PATCH` | `/api/v1/adaptive/courses/{course_id}/questions/{question_id}/objectives` | 手动修正题目 Objective 关联 |
+| `POST` | `/api/v1/adaptive/courses/{course_id}/diagnostic` | 选择最少诊断题 |
+| `POST` | `/api/v1/adaptive/courses/{course_id}/diagnostic/submit` | 评分并写入 diagnostic Evidence |
+| `POST` | `/api/v1/adaptive/actions/{action_id}/start` | 开始当前 Learning Action |
+| `POST` | `/api/v1/adaptive/actions/{action_id}/submit` | 评分练习、写入 practice Evidence、重新决策 |
+| `POST` | `/api/v1/adaptive/courses/{course_id}/tutor` | 基于 Student Model 和课程 evidence 的 Tutor 交互 |
+| `POST` | `/api/v1/adaptive/courses/{course_id}/tutor/checks/{check_id}/submit` | 唯一的 Tutor Check Evidence 写入入口 |
 
-`base_url` 必须是无用户名、密码、查询参数和 fragment 的 HTTP(S) 地址，通常应包含提供方的 API 版本前缀（例如 `/v1`）；服务端会追加 `/chat/completions`。读取配置不会返回明文 API Key，只会返回 `api_key_hint`。用户配置启用后优先于 `.env` 中的服务端默认配置，停用或删除后自动回退。
-
-### 课程
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/api/v1/courses` | 当前用户课程列表 |
-| `POST` | `/api/v1/courses` | 创建课程、目标、考试时间和每日时长 |
-| `GET` | `/api/v1/courses/current` | 当前选中课程 |
-| `GET` | `/api/v1/courses/{id}` | 课程详情 |
-| `PATCH` | `/api/v1/courses/{id}` | 更新课程配置 |
-| `POST` | `/api/v1/courses/{id}/select` | 切换当前课程 |
-| `DELETE` | `/api/v1/courses/{id}?confirmed=true` | 归档课程，必须确认 |
-
-### 资料与知识点
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/api/v1/courses/{id}/materials` | 资料列表和处理状态 |
-| `POST` | `/api/v1/courses/{id}/materials/text` | 手动文本资料，返回 `202` |
-| `POST` | `/api/v1/courses/{id}/materials/upload` | 文件上传，返回 `202` |
-| `GET` | `/api/v1/materials/{id}` | 轮询处理状态和错误原因 |
-| `POST` | `/api/v1/materials/{id}/retry` | 重试失败资料 |
-| `GET` | `/api/v1/courses/{id}/knowledge-points` | 知识点及来源 |
-| `GET` | `/api/v1/courses/{id}/knowledge-graph` | 知识点、掌握度和依赖关系 |
-| `POST` | `/api/v1/courses/{id}/materials/search` | 关键词、片段向量、知识点向量融合检索与引用 |
-
-### 诊断、计划和今日学习
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `POST` | `/api/v1/courses/{id}/diagnostic` | 生成 5-8 道诊断题 |
-| `GET` | `/api/v1/courses/{id}/diagnostic` | 最近一次课程诊断 |
-| `GET` | `/api/v1/diagnostics/{id}` | 诊断详情，不返回标准答案 |
-| `POST` | `/api/v1/diagnostics/{id}/submit` | 评分、掌握度和计划初始化 |
-| `GET` | `/api/v1/study/today?course_id={id}` | 今日学习单元 |
-| `POST` | `/api/v1/study/sessions/{id}/start` | 开始或继续学习 |
-| `POST` | `/api/v1/study/sessions/{id}/submit` | 提交练习并自适应后续计划 |
-| `GET` | `/api/v1/courses/{id}/progress` | 掌握度、计划、变化原因和完成率 |
-| `GET` | `/api/v1/courses/{id}/study-plan` | 完整计划与后续单元 |
-| `GET` | `/api/v1/courses/{id}/roadmap` | 四阶段长期路线、真实关联、生成任务和调整记录 |
-| `POST` | `/api/v1/courses/{id}/roadmap/retry` | 仅对失败路线创建新版幂等生成任务 |
-| `PATCH` | `/api/v1/study/sessions/{id}/schedule` | 调整计划单元时间 |
-| `POST` | `/api/v1/courses/{id}/practices` | 按课程/知识点生成聊天内练习 |
-| `POST` | `/api/v1/practices/{id}/submit` | 批改练习、更新掌握度并调整计划 |
-| `GET` | `/api/v1/courses/{id}/practice-stats` | 正确率、趋势和知识点分布 |
-| `GET` | `/api/v1/courses/{id}/wrong-answers` | 错题、用户答案、解析和薄弱知识点 |
-
-### Agent
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/api/v1/agent/sessions` | 后端会话列表 |
-| `POST` | `/api/v1/agent/sessions` | 创建课程会话 |
-| `GET` | `/api/v1/agent/sessions/{id}` | 恢复历史消息、引用和动作 |
-| `POST` | `/api/v1/agent/sessions/{id}/archive` | 归档本人课程会话 |
-| `GET` | `/api/v1/agent/courses/{id}/workspace?session_id={sid}` | 恢复指定课程会话、消息、引用、动作和执行摘要 |
-| `GET` | `/api/v1/agent/tools` | 工具名称、风险、确认、超时与可用状态目录 |
-| `GET` | `/api/v1/agent/courses/{id}/memories` | 可公开的课程记忆、来源、更新时间和启用状态 |
-| `PUT` | `/api/v1/agent/courses/{id}/memories` | 添加或按键幂等保存课程记忆 |
-| `PATCH` | `/api/v1/agent/courses/{id}/memories/{memoryId}` | 修正内容或切换单条记忆状态 |
-| `PATCH` | `/api/v1/agent/courses/{id}/memory-types/{type}` | 按记忆类型统一启用或暂停 |
-| `DELETE` | `/api/v1/agent/courses/{id}/memories/{memoryId}` | 软删除本人课程记忆 |
-| `POST` | `/api/v1/agent/chat` | 非流式请求 |
-| `POST` | `/api/v1/agent/chat/stream` | NDJSON 流式请求 |
-| `POST` | `/api/v1/agent/actions/{id}/decision` | 确认或拒绝破坏性动作 |
-
-课程聊天请求应显式携带 `course_id`。`current_time` 使用本地时间和 UTC 偏移，精确到分钟，仅用于回答语境；服务端审计时间仍以 UTC 为准。若 `session_id` 属于另一门课程，接口返回 `409 SESSION_COURSE_MISMATCH`。
-
-消息中的 `execution_summary` 只保存可验证的工具状态、耗时、课程/外部来源、使用的学习上下文数量和业务更新，不保存隐藏推理。MCP 与图片工具状态区分 `unconfigured`、`misconfigured`、`configured_not_implemented`、`available` 和 `disabled`；未接入真实执行适配器时不会显示为可用，也不会伪造成功结果。受限 Python 执行器目录项同时公开 `experimental` 成熟度、`application` 隔离级别和不允许不可信公网访问的边界。
-
-### 外部资源
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `POST` | `/api/v1/courses/{id}/external-resources/search` | 搜索并规范化 3-6 个课程相关视频 |
-| `GET` | `/api/v1/courses/{id}/external-resources` | 课程资源及当前用户交互状态 |
-| `POST` | `/api/v1/courses/{id}/external-resources/{resourceId}/interactions` | 记录打开、收藏、看完或有用性 |
-| `POST` | `/api/v1/courses/{id}/external-resources/{resourceId}/check` | 检测链接有效性并更新时间 |
-
-资源返回统一字段：`provider`、`canonical_url`、`title`、`author`、`duration_seconds`、`thumbnail_url`、`reason`、`validity_status` 和 `interaction`。URL 哈希在课程内去重，搜索结果按查询缓存。
-
-## 3. 资料状态机
+## 学习状态生命周期
 
 ```text
-uploaded -> parsing -> indexing -> ready
-     |          |          |
-     +----------+----------+-> failed -> retry -> parsing
+Question/Interaction
+  → Grader / Evaluation
+  → LearningEvidence
+  → BKT-inspired StudentStateUpdater
+  → StudentObjectiveState
+  → Learning Policy
+  → Next Learning Action
 ```
 
-| 状态 | 含义 | 前端动作 |
-| --- | --- | --- |
-| `uploaded` | 元数据已保存，等待后台任务 | 显示等待，不提供手动构建索引按钮 |
-| `parsing` | 文本解析和文件校验中 | 保持轮询 |
-| `indexing` | 分块、Embedding、知识点提取中 | 保持轮询 |
-| `ready` | 可用于诊断和 RAG | 开放诊断与提问 |
-| `failed` | 保存 `processing_error` | 展示原因和重试按钮 |
+### Curriculum
 
-文件上限为 100MB；上传流按块落盘，后续直接按路径解析，不把大文件整体载入内存。处理由数据库 job、原子 claim、lease、heartbeat 和重试驱动，服务重启或多 worker 部署都能安全恢复未完成任务。
+`learning_objectives` 描述 observable、assessable 的能力；`objective_relations` 的 `source → target` 表示 source 是 target 的 prerequisite；`objective_evidence` 保存 material/chunk provenance。抽取失败时状态为 `failed/degraded`，不会从标题或正文开头静默制造目标。
 
-索引保存内容哈希和模型版本。重新处理资料时只向量化变化片段与变化知识点，未变化记录保留原 ID 和 embedding。引用结构包含 `material_id`、`material_title`、`page_number`、`chunk_id`、`chunk_index`、`knowledge_points`、融合分数和摘要。
+### Student Model
 
-## 4. 学习状态与确定性规则
+`student_objective_states` 以 `(user_id, course_id, objective_id)` 隔离，保存 `mastery`、`confidence`、attempt/correct/incorrect、success/failure streak、最近练习时间和状态。`mastery` 与 `confidence` 独立更新；置信度由数量、一致性、题型多样性、评分质量和近期性组成。
 
-学习单元主要状态：
+### Evidence
 
-```text
-planned -> in_progress -> evaluated
-```
+`learning_evidence` 必须带 `source_type`（`diagnostic`、`practice`、`review`、`assessment`、`tutor_check`）、题目/attempt、response、score、difficulty、grader version、misconception 和 idempotency key。相同事实重放不会创建第二条 Evidence。
 
-诊断和每日练习都保存逐题答案与知识点评分。掌握度更新规则：
+### Misconception
 
-```text
-after = before * 0.7 + assessment_score * 0.3
-```
+错误模式保存 bounded `code`/`description`、confidence、occurrence count、first/last seen、success/failure count 和 `resolved_at`。LLM 只能提出结构化候选，服务层负责合法性、去重和生命周期更新。
 
-每次变化保存 `before_value`、`after_value`、`reason` 和 `evaluation_id`。业务 service 根据阈值调整后续计划，LLM 不直接修改掌握度或计划状态。
+### Learning Action
 
-长期路线状态为 `pending -> generating -> ready`，异常进入 `failed`，只允许通过 retry API 生成新版本任务。每个阶段保存目标、完成条件、预计天数、真实知识点/每日单元关联和 `adaptation_reason`；每次诊断或练习调整另存幂等 `roadmap_adjustments`。
+Action 是一次即时决策，不是预生成长期计划。状态为 `queued → in_progress → completed`；当题库、诊断或题目关联改变 policy 输入时，未开始的旧 action 进入 `superseded`，随后重新计算。解释动作不接受普通文本写入 Evidence，必须通过 Tutor Check。
 
-## 5. Agent 动作分级
+## Question Bank
 
-| 风险 | 行为 |
-| --- | --- |
-| 只读 | 直接执行并保存审计摘要 |
-| 生成 | 允许执行，使用稳定上下文避免重复生成 |
-| 写入 | 执行时保存幂等键和审计记录 |
-| 破坏性 | 创建 10 分钟有效的确认请求，确认后一次性执行 |
+支持 `multiple_choice`、`true_false`、`short_answer`、`calculation`、`scenario`、`essay` 六种题型。一题可以通过 `question_objectives` 覆盖多个 Objective。题目来源和生成上下文分别保存；生成题必须带 model、prompt version、Objective 和 evidence chunks，并通过 validator。
 
-破坏性请求确认前不改业务表；重复确认返回同一结果。直接删除和旧批量接口也要求 `confirmed=true`，旧 Agent 不再绕过新确认链路。
+## Tutor 边界
 
-## 6. 降级状态
+Tutor 可以解释、换例子、提示、拆步骤、进行 Socratic questioning 和解释推荐原因；它不能直接 CRUD Student Model、修改 prerequisite、维护 schedule 或写通用 Memory。普通 Tutor 响应明确返回 `evidence_written=false`；只有 Tutor Check 提交经过 grader 后才写入 Evidence。
 
-- Tavily 失败：外部搜索返回 `degraded: true`、`warning` 和可用的部分或空资源列表。
-- 视频封面失败：优先使用搜索结果自带图片，再由前端显示稳定占位，不阻止卡片打开。
-- LLM 失败：有 RAG 引用时根据课程片段回答；无引用时返回可执行的引导文案。
-- 日志写入失败：不回滚已经成功的核心业务动作。
+## 迁移边界
 
-## 7. 持久化与审计
-
-- `course_agents.course_id` 唯一，保证一门课程只有一个助手；该助手可拥有多条按课程隔离、可归档的历史会话。
-- 每次课程聊天写入 `agent_runs`；每个工具写入 `agent_tool_calls`，包含课程、风险、参数、结果和状态。
-- 资料、课程、学习、Agent 与资源操作都写入 `operation_logs`，并在读取和写入前校验 `user_id + course_id` 所有权。
-- 数据库上下文使用显式事务，断线不会透明丢弃未提交消息；并发死锁只重试已完整回滚的幂等事务段。
+新 schema 只走 Alembic。当前 V2 新增 revision 是 `20260825_13_adaptive_tutor_stage2`，支持 question import、题目扩展字段、grader provenance、Tutor Check、confidence components 和 Evidence 幂等约束。历史数据库表只作为旧库兼容边界，不属于正式 V2 API。

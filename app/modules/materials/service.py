@@ -35,7 +35,6 @@ from app.integrations.embedding.service import (
     serialize_embedding,
 )
 from app.integrations.file_storage import StoredUpload, remove_upload, resolve_upload_path
-from app.integrations.llm.knowledge_extractor import extract_knowledge_structure
 from app.integrations.llm.objective_extractor import extract_learning_objectives
 from app.modules.adaptive import repository as adaptive_repository
 from app.modules.audit.service import record_audit
@@ -682,7 +681,7 @@ def process_material(
     user_id: int,
     material_id: int,
     embedding_provider: Callable = embed_texts,
-    knowledge_provider: Callable = extract_knowledge_structure,
+    knowledge_provider: Callable | None = None,
     heartbeat: Callable[[], None] | None = None,
 ) -> dict:
     renew_lease = heartbeat or (lambda: None)
@@ -852,29 +851,27 @@ def process_material(
             renew_lease()
         _processing_checkpoint(user_id, material_id, renew_lease)
 
-        if knowledge_provider is extract_knowledge_structure:
-            extraction = knowledge_provider(
-                material["course_name"],
-                material["title"],
-                stored_chunks,
-                user_id=user_id,
-            )
-        else:
+        # Knowledge Point extraction is an opt-in compatibility hook for
+        # historical callers and tests. The production ingestion path builds
+        # only the assessable Curriculum; it never silently manufactures V2
+        # learning units from arbitrary chunks.
+        if knowledge_provider is not None:
             extraction = knowledge_provider(
                 material["course_name"],
                 material["title"],
                 stored_chunks,
             )
+        else:
+            extraction = []
         if isinstance(extraction, dict):
             extracted = list(extraction.get("knowledge_points") or [])
             extracted_relations = list(extraction.get("relations") or [])
         else:
             extracted = list(extraction or [])
             extracted_relations = []
-        # V2 Curriculum is a separate, assessable domain.  Its failure is
+        # V2 Curriculum is a separate, assessable domain. Its failure is
         # recorded as degraded/failed rather than silently turning headings or
-        # arbitrary text into objectives.  Legacy knowledge points continue to
-        # be materialized only for old clients during the migration window.
+        # arbitrary text into objectives.
         curriculum_extraction = extract_learning_objectives(
             material["course_name"],
             material["title"],

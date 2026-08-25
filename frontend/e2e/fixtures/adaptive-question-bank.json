@@ -1,0 +1,28 @@
+{
+  "questions": [
+    {
+      "content": "等价类划分：给定输入范围 1 到 10，请分别给出有效等价类和无效等价类，并说明每类至少选择一个代表值。",
+      "answer": "有效等价类是 1 到 10，代表值可以是 5；无效等价类是小于 1 和大于 10，代表值可以是 0 和 11。",
+      "question_type": "scenario",
+      "difficulty": "medium",
+      "source_type": "textbook",
+      "coverage_type": "scenario"
+    },
+    {
+      "content": "边界值分析：给定输入范围 1 到 10，请列出边界值、边界附近值和刚好越界的测试值。",
+      "answer": "应覆盖 1、2、9、10 以及刚好越界的 0、11；它们分别检查边界本身、边界附近和越界行为。",
+      "question_type": "short_answer",
+      "difficulty": "medium",
+      "source_type": "textbook",
+      "coverage_type": "transfer"
+    },
+    {
+      "content": "判定表：当条件 A 和 B 分别为真或假时，请说明如何枚举条件组合，并把每条有效规则转换成测试用例。",
+      "answer": "先枚举 A/B 的四种组合，再为每个有效组合填写动作结果，并将每条规则转换成至少一个测试用例。",
+      "question_type": "essay",
+      "difficulty": "hard",
+      "source_type": "textbook",
+      "coverage_type": "direct"
+    }
+  ]
+}

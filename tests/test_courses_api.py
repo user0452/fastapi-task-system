@@ -5,10 +5,10 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.core.database import get_cursor
+from app.modules.auth.dependencies import get_current_user
 from app.modules.courses.schemas import CourseCreate
 from app.modules.courses.service import create_user_course
 from main import app
-from utils import get_current_user
 
 
 def _create_course(client, name: str):
@@ -95,8 +95,6 @@ def test_course_access_is_isolated_between_users(api_client, two_users):
         ),
         api_client.delete(f"/api/v1/courses/{course['id']}?confirmed=true"),
         api_client.get(f"/api/v1/courses/{course['id']}/materials"),
-        api_client.get(f"/api/v1/courses/{course['id']}/knowledge-points"),
-        api_client.get(f"/api/v1/courses/{course['id']}/knowledge-graph"),
     ]
 
     assert all(response.status_code == 404 for response in attempts)
@@ -109,11 +107,10 @@ def test_course_access_is_isolated_between_users(api_client, two_users):
     assert owner_view.json()["data"]["status"] == "draft"
 
 
-def test_legacy_errors_use_real_http_status(api_client):
+def test_retired_legacy_route_is_absent(api_client):
     response = api_client.get("/tasks?page=0&size=10")
 
-    assert response.status_code == 400
-    assert response.json()["code"] == 400
+    assert response.status_code == 404
 
 
 def test_empty_course_update_is_rejected(api_client):

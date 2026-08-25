@@ -2,8 +2,8 @@ from io import BytesIO
 
 from docx import Document
 
+from app.integrations.document_parser import extract_text_from_document
 from app.integrations.embedding.chunking import chunk_document, retrieval_text
-from services.document_parser import extract_text_from_document
 
 
 def test_structured_chunking_preserves_heading_kb_id_and_token_budget():

@@ -76,46 +76,6 @@ def test_database_sessions_are_utc():
     assert abs(int(row["utc_delta"])) <= 1
 
 
-def test_malformed_profile_json_returns_controlled_error(api_client, two_users):
-    user, _ = two_users
-    with get_cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO student_profiles (user_id, profile_json) VALUES (%s, %s)",
-            (user["id"], "{not-json"),
-        )
-
-    response = api_client.get("/api/v1/account/profile")
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "PROFILE_DATA_INVALID"
-
-
-def test_empty_memory_settings_patch_returns_stable_app_error(api_client, two_users):
-    response = api_client.patch("/api/v1/account/memory-settings", json={})
-
-    assert response.status_code == 422
-    assert response.json() == {
-        "code": 422,
-        "message": "至少提供一个需要更新的记忆设置",
-        "data": None,
-        "details": None,
-        "error_code": "MEMORY_SETTINGS_EMPTY",
-    }
-
-
-def test_memory_settings_patch_rejects_inconsistent_fields(api_client, two_users):
-    response = api_client.patch(
-        "/api/v1/account/memory-settings",
-        json={
-            "course_auto_memory_enabled": False,
-            "cross_course_profile_enabled": True,
-        },
-    )
-
-    assert response.status_code == 422
-    assert "启用跨课程画像时不能同时关闭自动课程记忆" in response.text
-
-
 def test_user_llm_config_is_encrypted_masked_and_user_scoped(
     api_client,
     two_users,
