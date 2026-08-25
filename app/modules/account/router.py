@@ -1,9 +1,6 @@
-from fastapi import Depends, Query
-from sqlalchemy import func, select
+from fastapi import Depends
 
-from app.core.database import get_cursor
 from app.core.responses import V1APIRouter, success
-from app.models import model_as_dict, reflected_model
 from app.modules.account.llm_config_service import (
     delete_user_llm_config,
     get_user_llm_config,
@@ -84,33 +81,6 @@ def remove_user_llm_config(user=Depends(get_current_user)):
         user["id"],
     )
     return success(data=get_user_llm_config(user["id"]), message="已恢复服务端默认模型")
-
-
-@router.get("/audit/logs")
-def list_operation_logs(
-    page: int = Query(default=1, ge=1),
-    size: int = Query(default=20, ge=1, le=100),
-    user=Depends(get_current_user),
-):
-    offset = (page - 1) * size
-    OperationLog = reflected_model("operation_logs")
-    with get_cursor() as cursor:
-        total = int(
-            cursor.session.scalar(
-                select(func.count()).select_from(OperationLog).where(OperationLog.user_id == user["id"])
-            ) or 0
-        )
-        items = [
-            model_as_dict(item)
-            for item in cursor.session.scalars(
-                select(OperationLog)
-                .where(OperationLog.user_id == user["id"])
-                .order_by(OperationLog.id.desc())
-                .limit(size)
-                .offset(offset)
-            )
-        ]
-    return success(data={"items": items, "total": total, "page": page, "size": size})
 
 
 __all__ = ["router"]

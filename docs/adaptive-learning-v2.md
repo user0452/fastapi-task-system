@@ -114,7 +114,7 @@ prerequisite 未达到 `mastery >= 0.60` 且 `confidence >= 0.35` 时，dependen
 
 ## Question Bank and practice
 
-`questions` 保存题目本体和 provenance；`question_objectives` 允许一题覆盖多个 Objective，并记录 relevance、coverage type 和 confidence。来源区分 `user_upload`、`textbook`、`public_source`、`search` 和 `generated`。
+`questions` 保存题目本体和 provenance；`question_objectives` 允许一题覆盖多个 Objective，并记录 relevance、coverage type 和 confidence。来源区分 `user_upload`、`textbook`、`public_source`、`search` 和 `generated`。V2 的正式输入是用户上传和 generated fallback；`search` 目前只是 provenance 枚举，不构成外部题源搜索产品。
 
 Practice 的顺序是：
 
@@ -139,7 +139,7 @@ Tutor 可以在一个 Objective 内：
 - 使用课程 evidence 回答
 - 说明当前 action 的原因
 
-Tutor 不可以任意写 mastery、confidence、prerequisite、review schedule、Memory CRUD 或数据库记录。课程 Tutor 的最小业务上下文是 `get_learning_context`、`search_course_evidence`、`get_next_learning_action`、`search_question_bank` 和 `get_objective_evidence`。
+Tutor 不可以任意写 mastery、confidence、prerequisite、review schedule、Memory CRUD 或数据库记录。Tutor service 在内部组装 Learning Context、课程证据检索、当前 action、题库视图和 Objective evidence；这些是受控 service 调用，不是对外 Tool Marketplace。
 
 ## UI and migration boundary
 

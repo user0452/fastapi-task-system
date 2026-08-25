@@ -57,7 +57,7 @@ app/integrations/llm/          Objective extraction 和 LLM 结构化输出
 app/modules/materials/         资料解析、分块、索引和课程 provenance
 app/evaluation/adaptive.py     冻结 fixture 的 Adaptive Learning Benchmark
 frontend/src/features/adaptive Learn / Progress / Sources
-alembic/versions/               唯一新增的 V2 schema migration
+alembic/versions/               V2 schema migration；早期 revision 保留历史库 bridge
 docs/adaptive-learning-v2.md    领域模型和运行边界
 docs/evaluation.md               benchmark、baseline、指标和限制
 docs/benchmark-report.md         最近一次真实运行结果
@@ -111,7 +111,11 @@ uv run python scripts/evaluate_adaptive.py --output docs/benchmark-report.md
 该 benchmark 冻结 Curriculum、学生状态、prerequisite、misconception 和题库 fixture，并比较：
 
 - `Baseline A`：只选择 mastery 最低的 Objective。
+- `Baseline B`：固定随机种子下的 random/simple 策略。
+- `Baseline C`：mastery + prerequisite 的简化策略。
 - `V2`：prerequisite-aware Objective Selector + Action Selector + retrieval-first Question Selector。
+
+报告同时输出固定 case 数、失败类别、Question/Grader/State Sequence 检查与 ablation；它是可复现的 simulation benchmark，不是对真实学生学习效果的声明。
 
 完整本地检查：
 
@@ -134,7 +138,7 @@ npm run test:e2e
 
 ## 工程边界
 
-- Alembic 是 schema migration 的唯一正式入口；资料处理保留事务、异步 job、重试、审计、trace 和 ownership 检查。
+- 所有部署通过 Alembic CLI 升级 schema；早期 Alembic revision 为兼容历史数据库会调用内部 migration bridge，V2 新增 revision 不再依赖它。资料处理保留事务、异步 job、重试、审计、trace 和 ownership 检查。
 - LLM 只负责抽取、标注、主观评分、错误解释、Tutor 交互和生成 fallback；结构化输出必须经过 schema、validator 和 service。
 - 课程学习状态只通过 `Interaction → Evaluation → Evidence → Student Model Update` 变化。
 - Objective extraction 失败时 curriculum 标记为 degraded/failed，不使用标题或正文前缀静默伪造学习目标。

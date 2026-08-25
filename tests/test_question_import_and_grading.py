@@ -122,7 +122,24 @@ def test_deterministic_grader_handles_choices_boolean_calculation_and_open_misco
     )
     assert open_result["score"] == 0
     assert open_result["misconception"]["code"] == "missing_key_evidence"
-    assert open_result["grader_type"] == "deterministic-rubric-fallback"
+    assert open_result["grader_type"] == "deterministic-criterion-rubric"
+
+
+def test_deterministic_open_grader_tracks_missing_rubric_criteria():
+    result = grade_response(
+        {
+            "question_type": "scenario",
+            "answer": "说明边界条件、给出判断依据，并覆盖越界场景。",
+            "rubric": "说明边界条件；给出判断依据；覆盖越界场景。",
+        },
+        "我只说明边界条件。",
+        objective=_objectives()[1],
+    )
+
+    assert result["grader_type"] == "deterministic-criterion-rubric"
+    assert result["score"] < 0.7
+    assert "给出判断依据" in result["missing_concepts"]
+    assert "覆盖越界场景" in result["missing_concepts"]
 
 
 def test_generated_question_validator_rejects_unscoped_or_duplicate_content():

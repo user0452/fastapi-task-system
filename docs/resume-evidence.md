@@ -32,8 +32,8 @@ Grader fixture：20 cases，accuracy 100%；state sequence：5 cases，pass rate
 
 本次最终验证实际运行过：
 
-- 后端：`uv run pytest -q`，203 passed；CI 同口径 coverage gate 通过，核心覆盖率 76.26%（门槛 70%）。
-- Adaptive/RAG 相关 Ruff、Mypy（85 source files）、compileall 检查通过。
+- 后端：`uv run pytest -q`，205 passed；CI 同口径 coverage gate 通过，核心覆盖率 77.97%（门槛 70%）。
+- Adaptive/RAG 相关 Ruff、Mypy（82 source files）、compileall 检查通过；发行包检查 `BUNDLE_CHECK_OK`。
 - 前端：Vitest 6 个 test files、20 tests passed；ESLint 和 production build 通过。
 - Playwright：3 个 Chromium 场景 passed，覆盖资料 → Curriculum → Question Bank → Diagnostic → Evidence → Student Model → Next Action，以及旧入口重定向、移动端和视觉布局。
 - Alembic migration/fresh database tests 在完整后端测试中通过；V2 新增 revision 为 `20260825_13_adaptive_tutor_stage2`。

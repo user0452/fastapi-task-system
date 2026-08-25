@@ -355,6 +355,7 @@ def confidence_components(
     quality_weights = {
         "deterministic-exact": 0.95,
         "llm-rubric": 0.92,
+        "deterministic-criterion-rubric": 0.78,
         "deterministic-rubric-fallback": 0.70,
         "deterministic-keyword": 0.58,
     }
@@ -448,7 +449,7 @@ def update_student_state(
         [
             {
                 **item,
-                "grader_type": item.get("grader_type") or "deterministic-keyword",
+                "grader_type": item.get("grader_type") or "deterministic-criterion-rubric",
             }
             for item in (evidence_history or [])
         ],

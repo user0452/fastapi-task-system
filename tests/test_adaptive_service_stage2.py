@@ -2,6 +2,7 @@ import asyncio
 import json
 
 from app.core.database import get_cursor
+from app.modules.adaptive import objective_tagger, question_generator
 from app.modules.adaptive import service as adaptive_service
 from app.modules.adaptive.service import (
     add_question_bank,
@@ -106,6 +107,39 @@ def test_retrieval_first_does_not_call_generator_when_real_question_exists(two_u
     monkeypatch.setattr(adaptive_service, "generate_grounded_question", generator_must_not_run)
     action = get_overview(user["id"], course["id"])["next_action"]
     assert action["question"]["source_type"] == "textbook"
+
+
+def test_generated_fallback_is_validated_and_saved_when_question_bank_has_no_match(two_users, monkeypatch):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="生成题兜底测试"))
+    first_objective, _ = _seed_objectives(user["id"], course["id"])
+    mock_settings = type("MockSettings", (), {"mock_llm": True, "deepseek_model": "mock-curriculum-v2"})()
+    monkeypatch.setattr(question_generator, "get_settings", lambda: mock_settings)
+    monkeypatch.setattr(objective_tagger, "get_settings", lambda: mock_settings)
+    monkeypatch.setattr(
+        adaptive_service.repository,
+        "list_objective_evidence",
+        lambda _cursor, _user_id, _course_id: {
+            first_objective: [
+                {
+                    "material_id": 1,
+                    "material_title": "生成题课程资料",
+                    "heading_path": "边界条件",
+                    "page_number": 1,
+                    "chunk_id": 1,
+                    "snippet": "边界条件需要同时覆盖边界本身、邻近值和越界值。",
+                }
+            ]
+        },
+    )
+
+    action = get_overview(user["id"], course["id"])["next_action"]
+
+    assert action["question"]["source_type"] == "generated"
+    assert action["question"]["id"] > 0
+    sources = get_sources(user["id"], course["id"])
+    assert sources["counts"]["question_count"] == 1
+    assert sources["questions"][0]["source_type"] == "generated"
 
 
 def test_tutor_chat_never_writes_evidence_but_tutor_check_does(two_users):

@@ -16,7 +16,6 @@ from app.core.errors import AppError
 from app.integrations import file_storage
 from app.integrations.embedding import persistent_index
 from app.integrations.file_storage import StoredUpload
-from app.integrations.llm import knowledge_extractor
 from app.jobs import material_index_job
 from app.jobs.material_index_job import enqueue_material_processing_job
 from app.modules.courses.schemas import CourseCreate
@@ -790,48 +789,6 @@ def test_knowledge_definition_summary_and_examples_are_vectorized(two_users):
             (point["id"], user["id"]),
         )
         assert cursor.fetchone()["embedding_json"]
-
-
-def test_knowledge_extraction_has_deterministic_fallback(monkeypatch):
-    monkeypatch.setattr(
-        knowledge_extractor,
-        "get_llm",
-        lambda: (_ for _ in ()).throw(RuntimeError("LLM unavailable")),
-    )
-    points = knowledge_extractor.extract_knowledge_points(
-        "软件测试",
-        "等价类划分",
-        [
-            {
-                "chunk_index": 0,
-                "chunk_text": "有效等价类表示符合需求的输入。无效等价类表示不符合约束的输入。",
-            }
-        ],
-    )
-
-    assert len(points) >= 3
-    assert all(point["chunk_indices"] == [0] for point in points)
-
-
-def test_mock_llm_skips_external_knowledge_extraction(monkeypatch):
-    monkeypatch.setattr(
-        knowledge_extractor,
-        "get_settings",
-        lambda: type("Settings", (), {"mock_llm": True})(),
-    )
-    monkeypatch.setattr(
-        knowledge_extractor,
-        "get_llm",
-        lambda: (_ for _ in ()).throw(AssertionError("LLM must not be called")),
-    )
-
-    points = knowledge_extractor.extract_knowledge_points(
-        "软件测试",
-        "测试方法",
-        [{"chunk_index": 0, "chunk_text": "等价类、边界值和判定表是常见测试设计方法。"}],
-    )
-
-    assert len(points) >= 3
 
 
 def test_upload_stops_when_size_limit_is_exceeded(monkeypatch, tmp_path):

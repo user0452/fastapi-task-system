@@ -1,7 +1,7 @@
 # Adaptive Learning Benchmark Report
 
 - Benchmark: `adaptive-benchmark-v2-stage2`
-- Runtime: `2026-08-25T04:10:10.657652+00:00`
+- Runtime: `2026-08-25T05:00:46.807503+00:00`
 - Fixed policy cases: `50`
 
 ## Policy metrics

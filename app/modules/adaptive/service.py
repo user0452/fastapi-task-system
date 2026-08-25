@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -30,8 +29,8 @@ from app.modules.materials.service import (
     search_course_materials,
 )
 
-DETERMINISTIC_GRADER_TYPE = "deterministic-rubric-fallback"
-DETERMINISTIC_GRADER_VERSION = "deterministic-rubric-fallback-v2"
+DETERMINISTIC_GRADER_TYPE = "deterministic-criterion-rubric"
+DETERMINISTIC_GRADER_VERSION = "deterministic-criterion-rubric-v1"
 
 
 def _require_course(user_id: int, course_id: int) -> dict[str, Any]:
@@ -212,42 +211,6 @@ def _ensure_next_action(cursor, user_id: int, course_id: int) -> dict[str, Any] 
     )
     return _public_action(cursor, user_id, repository.get_action(cursor, user_id, int(action["id"])))
 
-
-def _grade_answer(question: dict[str, Any], response: str) -> tuple[float, str]:
-    answer = str(question.get("answer") or "").strip()
-    normalized_response = str(response or "").strip().lower()
-    normalized_answer = answer.lower()
-    if not normalized_response:
-        return 0.0, "回答为空，尚未形成可验证证据。"
-    if normalized_answer and normalized_answer in normalized_response:
-        return 0.95, "回答覆盖了参考答案的核心表述。"
-
-    def tokens(value: str) -> set[str]:
-        return {
-            token
-            for token in re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9_]+", value.lower())
-            if len(token) > 1
-        }
-
-    expected = tokens(answer)
-    actual = tokens(normalized_response)
-    if not expected:
-        return (0.6 if len(normalized_response) >= 12 else 0.25), "已收到回答，参考答案缺少可拆分的关键词。"
-    # Chinese text often has no whitespace, so exact token-set intersection
-    # would undercount a response that contains every expected phrase.
-    matched = sum(1 for token in expected if token in normalized_response or token in actual)
-    overlap = matched / len(expected)
-    score = 0.15 + overlap * 0.78
-    score = max(0.0, min(0.95, score))
-    if overlap >= 0.7:
-        feedback = "回答覆盖了大部分关键依据，可以继续练习场景迁移。"
-    elif overlap >= 0.35:
-        feedback = "回答触及部分关键依据，还需要补充条件、判断过程或边界。"
-    else:
-        feedback = "回答没有覆盖参考答案中的主要判断依据。"
-    return round(score, 4), feedback
-
-
 def _record_evidence(
     cursor,
     *,
@@ -338,6 +301,7 @@ def _record_evidence(
                 "correctness": grade_result.get("correctness"),
                 "key_reasoning": grade_result.get("key_reasoning"),
                 "completeness": grade_result.get("completeness"),
+                "missing_concepts": grade_result.get("missing_concepts") or [],
             },
             idempotency_key=idempotency_key,
         )
@@ -407,6 +371,7 @@ def _record_evidence(
             "correctness": (grade_result or {}).get("correctness"),
             "key_reasoning": (grade_result or {}).get("key_reasoning"),
             "completeness": (grade_result or {}).get("completeness"),
+            "missing_concepts": (grade_result or {}).get("missing_concepts") or [],
             "action_type": action_type,
             "coverage_type": coverage_type,
         },
@@ -463,6 +428,7 @@ def _record_evidence(
             "correctness": (grade_result or {}).get("correctness"),
             "key_reasoning": (grade_result or {}).get("key_reasoning"),
             "completeness": (grade_result or {}).get("completeness"),
+            "missing_concepts": (grade_result or {}).get("missing_concepts") or [],
         },
     }
 

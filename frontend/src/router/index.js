@@ -31,11 +31,6 @@ const routes = [
         name: 'settings',
         component: () => import('../features/settings/SettingsPage.vue')
       },
-      {
-        path: 'logs',
-        name: 'logs',
-        component: () => import('../pages/LogsPage.vue')
-      },
       // Keep bookmarks working without loading any retired roadmap/resource/agent UI.
       { path: 'courses', name: 'legacy-courses', redirect: '/today' },
       { path: 'agent', name: 'legacy-agent', redirect: '/today' },
