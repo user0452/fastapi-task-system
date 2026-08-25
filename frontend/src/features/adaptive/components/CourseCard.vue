@@ -3,6 +3,7 @@ import { ArrowRight } from 'lucide-vue-next'
 
 defineProps({
   entry: { type: Object, required: true },
+  setup: { type: Object, required: true },
   actionLabel: { type: Function, required: true }
 })
 
@@ -16,7 +17,7 @@ defineEmits(['open'])
       <strong>{{ entry.course.name }}</strong>
       <span v-if="entry.next_action">{{ actionLabel(entry.next_action) }} · {{ entry.next_action.objective_title || '继续学习' }}</span>
       <span v-else-if="entry.error" class="error">{{ entry.error }}</span>
-      <span v-else>添加资料后开始学习</span>
+      <span v-else>{{ setup.title }}</span>
     </div>
     <button type="button" :aria-label="`进入${entry.course.name}`" @click="$emit('open')"><ArrowRight :size="18" /></button>
   </article>

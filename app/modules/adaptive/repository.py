@@ -1311,6 +1311,22 @@ def course_counts(cursor, user_id: int, course_id: int) -> dict[str, int]:
             (user_id, course_id),
         )
         counts[key] = int((_row(cursor) or {}).get("total") or 0)
+    # `next_action is None` can mean either no materials or an extraction that
+    # is still pending/needs retry. Expose material readiness so callers do not
+    # have to conflate those different learner-facing states.
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS material_count,
+               SUM(CASE WHEN processing_status = 'ready' THEN 1 ELSE 0 END) AS ready_material_count
+        FROM course_materials
+        WHERE user_id = %s AND course_id = %s
+          AND processing_status NOT IN ('deleting', 'delete_failed', 'deleted')
+        """,
+        (user_id, course_id),
+    )
+    material_counts = _row(cursor) or {}
+    counts["material_count"] = int(material_counts.get("material_count") or 0)
+    counts["ready_material_count"] = int(material_counts.get("ready_material_count") or 0)
     cursor.execute(
         """
         SELECT COUNT(*) AS total

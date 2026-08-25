@@ -109,3 +109,24 @@ def test_adaptive_loop_retrieves_question_records_evidence_and_changes_action(tw
     assert evidence["source_type"] == "practice"
     assert evidence["grader_type"] == "deterministic-criterion-rubric"
     assert evidence["mastery_after"] > evidence["mastery_before"]
+
+
+def test_overview_reports_ready_materials_even_before_objectives_exist(two_users):
+    user, _ = two_users
+    course = create_user_course(user["id"], CourseCreate(name="资料状态课程"))
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO course_materials
+                (user_id, course_id, course_name, title, content,
+                 parse_status, index_status, processing_status)
+            VALUES (%s, %s, %s, %s, %s, 'parsed', 'ready', 'ready')
+            """,
+            (user["id"], course["id"], course["name"], "已就绪讲义", "课程正文"),
+        )
+
+    overview = get_overview(user["id"], course["id"])
+
+    assert overview["next_action"] is None
+    assert overview["counts"]["material_count"] == 1
+    assert overview["counts"]["ready_material_count"] == 1

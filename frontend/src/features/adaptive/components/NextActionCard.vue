@@ -3,6 +3,7 @@ import { ArrowRight, Lightbulb } from 'lucide-vue-next'
 
 defineProps({
   entry: { type: Object, required: true },
+  setup: { type: Object, required: true },
   actionLabel: { type: Function, required: true }
 })
 
@@ -14,17 +15,17 @@ defineEmits(['start'])
     <div class="next-copy">
       <span class="kicker"><Lightbulb :size="14" /> 今天建议</span>
       <p class="course-name">{{ entry.course.name }}</p>
-      <h2>{{ entry.next_action?.objective_title || '先添加课程资料' }}</h2>
-      <p class="reason">{{ entry.next_action?.reason || '上传一份教材或讲义后，我们会帮你找到合适的起点。' }}</p>
+      <h2>{{ entry.next_action?.objective_title || setup.title }}</h2>
+      <p class="reason">{{ entry.next_action?.reason || setup.reason }}</p>
       <button type="button" @click="$emit('start')">
-        {{ entry.next_action ? '开始学习' : '添加资料' }} <ArrowRight :size="17" />
+        {{ entry.next_action ? '开始学习' : setup.buttonLabel }} <ArrowRight :size="17" />
       </button>
     </div>
     <div class="next-meta">
       <span>{{ actionLabel(entry.next_action) }}</span>
       <strong>{{ entry.next_action?.expected_minutes || entry.course.daily_minutes || 25 }}</strong>
       <small>预计分钟</small>
-      <em>{{ entry.next_action ? '完成后会更新下一步' : '先准备课程内容' }}</em>
+      <em>{{ entry.next_action ? '完成后会更新下一步' : setup.meta }}</em>
     </div>
   </section>
 </template>

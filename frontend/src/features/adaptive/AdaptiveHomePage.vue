@@ -31,12 +31,63 @@ const primary = computed(() => (
   || null
 ))
 
+function setupFor(entry) {
+  const counts = entry?.counts || {}
+  const materialCount = Number(counts.material_count || 0)
+  const readyMaterialCount = Number(counts.ready_material_count || 0)
+  const objectiveCount = Number(entry?.curriculum?.objective_count || 0)
+  const curriculumStatus = entry?.curriculum?.status || 'pending'
+
+  if (materialCount === 0) {
+    return {
+      title: '先添加课程资料',
+      reason: '上传一份教材或讲义后，我们会帮你找到合适的学习起点。',
+      buttonLabel: '添加资料',
+      destination: 'materials',
+      meta: '先准备课程内容'
+    }
+  }
+  if (readyMaterialCount === 0) {
+    return {
+      title: '资料正在准备中',
+      reason: '资料正在解析和整理。准备完成后会自动生成学习建议。',
+      buttonLabel: '查看资料',
+      destination: 'materials',
+      meta: '稍后会自动更新'
+    }
+  }
+  if (objectiveCount === 0) {
+    const needsRetry = ['degraded', 'failed'].includes(curriculumStatus)
+    return {
+      title: needsRetry ? '资料已可使用，学习内容需要重新准备' : '资料已可使用，正在准备学习内容',
+      reason: needsRetry
+        ? '资料已经处理完成，但还没能生成可练习的学习内容。请重新准备一次。'
+        : '资料已经处理完成，正在根据内容整理可学习的目标。',
+      buttonLabel: '查看资料',
+      destination: 'materials',
+      meta: needsRetry ? '可在资料页重新准备' : '正在整理课程内容'
+    }
+  }
+  return {
+    title: '当前没有需要完成的学习',
+    reason: '暂时没有新的练习安排。你可以查看学习进度，或稍后回来复习。',
+    buttonLabel: '查看进度',
+    destination: 'progress',
+    meta: '避免重复安排已掌握内容'
+  }
+}
+
 function actionLabel(action) {
   return actionLabels[action?.action_type] || action?.action_type || '等待学习证据'
 }
 
 function openCourse(courseId, destination = 'learn') {
-  router.push(destination === 'materials' ? `/materials/${courseId}` : `/learn/${courseId}`)
+  const paths = {
+    learn: `/learn/${courseId}`,
+    materials: `/materials/${courseId}`,
+    progress: `/progress/${courseId}`
+  }
+  router.push(paths[destination] || paths.learn)
 }
 
 async function load() {
@@ -89,8 +140,9 @@ onMounted(load)
       <NextActionCard
         v-if="primary"
         :entry="primary"
+        :setup="setupFor(primary)"
         :action-label="actionLabel"
-        @start="openCourse(primary.course.id, primary.next_action ? 'learn' : 'materials')"
+        @start="openCourse(primary.course.id, primary.next_action ? 'learn' : setupFor(primary).destination)"
       />
 
       <section class="home-courses" aria-labelledby="course-list-title">
@@ -100,8 +152,9 @@ onMounted(load)
             v-for="item in courseRows"
             :key="item.course.id"
             :entry="item"
+            :setup="setupFor(item)"
             :action-label="actionLabel"
-            @open="openCourse(item.course.id)"
+            @open="openCourse(item.course.id, item.next_action ? 'learn' : setupFor(item).destination)"
           />
         </div>
       </section>

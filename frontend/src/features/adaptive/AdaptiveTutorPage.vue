@@ -21,6 +21,7 @@ import {
   getAdaptiveProgress,
   getAdaptiveSources,
   previewAdaptiveQuestionBank,
+  rebuildAdaptiveCurriculum,
   sendAdaptiveTutor,
   startAdaptiveAction,
   startAdaptiveDiagnostic,
@@ -66,6 +67,7 @@ const questionFile = ref(null)
 const importPreview = ref(null)
 const importLoading = ref(false)
 const importCommitting = ref(false)
+const curriculumRebuilding = ref(false)
 const manualObjectiveByQuestion = ref({})
 let overviewRequestSequence = 0
 const questionForm = ref({
@@ -81,6 +83,19 @@ const questionForm = ref({
 const view = computed(() => props.pageMode)
 const action = computed(() => overview.value?.next_action || null)
 const objectives = computed(() => overview.value?.objectives || progress.value?.objectives || [])
+const materialCount = computed(() => Number(overview.value?.counts?.material_count || 0))
+const readyMaterialCount = computed(() => Number(overview.value?.counts?.ready_material_count || 0))
+const curriculumStatus = computed(() => overview.value?.curriculum?.status || 'pending')
+const needsCurriculumRetry = computed(() => (
+  readyMaterialCount.value > 0
+  && objectives.value.length === 0
+  && ['degraded', 'failed'].includes(curriculumStatus.value)
+))
+const curriculumPreparing = computed(() => (
+  readyMaterialCount.value > 0
+  && objectives.value.length === 0
+  && !needsCurriculumRetry.value
+))
 const selectedObjective = computed(() => (
   progress.value?.objectives?.find(item => Number(item.id) === Number(selectedObjectiveId.value))
   || objectives.value.find(item => Number(item.id) === Number(selectedObjectiveId.value))
@@ -397,6 +412,21 @@ async function onMaterialProcessed() {
   await Promise.all([loadOverview(), loadSources()])
 }
 
+async function rebuildLearningContent() {
+  if (curriculumRebuilding.value || !readyMaterialCount.value) return
+  curriculumRebuilding.value = true
+  try {
+    const response = await rebuildAdaptiveCurriculum(courseId.value)
+    if (response.code !== 202) throw new Error(response.message || '学习内容准备失败')
+    await Promise.all([loadOverview(), loadProgress(), loadSources()])
+    showToast({ type: 'success', message: '已重新准备学习内容' })
+  } catch (requestError) {
+    showToast({ type: 'error', message: requestError.message || '学习内容准备失败，请稍后重试' })
+  } finally {
+    curriculumRebuilding.value = false
+  }
+}
+
 onMounted(async () => {
   await courses.ensureLoaded()
   await loadOverview()
@@ -514,7 +544,21 @@ watch(view, nextView => {
             </article>
 
             <article v-else class="empty-action">
-              <Check :size="26" /><h3>先让课程准备好</h3><p>上传一份教材和几道题，我们就能从第一步开始陪你学。</p><button type="button" @click="setView('sources')">添加资料</button>
+              <template v-if="materialCount === 0">
+                <Check :size="26" /><h3>先添加一份课程资料</h3><p>上传一份教材或讲义后，我们会为你整理可学习的内容。</p><button type="button" @click="setView('sources')">添加资料</button>
+              </template>
+              <template v-else-if="readyMaterialCount === 0">
+                <RefreshCw :size="26" /><h3>资料正在准备中</h3><p>正在解析并整理你上传的资料。完成后会自动出现学习建议。</p><button type="button" @click="loadOverview">刷新状态</button>
+              </template>
+              <template v-else-if="needsCurriculumRetry">
+                <CircleAlert :size="26" /><h3>资料已可使用，但学习内容还没准备好</h3><p>资料处理已经完成；请重新准备一次学习内容，不需要重新上传资料。</p><button type="button" :disabled="curriculumRebuilding" @click="rebuildLearningContent">{{ curriculumRebuilding ? '正在准备' : '重新准备学习内容' }}</button>
+              </template>
+              <template v-else-if="curriculumPreparing">
+                <RefreshCw :size="26" /><h3>资料已可使用，正在准备学习内容</h3><p>我们正在根据资料整理可学习的目标。稍后刷新即可继续学习。</p><button type="button" @click="loadOverview">刷新状态</button>
+              </template>
+              <template v-else>
+                <Check :size="26" /><h3>暂时没有新的学习安排</h3><p>当前内容不需要重复练习。你可以查看进度，或稍后回来复习。</p><button type="button" @click="setView('progress')">查看进度</button>
+              </template>
             </article>
 
             <article v-if="actionResult" class="evidence-result" aria-live="polite">
