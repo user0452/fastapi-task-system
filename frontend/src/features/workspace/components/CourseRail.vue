@@ -1,5 +1,5 @@
 <script setup>
-import { CalendarCheck2, LogOut, Plus, Settings, Sparkles, X } from 'lucide-vue-next'
+import { BookOpenCheck, CalendarCheck2, Gauge, LogOut, Plus, Settings, Sparkles, Upload, X } from 'lucide-vue-next'
 
 
 defineProps({
@@ -28,17 +28,17 @@ function courseLine(course) {
   if (course.status === 'draft') return '等待课程资料'
   if (course.status === 'preparing') return '资料处理中'
   if (course.status === 'diagnostic_pending') return '等待初始诊断'
-  return `${course.daily_minutes || 25} 分钟/天 · 证据驱动学习`
+  return `${course.daily_minutes || 25} 分钟/天`
 }
 </script>
 
 <template>
-  <aside class="course-rail" :class="{ collapsed }" aria-label="课程助手">
+  <aside class="course-rail" :class="{ collapsed }" aria-label="学习导航">
     <header class="rail-brand">
       <span class="brand-mark"><Sparkles :size="17" /></span>
       <div>
-        <strong>A3 学习 AI</strong>
-        <span>专属课程工作台</span>
+        <strong>A3 学习</strong>
+        <span>你的学习空间</span>
       </div>
       <button v-if="mobile" class="rail-icon" type="button" title="关闭课程栏" aria-label="关闭课程栏" @click="$emit('close')">
         <X :size="18" />
@@ -46,16 +46,28 @@ function courseLine(course) {
     </header>
 
     <nav class="rail-navigation">
-      <router-link to="/today" class="today-link" active-class="active" title="今日总览" @click="$emit('close')">
+      <router-link to="/home" class="today-link" active-class="active" title="首页" @click="$emit('close')">
         <CalendarCheck2 :size="19" />
         <span>
-          <strong>下一动作</strong>
-          <small>所有课程</small>
+          <strong>首页</strong>
+          <small>今天该学什么</small>
         </span>
       </router-link>
 
+      <div v-if="currentId" class="course-section-nav" aria-label="当前课程">
+        <router-link :to="`/learn/${currentId}`" class="course-section-link" active-class="active" @click="$emit('close')">
+          <BookOpenCheck :size="18" /><span>学习</span>
+        </router-link>
+        <router-link :to="`/progress/${currentId}`" class="course-section-link" active-class="active" @click="$emit('close')">
+          <Gauge :size="18" /><span>进度</span>
+        </router-link>
+        <router-link :to="`/materials/${currentId}`" class="course-section-link" active-class="active" @click="$emit('close')">
+          <Upload :size="18" /><span>资料</span>
+        </router-link>
+      </div>
+
       <div class="rail-section-heading">
-        <span>课程助手</span>
+        <span>我的课程</span>
         <button class="rail-icon" type="button" title="新建课程" aria-label="新建课程" @click="$emit('create')">
           <Plus :size="18" />
         </button>
@@ -136,6 +148,7 @@ function courseLine(course) {
 .rail-navigation { min-height: 0; flex: 1; overflow-y: auto; padding: 8px 10px 16px; }
 .today-link,
 .course-link,
+.course-section-link,
 .settings-link {
   display: flex;
   align-items: center;
@@ -153,6 +166,28 @@ function courseLine(course) {
 .today-link:hover,
 .today-link.active { color: var(--accent); background: var(--accent-soft); }
 .today-link.active strong { color: var(--text-accent); }
+.course-section-nav {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin: 8px 0 3px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--surface-secondary);
+}
+.course-section-link {
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  padding: 6px 2px;
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.course-section-link.active,
+.course-section-link:hover { color: var(--text-accent); background: var(--surface-primary); }
 .rail-section-heading {
   height: 48px;
   display: flex;
@@ -256,6 +291,7 @@ function courseLine(course) {
 .collapsed .rail-brand > div,
 .collapsed .rail-brand > .rail-icon,
 .collapsed .today-link > span,
+.collapsed .course-section-nav,
 .collapsed .rail-section-heading > span,
 .collapsed .course-copy,
 .collapsed .settings-link > span,

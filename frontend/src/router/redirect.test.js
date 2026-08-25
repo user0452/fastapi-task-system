@@ -3,15 +3,15 @@ import { postLoginRouteFromHash, safePostLoginRoute } from './redirect'
 
 
 describe('safePostLoginRoute', () => {
-  it('restores one of the three Adaptive Tutor areas', () => {
+  it('restores a simplified product route', () => {
     expect(safePostLoginRoute('/learn/42?view=sources&material_id=8&chunk=13')).toBe(
-      '/learn/42?view=sources&material_id=8&chunk=13'
+      '/materials/42'
     )
   })
 
   it('maps old bookmarks to a core area without restoring retired panels', () => {
-    expect(safePostLoginRoute('/learn/42?panel=plan')).toBe('/learn/42?view=learn')
-    expect(safePostLoginRoute('/learn/42?panel=memory')).toBe('/learn/42?view=learn')
+    expect(safePostLoginRoute('/learn/42?panel=plan')).toBe('/learn/42')
+    expect(safePostLoginRoute('/learn/42?panel=memory')).toBe('/learn/42')
   })
 
   it('drops unknown parameters and invalid views', () => {
@@ -28,8 +28,8 @@ describe('safePostLoginRoute', () => {
 describe('postLoginRouteFromHash', () => {
   it('keeps the core course route across repeated 401 redirects', () => {
     const route = '/learn/42?view=progress'
-    expect(postLoginRouteFromHash(`#${route}`)).toBe(route)
-    expect(postLoginRouteFromHash(`#/login?redirect=${encodeURIComponent(route)}`)).toBe(route)
+    expect(postLoginRouteFromHash(`#${route}`)).toBe('/progress/42')
+    expect(postLoginRouteFromHash(`#/login?redirect=${encodeURIComponent(route)}`)).toBe('/progress/42')
   })
 
   it('does not recover an unsafe redirect from the login route', () => {

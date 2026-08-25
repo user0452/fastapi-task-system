@@ -14,7 +14,7 @@
 - Practice retrieval-first；高质量真实题存在时不会调用 generator，生成 fallback 经过 grounded validator。
 - Diagnostic 使用 importance、uncertainty、coverage、prerequisite hub 和 diversity 选择题目。
 - Tutor 已收敛为真实课程 endpoint：带 Student Model、当前 action、misconception、prerequisite 和 RAG/provenance citations；普通 Tutor 不写 Evidence，Tutor Check 才能写入。
-- 前端正式课程区域为 Learn、Progress、Sources；没有 Roadmap、知识图谱画布、资源推荐或 generic Memory 页面。
+- 前端正式导航为 Home、Learn、Progress、Materials、Settings；没有 Roadmap、知识图谱画布、资源推荐、generic Memory、日志或开发者控制台页面。
 - 固定 Mini Course seed、Adaptive Benchmark、baseline/ablation、闭环 E2E、迁移测试和文档已加入仓库。
 
 ## 已退出正式主线

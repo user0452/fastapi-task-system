@@ -15,10 +15,10 @@ const routes = [
     component: () => import('../layouts/AppShell.vue'),
     meta: { requiresAuth: true },
     children: [
-      { path: '', redirect: '/today' },
+      { path: '', redirect: '/home' },
       {
-        path: 'today',
-        name: 'today',
+        path: 'home',
+        name: 'home',
         component: () => import('../features/adaptive/AdaptiveHomePage.vue')
       },
       {
@@ -27,20 +27,33 @@ const routes = [
         component: () => import('../features/adaptive/AdaptiveTutorPage.vue')
       },
       {
+        path: 'progress/:courseId(\\d+)',
+        name: 'course-progress',
+        component: () => import('../features/adaptive/AdaptiveTutorPage.vue'),
+        props: { pageMode: 'progress' }
+      },
+      {
+        path: 'materials/:courseId(\\d+)',
+        name: 'course-materials',
+        component: () => import('../features/adaptive/AdaptiveTutorPage.vue'),
+        props: { pageMode: 'sources' }
+      },
+      {
         path: 'settings',
         name: 'settings',
         component: () => import('../features/settings/SettingsPage.vue')
       },
-      // Keep bookmarks working without loading any retired roadmap/resource/agent UI.
-      { path: 'courses', name: 'legacy-courses', redirect: '/today' },
-      { path: 'agent', name: 'legacy-agent', redirect: '/today' },
-      { path: 'progress', name: 'legacy-progress', redirect: '/today' },
-      { path: 'materials', name: 'legacy-materials', redirect: '/today' },
-      { path: 'resources', name: 'legacy-resources', redirect: '/today' },
-      { path: 'quizzes', name: 'legacy-quizzes', redirect: '/today' },
-      { path: 'plans', name: 'legacy-plans', redirect: '/today' },
-      { path: 'tasks', name: 'legacy-tasks', redirect: '/today' },
-      { path: 'overview', redirect: '/today' },
+      // Keep old bookmarks working without loading retired product UIs.
+      { path: 'today', redirect: '/home' },
+      { path: 'courses', name: 'legacy-courses', redirect: '/home' },
+      { path: 'agent', name: 'legacy-agent', redirect: '/home' },
+      { path: 'progress', name: 'legacy-progress', redirect: '/home' },
+      { path: 'materials', name: 'legacy-materials', redirect: '/home' },
+      { path: 'resources', name: 'legacy-resources', redirect: '/home' },
+      { path: 'quizzes', name: 'legacy-quizzes', redirect: '/home' },
+      { path: 'plans', name: 'legacy-plans', redirect: '/home' },
+      { path: 'tasks', name: 'legacy-tasks', redirect: '/home' },
+      { path: 'overview', redirect: '/home' },
       { path: 'profile', redirect: '/settings' }
     ]
   }
@@ -52,14 +65,20 @@ const router = createRouter({
 })
 
 router.beforeEach(async to => {
+  if (to.name === 'course-ai-workspace') {
+    const courseId = to.params.courseId
+    if (to.query.view === 'progress' || to.query.panel === 'progress') return `/progress/${courseId}`
+    if (to.query.view === 'sources' || to.query.panel === 'materials') return `/materials/${courseId}`
+  }
+
   const auth = useAuthStore()
   await auth.restore()
 
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
-    return { path: '/login', query: { redirect: safePostLoginRoute(to.fullPath) || '/today' } }
+    return { path: '/login', query: { redirect: safePostLoginRoute(to.fullPath) || '/home' } }
   }
   if (to.meta.guest && auth.isLoggedIn) {
-    return safePostLoginRoute(to.query.redirect) || '/today'
+    return safePostLoginRoute(to.query.redirect) || '/home'
   }
 
   return true

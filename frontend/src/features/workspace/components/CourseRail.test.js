@@ -16,7 +16,7 @@ function mountRail(courses) {
 }
 
 describe('CourseRail adaptive course navigation', () => {
-  it('shows evidence-driven learning status instead of a roadmap stage', () => {
+  it('shows simple daily study context instead of a roadmap stage', () => {
     const wrapper = mountRail([{
       id: 3,
       name: '软件测试',
@@ -24,7 +24,7 @@ describe('CourseRail adaptive course navigation', () => {
       status: 'active'
     }])
 
-    expect(wrapper.text()).toContain('30 分钟/天 · 证据驱动学习')
+    expect(wrapper.text()).toContain('30 分钟/天')
     expect(wrapper.text()).not.toContain('总进度')
     expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
   })

@@ -110,7 +110,7 @@ async function submit() {
     : await createCourseTextMaterial(props.courseId, { title: title.value.trim(), content: content.value.trim() })
   saving.value = false
   if (response.code >= 200 && response.code < 300) {
-    showToast({ type: 'success', message: '资料已提交，正在自动处理' })
+    showToast({ type: 'success', message: '资料已添加，正在准备学习内容' })
     title.value = ''
     content.value = ''
     selectedFile.value = null
@@ -133,7 +133,7 @@ async function retry(material) {
 async function remove(material) {
   if (deletingId.value !== null) return
   const confirmed = window.confirm(
-    `确定删除资料“${material.title}”吗？\n\n对应的检索片段和仅由此资料生成的知识点也会删除，此操作无法恢复。`
+    `确定删除资料“${material.title}”吗？\n\n删除后将无法用于后续学习，此操作无法恢复。`
   )
   if (!confirmed) return
   deletingId.value = material.id
@@ -143,7 +143,7 @@ async function remove(material) {
     materials.value = materials.value.filter(item => item.id !== material.id)
     schedulePoll()
     emit('processed')
-    showToast({ type: 'success', message: '资料及其检索索引已删除' })
+    showToast({ type: 'success', message: '资料已删除' })
   } else {
     showToast({ type: 'error', message: response.message })
   }
@@ -165,7 +165,7 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
       <div class="editor-heading">
         <div>
           <h3>添加课程资料</h3>
-          <p>提交后自动解析、分块和建立索引，不需要手动构建。</p>
+          <p>添加后会自动准备好，不需要额外设置。</p>
         </div>
         <div class="mode-switch" role="tablist" aria-label="资料输入方式">
           <button type="button" :class="{ active: mode === 'file' }" @click="mode = 'file'">上传文件</button>
@@ -195,7 +195,7 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
       <div class="editor-actions">
         <span>{{ mode === 'file' ? '文件会保存在服务端私有目录' : `${content.length} 字符` }}</span>
         <button class="primary-button" type="button" :disabled="saving" @click="submit">
-          <Upload :size="16" /> {{ saving ? '正在提交' : '提交并自动处理' }}
+          <Upload :size="16" /> {{ saving ? '正在添加' : '添加资料' }}
         </button>
       </div>
     </section>
@@ -231,8 +231,8 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
               v-if="['ready', 'failed'].includes(material.processing_status)"
               class="icon-button"
               type="button"
-              :title="material.processing_status === 'ready' ? '使用最新 RAG 配置重建索引' : '重试处理'"
-              :aria-label="material.processing_status === 'ready' ? '重建资料索引' : '重试处理'"
+              :title="material.processing_status === 'ready' ? '重新准备资料' : '重试处理'"
+              :aria-label="material.processing_status === 'ready' ? '重新准备资料' : '重试处理'"
               :disabled="deletingId === material.id"
               @click="retry(material)"
             >

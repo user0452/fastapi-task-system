@@ -8,13 +8,10 @@ import {
   CircleAlert,
   CircleHelp,
   FileText,
-  Gauge,
   Lightbulb,
   RefreshCw,
   Send,
-  ShieldCheck,
   Sparkles,
-  Target,
   Upload
 } from 'lucide-vue-next'
 import {
@@ -36,6 +33,9 @@ import { showToast } from '../../components/common/toast'
 import MaterialWorkspace from '../courses/components/MaterialWorkspace.vue'
 import { useCourseStore } from '../../stores/course'
 
+const props = defineProps({
+  pageMode: { type: String, default: 'learn' }
+})
 
 const route = useRoute()
 const router = useRouter()
@@ -78,20 +78,7 @@ const questionForm = ref({
   source_type: 'user_upload'
 })
 
-const legacyViewMap = {
-  today: 'learn',
-  overview: 'progress',
-  knowledge: 'progress',
-  practice: 'learn',
-  materials: 'sources',
-  plan: 'learn',
-  memory: 'learn'
-}
-
-const view = computed(() => {
-  const requested = String(route.query.view || route.query.panel || 'learn')
-  return ['learn', 'progress', 'sources'].includes(requested) ? requested : (legacyViewMap[requested] || 'learn')
-})
+const view = computed(() => props.pageMode)
 const action = computed(() => overview.value?.next_action || null)
 const objectives = computed(() => overview.value?.objectives || progress.value?.objectives || [])
 const selectedObjective = computed(() => (
@@ -99,7 +86,6 @@ const selectedObjective = computed(() => (
   || objectives.value.find(item => Number(item.id) === Number(selectedObjectiveId.value))
   || null
 ))
-const curriculum = computed(() => overview.value?.curriculum || { status: 'pending', objective_count: 0 })
 const actionTypeLabel = {
   explain: '基础讲解',
   practice: '场景练习',
@@ -116,13 +102,6 @@ const stateLabel = {
   weak: '薄弱',
   unknown: '未验证'
 }
-const curriculumLabel = {
-  pending: '等待 Curriculum',
-  ready: 'Curriculum 已就绪',
-  degraded: 'Curriculum 需要复核',
-  failed: 'Curriculum 构建失败'
-}
-
 const questionTypeLabel = {
   multiple_choice: '选择题',
   true_false: '判断题',
@@ -152,7 +131,12 @@ function actionObjectiveTitle(value) {
 }
 
 function setView(nextView) {
-  router.replace({ path: route.path, query: { ...route.query, view: nextView } })
+  const paths = {
+    learn: `/learn/${courseId.value}`,
+    progress: `/progress/${courseId.value}`,
+    sources: `/materials/${courseId.value}`
+  }
+  router.push(paths[nextView] || paths.learn)
   if (nextView === 'progress') loadProgress()
   if (nextView === 'sources') loadSources()
 }
@@ -185,11 +169,11 @@ async function loadProgress() {
   viewLoading.value = true
   try {
     const response = await getAdaptiveProgress(courseId.value)
-    if (response.code !== 200) throw new Error(response.message || 'Student Model 读取失败')
+    if (response.code !== 200) throw new Error(response.message || '学习进度读取失败')
     progress.value = response.data
     if (!selectedObjectiveId.value) selectedObjectiveId.value = response.data?.objectives?.[0]?.id || null
   } catch (requestError) {
-    showToast({ type: 'error', message: requestError.message || 'Student Model 读取失败' })
+    showToast({ type: 'error', message: requestError.message || '学习进度读取失败' })
   } finally {
     viewLoading.value = false
   }
@@ -229,7 +213,7 @@ async function beginAction() {
 async function submitAction() {
   if (!action.value?.id || !actionAnswer.value.trim() || actionSubmitting.value) return
   if (!action.value.question) {
-    showToast({ type: 'info', message: '讲解动作请使用 Tutor Check 提交，普通聊天不会改变 Student Model' })
+    showToast({ type: 'info', message: '讲解完成后，可以用“检查理解”提交你的回答' })
     return
   }
   actionSubmitting.value = true
@@ -403,7 +387,7 @@ async function tagQuestionManually(question) {
     const response = await tagAdaptiveQuestion(courseId.value, question.id, [Number(objectiveId)])
     if (response.code !== 200) throw new Error(response.message || '手动关联失败')
     await Promise.all([loadSources(), loadOverview()])
-    showToast({ type: 'success', message: '题目已关联到 Learning Objective' })
+    showToast({ type: 'success', message: '题目已准备好用于练习' })
   } catch (requestError) {
     showToast({ type: 'error', message: requestError.message || '手动关联失败' })
   }
@@ -436,29 +420,14 @@ watch(view, nextView => {
   <div class="adaptive-tutor">
     <header class="adaptive-header">
       <div class="adaptive-identity">
-        <span class="adaptive-kicker"><Sparkles :size="14" /> ADAPTIVE TUTOR</span>
+        <span class="adaptive-kicker"><Sparkles :size="14" /> {{ view === 'learn' ? '今天的学习' : (view === 'progress' ? '学习进度' : '课程资料') }}</span>
         <h1>{{ course?.name || '课程学习' }}</h1>
-        <p>每次学习都留下证据，系统据此决定下一步最值得完成的动作。</p>
+        <p>{{ view === 'learn' ? '专注完成眼前这一小步。完成后，我们会为你准备下一步。' : (view === 'progress' ? '看看已经掌握的内容，以及下一次该复习什么。' : '上传教材和题目，让课程准备好为你出题。') }}</p>
       </div>
-      <div class="adaptive-header-meta">
-        <span class="curriculum-status" :class="curriculum.status">
-          <ShieldCheck :size="14" /> {{ curriculumLabel[curriculum.status] || curriculum.status }}
-        </span>
-        <span v-if="course?.exam_at" class="exam-date">目标 {{ formatDate(course.exam_at) }}</span>
+      <div v-if="course?.exam_at" class="adaptive-header-meta">
+        <span class="exam-date">目标日期：{{ formatDate(course.exam_at) }}</span>
       </div>
     </header>
-
-    <nav class="adaptive-nav" role="tablist" aria-label="课程学习区域">
-      <button type="button" role="tab" :aria-selected="view === 'learn'" :class="{ active: view === 'learn' }" @click="setView('learn')">
-        <Target :size="16" /> Learn <small>下一动作</small>
-      </button>
-      <button type="button" role="tab" :aria-selected="view === 'progress'" :class="{ active: view === 'progress' }" @click="setView('progress')">
-        <Gauge :size="16" /> Progress <small>学生状态</small>
-      </button>
-      <button type="button" role="tab" :aria-selected="view === 'sources'" :class="{ active: view === 'sources' }" @click="setView('sources')">
-        <BookOpenCheck :size="16" /> Sources <small>资料与题库</small>
-      </button>
-    </nav>
 
     <div v-if="loading" class="adaptive-state" role="status">正在读取课程证据与下一动作</div>
     <div v-else-if="error" class="adaptive-state error-state" role="alert">
@@ -468,10 +437,10 @@ watch(view, nextView => {
       <template v-if="view === 'learn'">
         <section class="learn-layout">
           <div class="learn-primary">
-            <div class="section-intro">
-              <span class="section-eyebrow">NEXT BEST LEARNING ACTION</span>
-              <h2>下一步建议</h2>
-              <p>策略先判断学什么，再根据你的状态决定怎么学。</p>
+          <div class="section-intro">
+              <span class="section-eyebrow">现在就开始</span>
+              <h2>今天建议学这个</h2>
+              <p>不用规划整天，完成这一项就好。</p>
             </div>
 
             <article v-if="action" class="action-surface" :class="action.action_type">
@@ -482,19 +451,19 @@ watch(view, nextView => {
               <h3>{{ actionObjectiveTitle(action.objective_id) }}</h3>
               <p class="action-ability">{{ objectiveForAction(action.objective_id)?.required_ability || action.required_ability || '完成一次可验证的学习动作' }}</p>
               <div class="action-reason">
-                <strong>为什么现在做</strong>
+                <strong>为什么推荐给你</strong>
                 <p>{{ action.reason }}</p>
               </div>
 
               <div v-if="!actionStarted" class="action-start-row">
-                <span v-if="action.question">题库已找到匹配题，优先使用真实题目。</span>
-                <span v-else>当前动作需要先完成讲解或自检；题库没有合适题时不会假装生成。</span>
+                <span v-if="action.question">我们已经为你准备好一道练习题。</span>
+                <span v-else>先听一个简短讲解，再用自己的话检查理解。</span>
                 <button type="button" class="action-button" @click="beginAction">开始 <ArrowRight :size="16" /></button>
               </div>
 
               <form v-else-if="action.question" class="action-answer" @submit.prevent="submitAction">
                 <div class="question-block">
-                  <span>题库练习 · {{ questionTypeLabel[action.question.question_type] || action.question.question_type }} · {{ action.question.source_type }}</span>
+                  <span>练习 · {{ questionTypeLabel[action.question.question_type] || action.question.question_type }}</span>
                   <p>{{ action.question.content }}</p>
                 </div>
                 <div v-if="action.question.question_type === 'multiple_choice'" class="choice-list">
@@ -512,16 +481,16 @@ watch(view, nextView => {
                   <textarea v-model="actionAnswer" rows="5" placeholder="先写判断依据，再写结论……" autofocus></textarea>
                 </label>
                 <div class="answer-actions">
-                  <span>提交后会形成 Learning Evidence，并重新计算下一步。</span>
+                  <span>提交后会立刻为你准备下一步。</span>
                   <button type="submit" class="action-button" :disabled="actionSubmitting || !actionAnswer.trim()">
-                    <Send :size="15" /> {{ actionSubmitting ? '正在评估' : '提交并更新状态' }}
+                    <Send :size="15" /> {{ actionSubmitting ? '正在查看' : '提交答案' }}
                   </button>
                 </div>
               </form>
               <section v-else class="tutor-learning-surface">
                 <div class="explain-block">
-                  <span>真实 Tutor 教学交互</span>
-                  <p>讲解、换例子和拆步骤只会返回带课程证据的教学内容，不会直接改写 Student Model。</p>
+                  <span>学习助手</span>
+                  <p>不着急。先用更容易理解的方式讲清楚，再检查自己是否真的会用。</p>
                 </div>
                 <div v-if="tutorResponse" class="tutor-live-response" aria-live="polite">
                   <strong>{{ tutorResponse.provider === 'llm' ? 'Tutor' : 'Tutor（确定性兜底）' }}</strong>
@@ -533,102 +502,102 @@ watch(view, nextView => {
                   <button type="button" class="quiet-button" :disabled="tutorLoading" @click="askTutor('reframe', '换一种更直观的方式解释当前目标')">换一种解释</button>
                   <button type="button" class="quiet-button" :disabled="tutorLoading" @click="askTutor('example', '给我一个新的课程场景例子')">给个例子</button>
                   <button type="button" class="quiet-button" :disabled="tutorLoading" @click="askTutor('break_down', '把这个判断过程拆成几个步骤')">拆开步骤</button>
-                  <button type="button" class="action-button" :disabled="tutorLoading" @click="requestTutorCheck">开始 Tutor Check</button>
+                  <button type="button" class="action-button" :disabled="tutorLoading" @click="requestTutorCheck">检查理解</button>
                 </div>
                 <form v-if="tutorResponse?.tutor_check" class="tutor-check-form" @submit.prevent="submitTutorCheck">
-                  <span>理解检查 · 这一次回答才会进入 Evidence</span>
+                  <span>理解检查</span>
                   <strong>{{ tutorResponse.tutor_check.question }}</strong>
                   <textarea v-model="tutorCheckResponse" rows="4" placeholder="用自己的话回答，说明判断依据和一个场景……"></textarea>
-                  <button type="submit" class="action-button" :disabled="tutorCheckSubmitting || !tutorCheckResponse.trim()">{{ tutorCheckSubmitting ? '正在评分' : '提交 Tutor Check' }}</button>
+                  <button type="submit" class="action-button" :disabled="tutorCheckSubmitting || !tutorCheckResponse.trim()">{{ tutorCheckSubmitting ? '正在查看' : '提交回答' }}</button>
                 </form>
               </section>
             </article>
 
             <article v-else class="empty-action">
-              <Check :size="26" /><h3>当前没有需要重复刷新的目标</h3><p>先上传课程资料并建立 Learning Objective，或者添加题库。</p><button type="button" @click="setView('sources')">去 Sources</button>
+              <Check :size="26" /><h3>先让课程准备好</h3><p>上传一份教材和几道题，我们就能从第一步开始陪你学。</p><button type="button" @click="setView('sources')">添加资料</button>
             </article>
 
             <article v-if="actionResult" class="evidence-result" aria-live="polite">
               <div class="result-mark"><Check :size="18" /></div>
-              <div><span>刚刚写入 Evidence</span><strong>{{ masteryPercent(actionResult.state.mastery) }} 掌握度 · {{ masteryPercent(actionResult.state.confidence) }} 置信度</strong><p>{{ actionResult.feedback }}</p></div>
+              <div><span>刚刚完成</span><strong>{{ masteryPercent(actionResult.state.mastery) }} 掌握度 · {{ masteryPercent(actionResult.state.confidence) }} 把握度</strong><p>{{ actionResult.feedback }}</p></div>
               <small>{{ actionResult.update_reason }}</small>
             </article>
 
             <article v-if="diagnostic?.complete" class="evidence-result diagnostic-evidence-result" aria-live="polite">
               <div class="result-mark"><Check :size="18" /></div>
-              <div><span>刚刚写入 Evidence</span><strong>{{ diagnostic.result?.count || 0 }} 条诊断证据已写入</strong><p>初始 Student Model 已更新，系统已根据诊断结果重新计算下一动作。</p></div>
-              <small>source_type=diagnostic · {{ diagnostic.result?.question_count || 0 }} 道诊断题</small>
+              <div><span>诊断完成</span><strong>已完成 {{ diagnostic.result?.count || 0 }} 次初步判断</strong><p>我们已经根据你的回答准备好下一步。</p></div>
+              <small>{{ diagnostic.result?.question_count || 0 }} 道快速诊断题</small>
             </article>
 
             <section class="diagnostic-strip">
-              <div><span class="section-eyebrow">INITIAL DIAGNOSIS</span><h3>还没有足够的学习证据？</h3><p>用少量题目覆盖高重要度目标和关键前置关系，先建立初始 Student Model。</p></div>
-              <button type="button" class="quiet-button" @click="beginDiagnostic"><RefreshCw :size="15" /> 开始快速诊断</button>
+              <div><span class="section-eyebrow">先认识你</span><h3>想从适合你的难度开始？</h3><p>用几道小题快速了解你现在已经会什么。</p></div>
+              <button type="button" class="quiet-button" @click="beginDiagnostic"><RefreshCw :size="15" /> 开始快速定位</button>
             </section>
 
             <section v-if="diagnostic" class="diagnostic-surface">
-              <header><div><span class="section-eyebrow">DIAGNOSTIC</span><h3>{{ diagnostic.complete ? '诊断已完成' : '用最少题目建立初始状态' }}</h3></div><button type="button" @click="diagnostic = null">关闭</button></header>
-              <div v-if="diagnostic.complete" class="diagnostic-complete"><Check :size="19" /><p>诊断证据已写入 Student Model，下一动作已经重新计算。</p></div>
+              <header><div><span class="section-eyebrow">快速定位</span><h3>{{ diagnostic.complete ? '定位完成' : '用几道题找到合适的起点' }}</h3></div><button type="button" @click="diagnostic = null">关闭</button></header>
+              <div v-if="diagnostic.complete" class="diagnostic-complete"><Check :size="19" /><p>下一步已经为你准备好了。</p></div>
               <form v-else @submit.prevent="submitDiagnostic">
                 <article v-for="(question, index) in diagnostic.questions" :key="question.id" class="diagnostic-question">
                   <span>0{{ index + 1 }} · {{ question.difficulty }}</span><p>{{ question.content }}</p><textarea v-model="diagnosticAnswers[question.id]" rows="3" placeholder="写出你的判断依据……"></textarea>
                 </article>
-                <button type="submit" class="action-button" :disabled="diagnosticSubmitting">{{ diagnosticSubmitting ? '正在建立状态' : '提交诊断' }}</button>
+                <button type="submit" class="action-button" :disabled="diagnosticSubmitting">{{ diagnosticSubmitting ? '正在查看' : '完成定位' }}</button>
               </form>
-              <p v-if="!diagnostic.questions?.length" class="inline-empty">题库中还没有关联 Objective 的题目，请先去 Sources 添加。</p>
+              <p v-if="!diagnostic.questions?.length" class="inline-empty">题库里还没有适合的题目，请先去资料页添加。</p>
             </section>
           </div>
 
           <aside class="tutor-context">
-            <div class="context-heading"><CircleHelp :size="17" /><span>Tutor 辅助</span></div>
-            <p>Tutor 负责解释和提问，不直接修改掌握度。状态只由下面的学习证据更新。</p>
+            <div class="context-heading"><CircleHelp :size="17" /><span>需要一点帮助？</span></div>
+            <p>可以随时让学习助手换一种讲法、给出例子，或解释为什么现在学这一项。</p>
             <div class="context-objective" v-if="action">
               <span>当前目标</span><strong>{{ actionObjectiveTitle(action.objective_id) }}</strong><p>{{ objectiveForAction(action.objective_id)?.description || '等待课程目标详情' }}</p>
             </div>
             <div class="tutor-prompts">
               <button type="button" :disabled="tutorLoading" @click="askTutor('example', '换一个更具体的课程例子')">换一个例子 <ArrowRight :size="14" /></button>
               <button type="button" :disabled="tutorLoading" @click="askTutor('break_down', '把判断步骤拆开')">拆开判断步骤 <ArrowRight :size="14" /></button>
-              <button type="button" :disabled="tutorLoading" @click="askTutor('why_this_action', '告诉我这道题在检查什么')">解释这题在检查什么 <ArrowRight :size="14" /></button>
-              <button type="button" :disabled="tutorLoading" @click="requestTutorCheck">开始 Tutor Check <ArrowRight :size="14" /></button>
+              <button type="button" :disabled="tutorLoading" @click="askTutor('why_this_action', '告诉我这道题在检查什么')">为什么学这个 <ArrowRight :size="14" /></button>
+              <button type="button" :disabled="tutorLoading" @click="requestTutorCheck">检查理解 <ArrowRight :size="14" /></button>
             </div>
-            <div v-if="tutorResponse" class="tutor-response"><span>教学响应 · {{ tutorResponse.intent }}</span><p>{{ tutorResponse.reply }}</p><small v-if="tutorResponse.citations?.length">课程引用：{{ tutorResponse.citations.map(item => item.material_title || item.heading_path || `chunk ${item.chunk_id}`).join(' · ') }}</small><small v-if="tutorResponse.evidence_written === false">本次对话未写入 Evidence</small></div>
+            <div v-if="tutorResponse" class="tutor-response"><span>学习助手</span><p>{{ tutorResponse.reply }}</p><small v-if="tutorResponse.citations?.length">来自课程资料：{{ tutorResponse.citations.map(item => item.material_title || item.heading_path || `资料片段 ${item.chunk_id}`).join(' · ') }}</small></div>
             <form v-if="tutorResponse?.tutor_check" class="tutor-check-form tutor-check-form-sidebar" @submit.prevent="submitTutorCheck">
-              <span>理解检查 · 这一次回答才会进入 Evidence</span>
+              <span>理解检查</span>
               <strong>{{ tutorResponse.tutor_check.question }}</strong>
               <textarea v-model="tutorCheckResponse" rows="4" placeholder="用自己的话回答，说明判断依据和一个场景……"></textarea>
-              <button type="submit" class="action-button" :disabled="tutorCheckSubmitting || !tutorCheckResponse.trim()">{{ tutorCheckSubmitting ? '正在评分' : '提交 Tutor Check' }}</button>
+              <button type="submit" class="action-button" :disabled="tutorCheckSubmitting || !tutorCheckResponse.trim()">{{ tutorCheckSubmitting ? '正在查看' : '提交回答' }}</button>
             </form>
-            <div class="context-foot"><FileText :size="14" /><span>{{ curriculum.objective_count || 0 }} 个目标 · {{ overview?.counts?.evidence_count || 0 }} 条 Evidence</span></div>
+            <div class="context-foot"><FileText :size="14" /><span>围绕当前学习内容提供帮助</span></div>
           </aside>
         </section>
       </template>
 
       <template v-else-if="view === 'progress'">
         <section class="progress-view">
-          <div class="section-intro"><span class="section-eyebrow">STUDENT MODEL</span><h2>Progress</h2><p>掌握度回答“现在表现如何”，置信度回答“证据够不够”。两者故意分开。</p></div>
-          <div class="status-line" aria-label="Student Model 状态统计">
+          <div class="section-intro"><span class="section-eyebrow">你的学习状态</span><h2>进度</h2><p>这里显示你已经会什么、正在练什么，以及哪些内容值得再看一次。</p></div>
+          <div class="status-line" aria-label="学习状态统计">
             <span><i class="status-dot mastered"></i>已掌握 {{ progress?.status_counts?.mastered || 0 }}</span>
             <span><i class="status-dot progressing"></i>进展中 {{ progress?.status_counts?.progressing || 0 }}</span>
             <span><i class="status-dot learning"></i>学习中 {{ progress?.status_counts?.learning || 0 }}</span>
             <span><i class="status-dot weak"></i>薄弱 {{ progress?.status_counts?.weak || 0 }}</span>
             <span><i class="status-dot unknown"></i>未验证 {{ progress?.status_counts?.unknown || 0 }}</span>
           </div>
-          <div v-if="viewLoading" class="inline-loading">正在读取 Student Model</div>
+          <div v-if="viewLoading" class="inline-loading">正在读取学习进度</div>
           <div v-else class="progress-layout">
             <div class="objective-table" aria-label="学习目标列表">
               <button v-for="objective in progress?.objectives || []" :key="objective.id" type="button" class="objective-row" :class="{ selected: Number(selectedObjectiveId) === Number(objective.id) }" @click="selectedObjectiveId = objective.id">
                 <span class="status-chip" :class="objective.state">{{ stateLabel[objective.state] || objective.state }}</span>
-                <span class="objective-row-copy"><strong>{{ objective.title }}</strong><small>{{ objective.attempt_count }} 次 Evidence · 最近 {{ formatDate(objective.last_practiced_at) }}</small></span>
+                <span class="objective-row-copy"><strong>{{ objective.title }}</strong><small>{{ objective.attempt_count }} 次练习 · 最近 {{ formatDate(objective.last_practiced_at) }}</small></span>
                 <span class="objective-values"><b>{{ masteryPercent(objective.mastery) }}</b><small>置信 {{ masteryPercent(objective.confidence) }}</small></span>
               </button>
-              <div v-if="!progress?.objectives?.length" class="inline-empty">课程还没有 Learning Objective。请先在 Sources 处理资料。</div>
+              <div v-if="!progress?.objectives?.length" class="inline-empty">课程还没有可学习内容。请先在资料页添加教材。</div>
             </div>
             <aside v-if="selectedObjective" class="objective-detail">
-              <span class="section-eyebrow">WHY THIS STATE</span><h3>{{ selectedObjective.title }}</h3><p>{{ selectedObjective.description }}</p>
-              <div class="detail-metrics"><div><span>掌握度</span><strong>{{ masteryPercent(selectedObjective.mastery) }}</strong></div><div><span>置信度</span><strong>{{ masteryPercent(selectedObjective.confidence) }}</strong></div></div>
-              <p class="confidence-explanation">{{ selectedObjective.confidence_explanation || '置信度会随证据数量、一致性、题型覆盖、评分质量和近期性变化。' }}</p>
-              <section><strong>最近 Evidence</strong><article v-for="item in selectedObjective.evidence || []" :key="item.id"><span>{{ item.source_type }} · {{ masteryPercent(item.score) }}</span><p>{{ item.update_reason || '已记录一次学习证据' }}</p></article><small v-if="!selectedObjective.evidence?.length">还没有可解释证据。</small></section>
-              <section><strong>Misconceptions</strong><article v-for="item in selectedObjective.misconceptions || []" :key="item.id"><span>{{ item.code }} · {{ masteryPercent(item.confidence) }}</span><p>{{ item.description }}</p></article><small v-if="!selectedObjective.misconceptions?.length">当前没有 active misconception。</small></section>
-              <section v-if="selectedObjective.prerequisites?.length"><strong>Prerequisites</strong><p v-for="relation in selectedObjective.prerequisites" :key="relation.id">{{ relation.source_title }} · prerequisite · {{ masteryPercent(relation.confidence) }}</p></section>
+              <span class="section-eyebrow">为什么是这个状态</span><h3>{{ selectedObjective.title }}</h3><p>{{ selectedObjective.description }}</p>
+              <div class="detail-metrics"><div><span>掌握度</span><strong>{{ masteryPercent(selectedObjective.mastery) }}</strong></div><div><span>把握度</span><strong>{{ masteryPercent(selectedObjective.confidence) }}</strong></div></div>
+              <p class="confidence-explanation">{{ selectedObjective.confidence_explanation || '把握度会随着练习次数、回答是否稳定，以及最近是否练习而变化。' }}</p>
+              <section><strong>最近学习记录</strong><article v-for="item in selectedObjective.evidence || []" :key="item.id"><span>{{ item.source_type }} · {{ masteryPercent(item.score) }}</span><p>{{ item.update_reason || '已记录一次学习' }}</p></article><small v-if="!selectedObjective.evidence?.length">完成一次练习后，这里会出现学习记录。</small></section>
+              <section><strong>需要注意</strong><article v-for="item in selectedObjective.misconceptions || []" :key="item.id"><span>{{ item.code }} · {{ masteryPercent(item.confidence) }}</span><p>{{ item.description }}</p></article><small v-if="!selectedObjective.misconceptions?.length">暂时没有发现重复出现的问题。</small></section>
+              <section v-if="selectedObjective.prerequisites?.length"><strong>先学这些</strong><p v-for="relation in selectedObjective.prerequisites" :key="relation.id">{{ relation.source_title }} · {{ masteryPercent(relation.confidence) }}</p></section>
             </aside>
           </div>
         </section>
@@ -636,20 +605,20 @@ watch(view, nextView => {
 
       <template v-else>
         <section class="sources-view">
-          <div class="section-intro"><span class="section-eyebrow">EVIDENCE SOURCES</span><h2>Sources</h2><p>课程资料负责提供证据，题库负责提供可评估的学习行为。生成题只在找不到合适真实题时兜底。</p></div>
-          <div class="source-count-line"><span><FileText :size="15" /> {{ sources?.materials?.length || 0 }} 份资料</span><span><BookOpenCheck :size="15" /> {{ sources?.counts?.question_count || 0 }} 道题</span><span><CircleAlert :size="15" /> {{ sources?.counts?.unmatched_question_count || 0 }} 道未关联</span></div>
+          <div class="section-intro"><span class="section-eyebrow">课程准备</span><h2>资料</h2><p>上传教材和练习题。准备好后，我们会基于这些内容陪你练习。</p></div>
+          <div class="source-count-line"><span><FileText :size="15" /> {{ sources?.materials?.length || 0 }} 份资料</span><span><BookOpenCheck :size="15" /> {{ sources?.counts?.question_count || 0 }} 道题</span></div>
           <div v-if="viewLoading" class="inline-loading">正在读取 Sources</div>
           <div v-else class="sources-layout">
-            <section class="materials-source"><header><div><span class="section-eyebrow">COURSE MATERIALS</span><h3>资料</h3></div><span>PDF · DOCX · Markdown · TXT</span></header><MaterialWorkspace :course-id="courseId" @processed="onMaterialProcessed" /></section>
-            <section class="question-source"><header><div><span class="section-eyebrow">QUESTION BANK</span><h3>题库</h3></div><span>真实题目优先</span></header>
+            <section class="materials-source"><header><div><span class="section-eyebrow">教材与讲义</span><h3>学习资料</h3></div><span>PDF · DOCX · Markdown · TXT</span></header><MaterialWorkspace :course-id="courseId" @processed="onMaterialProcessed" /></section>
+            <section class="question-source"><header><div><span class="section-eyebrow">练习题</span><h3>题库</h3></div><span>优先使用你上传的题目</span></header>
               <form class="question-import-form" @submit.prevent="previewQuestionFile">
                 <label><span>批量导入题库</span><input type="file" accept=".json,.jsonl,.md,.markdown,.txt" @change="selectQuestionFile" /></label>
-                <small>支持 JSON / JSONL / Markdown / TXT；先预览 Objective 匹配、未关联和待复核，再确认导入。</small>
+                <small>支持 JSON / JSONL / Markdown / TXT；导入前会先检查每道题是否适合当前课程。</small>
                 <button type="submit" class="secondary-button" :disabled="importLoading || !questionFile">{{ importLoading ? '正在解析' : '预览题库' }}</button>
               </form>
               <section v-if="importPreview" class="import-preview">
                 <div class="import-summary"><strong>导入预览</strong><span>{{ importPreview.batch.parsed_count }} 条解析</span><span>{{ importPreview.batch.matched_count }} 条已匹配</span><span>{{ importPreview.batch.unmatched_count }} 条未匹配</span><span>{{ importPreview.batch.invalid_count }} 条待复核/无效</span></div>
-                <article v-for="item in importPreview.items" :key="item.raw_provenance?.line_or_index || item.content" class="import-item"><strong>{{ item.content }}</strong><small>{{ item.tagging?.status === 'matched' ? `匹配 ${item.objective_ids?.length || 0} 个 Objective` : (item.parse_error || '导入后可手动关联') }}</small></article>
+                <article v-for="item in importPreview.items" :key="item.raw_provenance?.line_or_index || item.content" class="import-item"><strong>{{ item.content }}</strong><small>{{ item.tagging?.status === 'matched' ? '已准备好用于练习' : (item.parse_error || '导入后可再确认') }}</small></article>
                 <button type="button" class="action-button" :disabled="importCommitting" @click="commitQuestionFile">{{ importCommitting ? '正在导入' : '确认导入这批题' }}</button>
               </section>
               <form class="question-form" @submit.prevent="addQuestion">
@@ -657,10 +626,10 @@ watch(view, nextView => {
                 <label><span>参考答案</span><textarea v-model="questionForm.answer" rows="3" placeholder="明确答案或评分依据"></textarea></label>
                 <div class="question-form-grid"><label><span>题型</span><select v-model="questionForm.question_type"><option v-for="(label, type) in questionTypeLabel" :key="type" :value="type">{{ label }}</option></select></label><label><span>难度</span><select v-model="questionForm.difficulty"><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label></div>
                 <label v-if="questionForm.question_type === 'multiple_choice'"><span>选项（每行一个）</span><textarea v-model="questionForm.options" rows="3" placeholder="选项 A\n选项 B\n选项 C"></textarea></label>
-                <label><span>关联 Objective</span><select v-model="questionForm.objective_id" required><option value="" disabled>选择学习目标</option><option v-for="objective in objectives" :key="objective.id" :value="objective.id">{{ objective.title }}</option></select></label>
+                <label><span>这道题练什么</span><select v-model="questionForm.objective_id" required><option value="" disabled>选择学习内容</option><option v-for="objective in objectives" :key="objective.id" :value="objective.id">{{ objective.title }}</option></select></label>
                 <button type="submit" class="action-button" :disabled="questionSubmitting || !questionForm.objective_id"><Upload :size="15" /> {{ questionSubmitting ? '正在保存' : '添加到题库' }}</button>
               </form>
-              <div class="question-list"><article v-for="question in sources?.questions || []" :key="question.id"><div><span class="question-type">{{ questionTypeLabel[question.question_type] || question.source_type }}</span><span>{{ question.difficulty }}</span><span>{{ question.status }}</span></div><strong>{{ question.content }}</strong><p>{{ question.objective_titles || '尚未关联 Objective' }}</p><div v-if="question.status === 'unmatched'" class="manual-tag"><select v-model="manualObjectiveByQuestion[question.id]"><option value="">选择 Objective 手动关联</option><option v-for="objective in objectives" :key="objective.id" :value="objective.id">{{ objective.title }}</option></select><button type="button" class="secondary-button" :disabled="!manualObjectiveByQuestion[question.id]" @click="tagQuestionManually(question)">关联</button></div></article><div v-if="!sources?.questions?.length" class="inline-empty">还没有题目。添加一题后，Learning Policy 会优先检索它。</div></div>
+              <div class="question-list"><article v-for="question in sources?.questions || []" :key="question.id"><div><span class="question-type">{{ questionTypeLabel[question.question_type] || question.source_type }}</span><span>{{ question.difficulty }}</span><span>{{ question.status }}</span></div><strong>{{ question.content }}</strong><p>{{ question.objective_titles || '尚未确定练习内容' }}</p><div v-if="question.status === 'unmatched'" class="manual-tag"><select v-model="manualObjectiveByQuestion[question.id]"><option value="">选择这道题练什么</option><option v-for="objective in objectives" :key="objective.id" :value="objective.id">{{ objective.title }}</option></select><button type="button" class="secondary-button" :disabled="!manualObjectiveByQuestion[question.id]" @click="tagQuestionManually(question)">准备题目</button></div></article><div v-if="!sources?.questions?.length" class="inline-empty">还没有题目。添加一题后，就可以开始练习。</div></div>
             </section>
           </div>
         </section>
@@ -690,7 +659,7 @@ watch(view, nextView => {
 .error-state button, .empty-action button, .inline-empty button { min-height: 34px; padding: 0 12px; color: var(--accent-deep); border: 1px solid var(--border-accent); border-radius: 8px; background: var(--accent-softer); font-size: 12px; }
 .section-intro h2 { margin-top: 5px; font-size: 25px; font-weight: 680; letter-spacing: -.03em; }
 .section-intro p { margin-top: 7px; color: var(--text-secondary); font-size: 13px; }
-.learn-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 52px; align-items: start; }
+.learn-layout { width: min(780px, 100%); display: grid; grid-template-columns: minmax(0, 1fr); gap: 34px; align-items: start; }
 .learn-primary { min-width: 0; }
 .action-surface { position: relative; margin-top: 25px; padding: clamp(22px, 4vw, 42px); border: 1px solid var(--border-strong); border-radius: 20px; background: var(--surface-primary); box-shadow: var(--shadow-medium); overflow: hidden; }
 .action-surface::before { position: absolute; inset: 0 auto 0 0; width: 4px; content: ''; background: var(--accent); }
@@ -719,7 +688,7 @@ watch(view, nextView => {
 .answer-field textarea:focus, .diagnostic-question textarea:focus, .question-form textarea:focus { border-color: var(--accent); box-shadow: var(--shadow-focus); }
 .answer-actions { align-items: flex-end; margin-top: 12px; }
 .answer-actions > span { color: var(--text-tertiary); font-size: 10px; }
-.empty-action { min-height: 280px; display: grid; place-content: center; justify-items: center; gap: 11px; margin-top: 25px; border-block: 1px solid var(--border-subtle); color: var(--text-tertiary); text-align: center; }
+.empty-action { min-height: 280px; display: grid; place-content: center; justify-items: center; gap: 11px; margin-top: 25px; padding: 28px; border: 1px solid var(--border-subtle); border-radius: 20px; background: var(--surface-primary); color: var(--text-tertiary); text-align: center; box-shadow: var(--shadow-small); }
 .empty-action h3 { color: var(--text-primary); font-size: 18px; }
 .empty-action p { max-width: 350px; font-size: 12px; }
 .evidence-result { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(180px, .7fr); gap: 13px; align-items: start; margin-top: 18px; padding: 16px; border-top: 1px solid rgba(36, 138, 61, .25); border-bottom: 1px solid rgba(36, 138, 61, .25); background: linear-gradient(90deg, rgba(36, 138, 61, .06), transparent); }
@@ -743,7 +712,7 @@ watch(view, nextView => {
 .diagnostic-question textarea { background: var(--surface-primary); }
 .diagnostic-surface form > .action-button { margin-top: 16px; }
 .diagnostic-complete { display: flex; align-items: center; gap: 9px; margin-top: 15px; color: var(--success); font-size: 12px; }
-.tutor-context { position: sticky; top: 28px; padding-top: 4px; }
+.tutor-context { padding: 24px; border: 1px solid var(--border-subtle); border-radius: 18px; background: var(--surface-secondary); }
 .context-heading { display: flex; align-items: center; gap: 8px; color: var(--accent-deep); font-size: 12px; font-weight: 750; }
 .tutor-context > p { margin-top: 12px; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
 .context-objective { display: grid; gap: 5px; margin-top: 25px; padding-top: 18px; border-top: 1px solid var(--border-subtle); }
@@ -774,7 +743,7 @@ watch(view, nextView => {
 .inline-loading, .inline-empty { padding: 30px 0; color: var(--text-tertiary); font-size: 12px; text-align: center; }
 .source-count-line { gap: 22px; }.source-count-line span { color: var(--text-secondary); }.sources-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, .85fr); gap: 36px; margin-top: 26px; align-items: start; }.sources-layout section { min-width: 0; }.sources-layout section > header { padding-bottom: 14px; border-bottom: 1px solid var(--border-subtle); }.sources-layout section > header > span { color: var(--text-tertiary); font-size: 10px; }
 .materials-source :deep(.materials-workspace) { margin-top: 15px; }.question-form { display: grid; gap: 11px; margin-top: 15px; padding-bottom: 20px; border-bottom: 1px solid var(--border-subtle); }.question-form label { display: grid; gap: 5px; }.question-form label > span { color: var(--text-secondary); font-size: 10px; font-weight: 650; }.question-form textarea, .question-form select { background: var(--surface-secondary); }.question-form select { width: 100%; height: 38px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 12px; }.question-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 9px; }.question-form .action-button { justify-self: start; min-height: 37px; }.question-list { display: grid; }.question-list article { display: grid; gap: 6px; padding: 13px 0; border-bottom: 1px solid var(--border-subtle); }.question-list article > div { display: flex; gap: 8px; color: var(--text-tertiary); font-size: 10px; }.question-type { color: var(--accent-deep); }.question-list article strong { color: var(--text-primary); font-size: 12px; line-height: 1.55; }.question-list article p { color: var(--text-tertiary); font-size: 10px; }
-@media (max-width: 900px) { .learn-layout, .progress-layout, .sources-layout { grid-template-columns: 1fr; gap: 30px; }.tutor-context { position: static; padding-top: 20px; border-top: 1px solid var(--border-subtle); }.objective-detail { padding: 22px 0 0; border-top: 1px solid var(--border-subtle); border-left: 0; }.sources-layout { gap: 42px; } }
+@media (max-width: 900px) { .progress-layout, .sources-layout { grid-template-columns: 1fr; gap: 30px; }.objective-detail { padding: 22px 0 0; border-top: 1px solid var(--border-subtle); border-left: 0; }.sources-layout { gap: 42px; } }
 @media (max-width: 620px) { .adaptive-tutor { padding: 22px 14px 46px; }.adaptive-header { flex-direction: column; gap: 15px; }.adaptive-header-meta { justify-content: flex-start; }.adaptive-nav { gap: 15px; overflow-x: auto; }.adaptive-nav button { white-space: nowrap; }.action-surface { padding: 22px 18px; }.action-start-row, .answer-actions, .diagnostic-strip { align-items: stretch; flex-direction: column; }.action-button, .quiet-button { align-self: flex-start; }.evidence-result { grid-template-columns: 30px minmax(0, 1fr); }.evidence-result > small { grid-column: 1 / -1; }.objective-row { grid-template-columns: auto minmax(0, 1fr); }.objective-values { grid-column: 2; justify-items: start; display: flex; align-items: baseline; gap: 7px; }.question-form-grid { grid-template-columns: 1fr; } }
 .choice-list { display: grid; gap: 8px; margin-top: 16px; }
 .choice-option { display: flex; align-items: center; gap: 9px; padding: 11px 12px; border: 1px solid var(--border-subtle); border-radius: 9px; color: var(--text-secondary); background: var(--surface-secondary); font-size: 13px; }

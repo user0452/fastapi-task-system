@@ -14,21 +14,16 @@ const LEGACY_PANEL_TO_VIEW = {
 
 
 export function safePostLoginRoute(value) {
-  if (value === '/today') return '/today'
+  if (value === '/today' || value === '/home') return '/home'
   if (typeof value !== 'string') return ''
   const match = value.match(/^\/learn\/([1-9]\d*)(?:\?([^#]*))?$/)
   if (!match) return ''
 
-  const result = new URLSearchParams()
   const incoming = new URLSearchParams(match[2] || '')
   const view = incoming.get('view') || LEGACY_PANEL_TO_VIEW[incoming.get('panel')]
-  if (['learn', 'progress', 'sources'].includes(view)) result.set('view', view)
-  for (const key of ['material_id', 'chunk']) {
-    const field = incoming.get(key)
-    if (field && /^\d+$/.test(field)) result.set(key, field)
-  }
-  const query = result.toString()
-  return `/learn/${match[1]}${query ? `?${query}` : ''}`
+  if (view === 'progress') return `/progress/${match[1]}`
+  if (view === 'sources') return `/materials/${match[1]}`
+  return `/learn/${match[1]}`
 }
 
 

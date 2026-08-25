@@ -143,7 +143,7 @@ Tutor 不可以任意写 mastery、confidence、prerequisite、review schedule�
 
 ## UI and migration boundary
 
-默认课程 UI 只有 Learn、Progress、Sources。Course Goal/Exam Date 仍可作为 Policy constraint，但不再预生成 28 天假精确 Roadmap。Roadmap、Resource、generic Memory、Knowledge Graph Canvas 和旧 Agent 主线已退出正式运行时；历史表仅作为数据迁移兼容边界，不被 V2 学习服务读取。
+默认产品 UI 为 Home、Learn、Progress、Materials、Settings。用户先看到下一步学习建议；Progress 的细节才展示学习记录、错误模式和前置内容。Course Goal/Exam Date 仍可作为 Policy constraint，但不再预生成 28 天假精确 Roadmap。Roadmap、Resource、generic Memory、Knowledge Graph Canvas 和旧 Agent 主线已退出正式运行时；历史表仅作为数据迁移兼容边界，不被 V2 学习服务读取。
 
 ## Reliability
 

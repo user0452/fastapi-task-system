@@ -27,7 +27,7 @@ async function handleLogin() {
 
   if (result.success) {
     showToast({ type: 'success', message: '登录成功' })
-    router.push(safePostLoginRoute(route.query.redirect) || '/today')
+    router.push(safePostLoginRoute(route.query.redirect) || '/home')
   } else {
     showToast({ type: 'error', message: result.message })
   }
@@ -65,20 +65,20 @@ async function handleRegister() {
 <template>
   <div class="login-page">
     <div class="login-hero">
-      <h1>A3 专科学习 AI</h1>
-      <p>每门课程都有自己的对话、知识库、练习与掌握记录。</p>
+      <h1>A3 学习</h1>
+      <p>上传课程资料，从适合你的下一步开始学习。</p>
       <div class="login-flow" aria-label="课程学习流程">
-        <span>课程 AI</span>
-        <span>资料知识库</span>
-        <span>聊天内练习</span>
-        <span>掌握与计划</span>
+        <span>添加课程</span>
+        <span>上传资料</span>
+        <span>开始学习</span>
+        <span>看到进步</span>
       </div>
     </div>
 
     <div class="login-form-container">
       <div class="login-card">
         <h2>{{ activeTab === 'login' ? '继续学习' : '建立学习账号' }}</h2>
-        <p class="subtitle">{{ activeTab === 'login' ? '登录后回到课程 AI 工作区' : '注册后创建第一门课程 AI' }}</p>
+        <p class="subtitle">{{ activeTab === 'login' ? '继续今天的学习' : '注册后创建第一门课程' }}</p>
 
         <div class="login-tabs">
           <button

@@ -60,8 +60,8 @@ async function createCourse() {
     await courses.select(course.id)
     Object.assign(form, { name: '', goal: '', exam_at: '', daily_minutes: 30 })
     creatorOpen.value = false
-  await router.push(`/learn/${course.id}?view=sources`)
-    showToast({ type: 'success', message: '课程助手已创建' })
+    await router.push(`/materials/${course.id}`)
+    showToast({ type: 'success', message: '课程已创建，先添加一份资料吧' })
   } catch (error) {
     showToast({ type: 'error', message: error.message })
   } finally {
@@ -117,8 +117,8 @@ onMounted(async () => {
       <button class="mobile-icon" type="button" title="打开课程栏" aria-label="打开课程栏" @click="railOpen = true">
         <Menu :size="19" />
       </button>
-      <span><Sparkles :size="15" /> A3 学习 AI</span>
-      <span class="mobile-course">{{ courses.current?.name || '今日总览' }}</span>
+      <span><Sparkles :size="15" /> A3 学习</span>
+      <span class="mobile-course">{{ courses.current?.name || '首页' }}</span>
     </header>
 
     <transition name="rail-slide">

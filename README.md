@@ -44,8 +44,10 @@ Tutor 是教学交互层，负责解释、举例、提问、反馈和 scaffold�
 每门课程主界面只有三个区域：
 
 - `Learn`：展示 Next Action，完成讲解、题目、反馈和重试。
-- `Progress`：查看 Objective 的 mastery、confidence、Evidence、misconception 和 prerequisite。
-- `Sources`：上传课程资料和 Question Bank，查看来源、关联和 unmatched 题目。
+- `Home`：一眼看到当前最值得完成的学习步骤与课程入口。
+- `Learn`：完成一项学习任务、练习并获得简短 Tutor 帮助。
+- `Progress`：用已掌握、学习中、薄弱和未验证解释学习状态；细节中可查看学习记录与前置内容。
+- `Materials`：上传课程资料和题库，查看处理进度。
 
 主页以跨课程 `Next Best Learning Action` 为入口，不再把长期 Roadmap、知识图谱或聊天窗口作为产品主叙事。
 
@@ -56,7 +58,7 @@ app/modules/adaptive/          Curriculum、Question、Evidence、Student Model�
 app/integrations/llm/          Objective extraction 和 LLM 结构化输出
 app/modules/materials/         资料解析、分块、索引和课程 provenance
 app/evaluation/adaptive.py     冻结 fixture 的 Adaptive Learning Benchmark
-frontend/src/features/adaptive Learn / Progress / Sources
+frontend/src/features/adaptive Home / Learn / Progress / Materials
 alembic/versions/               V2 schema migration；早期 revision 保留历史库 bridge
 docs/adaptive-learning-v2.md    领域模型和运行边界
 docs/evaluation.md               benchmark、baseline、指标和限制
@@ -89,7 +91,7 @@ $env:VITE_API_TARGET='http://127.0.0.1:8010'
 npm run dev -- --host 127.0.0.1 --port 5175
 ```
 
-打开 `http://127.0.0.1:5175/#/today`。健康检查为 `/health/live` 和 `/health/ready`。
+打开 `http://127.0.0.1:5175/#/home`。健康检查为 `/health/live` 和 `/health/ready`。
 
 离线演示可使用：
 

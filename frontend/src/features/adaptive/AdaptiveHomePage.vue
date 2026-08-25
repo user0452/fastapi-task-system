@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ArrowRight, CircleAlert, RefreshCw, Sparkles, Target } from 'lucide-vue-next'
+import { CircleAlert, RefreshCw, Sparkles, Target } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { getAdaptiveOverview } from '../../api/adaptive'
 import { useCourseStore } from '../../stores/course'
+import CourseCard from './components/CourseCard.vue'
+import NextActionCard from './components/NextActionCard.vue'
 
 
 const router = useRouter()
@@ -33,8 +35,8 @@ function actionLabel(action) {
   return actionLabels[action?.action_type] || action?.action_type || '等待学习证据'
 }
 
-function openCourse(courseId, view = 'learn') {
-  router.push({ path: `/learn/${courseId}`, query: { view } })
+function openCourse(courseId, destination = 'learn') {
+  router.push(destination === 'materials' ? `/materials/${courseId}` : `/learn/${courseId}`)
 }
 
 async function load() {
@@ -49,7 +51,7 @@ async function load() {
         if (response.code !== 200) throw new Error(response.message || '读取失败')
         return { course, ...response.data, next_action: response.data?.next_action || null }
       } catch (requestError) {
-        return { course, next_action: null, error: requestError.message || 'Adaptive Tutor 读取失败' }
+        return { course, next_action: null, error: requestError.message || '课程暂时无法读取' }
       }
     }))
     courseRows.value = results
@@ -67,54 +69,40 @@ onMounted(load)
   <div class="adaptive-home">
     <header class="home-header">
       <div>
-        <span class="home-kicker"><Sparkles :size="14" /> EVIDENCE-BACKED LEARNING</span>
-        <h1>今天，下一步学什么？</h1>
-        <p>每门课程都从真实学习证据出发，持续选择当前最值得完成的一个动作。</p>
+        <span class="home-kicker"><Sparkles :size="14" /> 今天的学习</span>
+        <h1>欢迎回来，<br />从这一小步开始。</h1>
+        <p>选择一门课程，我们会带你完成现在最值得学习的内容。</p>
       </div>
       <button type="button" class="home-refresh" :disabled="loading" aria-label="刷新下一动作" @click="load">
         <RefreshCw :size="16" /> 刷新
       </button>
     </header>
 
-    <div v-if="loading" class="home-state" role="status">正在读取每门课程的 Student Model</div>
+    <div v-if="loading" class="home-state" role="status">正在准备你的学习建议</div>
     <div v-else-if="error" class="home-state home-error" role="alert">
       <CircleAlert :size="24" /><strong>{{ error }}</strong><button type="button" @click="load">重新读取</button>
     </div>
     <div v-else-if="!courseRows.length" class="home-state">
-      <Target :size="30" /><h2>先创建一门课程</h2><p>从左侧新建课程，然后上传资料与题库。</p>
+      <Target :size="30" /><h2>从第一门课程开始</h2><p>点击左侧“＋”创建课程，再上传教材或练习题。</p>
     </div>
     <main v-else>
-      <section v-if="primary" class="home-next-action">
-        <div class="next-copy">
-          <span class="home-kicker">NEXT BEST LEARNING ACTION</span>
-          <p class="next-course">{{ primary.course.name }}</p>
-          <h2>{{ primary.next_action ? (primary.next_action.objective_title || '当前学习目标') : '建立课程学习目标' }}</h2>
-          <p class="next-reason">{{ primary.next_action?.reason || '上传课程资料并建立可评估的 Learning Objective。' }}</p>
-          <button type="button" class="home-primary" @click="openCourse(primary.course.id)">
-            {{ primary.next_action ? '开始下一动作' : '去建立 Curriculum' }} <ArrowRight :size="17" />
-          </button>
-        </div>
-        <div class="next-meta">
-          <span>{{ actionLabel(primary.next_action) }}</span>
-          <strong>{{ primary.next_action?.expected_minutes || primary.course.daily_minutes || 25 }}</strong>
-          <small>预计分钟</small>
-          <em>{{ primary.curriculum?.objective_count || 0 }} 个 Learning Objective</em>
-        </div>
-      </section>
+      <NextActionCard
+        v-if="primary"
+        :entry="primary"
+        :action-label="actionLabel"
+        @start="openCourse(primary.course.id, primary.next_action ? 'learn' : 'materials')"
+      />
 
       <section class="home-courses" aria-labelledby="course-list-title">
-        <header><div><span class="home-kicker">YOUR COURSES</span><h2 id="course-list-title">课程队列</h2></div><span>{{ courseRows.length }} 门课程</span></header>
+        <header><div><span class="home-kicker">我的课程</span><h2 id="course-list-title">继续学习</h2></div><span>{{ courseRows.length }} 门课程</span></header>
         <div class="course-list">
-          <article v-for="item in courseRows" :key="item.course.id" class="course-row">
-            <div class="course-row-mark">{{ item.course.name.slice(0, 1) }}</div>
-            <div class="course-row-copy">
-              <strong>{{ item.course.name }}</strong>
-              <span v-if="item.next_action">{{ actionLabel(item.next_action) }} · {{ item.next_action.objective_title || '待选目标' }}</span>
-              <span v-else-if="item.error" class="row-error">{{ item.error }}</span>
-              <span v-else>等待课程资料或初始诊断</span>
-            </div>
-            <button type="button" class="course-row-action" :aria-label="`进入${item.course.name}`" @click="openCourse(item.course.id)"><ArrowRight :size="18" /></button>
-          </article>
+          <CourseCard
+            v-for="item in courseRows"
+            :key="item.course.id"
+            :entry="item"
+            :action-label="actionLabel"
+            @open="openCourse(item.course.id)"
+          />
         </div>
       </section>
     </main>
