@@ -214,6 +214,43 @@ def invoke_agent_content(messages: Sequence[BaseMessage], **kwargs: Any) -> str:
     return str(invoke_agent_messages(messages, **kwargs).message.content or "").strip()
 
 
+def _is_thinking_tool_choice_incompatibility(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "tool_choice" in message and "thinking" in message and "support" in message
+
+
+def _invoke_without_thinking(
+    model: Any,
+    prompt: str | None,
+    conversation: Sequence[BaseMessage],
+    schema: type,
+):
+    thinking_disabled = {"thinking": {"type": "disabled"}}
+    model_copy = getattr(model, "model_copy", None)
+    if callable(model_copy):
+        # ChatOpenAI retains constructor-level `extra_body` while create_agent
+        # binds its response-format tool. A runnable-level bind can be lost by
+        # that later bind_tools call, so prefer a model copy when available.
+        non_thinking_model = model_copy(update={"extra_body": thinking_disabled})
+    else:
+        bind = getattr(model, "bind", None)
+        if not callable(bind):
+            raise RuntimeError("当前模型不支持关闭 Thinking 模式后的结构化重试")
+        non_thinking_model = bind(extra_body=thinking_disabled)
+    agent = create_agent(
+        non_thinking_model,
+        tools=[],
+        system_prompt=prompt,
+        response_format=schema,
+    )
+    agent_input: Any = {"messages": list(conversation)}
+    state = agent.invoke(agent_input)
+    response = state.get("structured_response")
+    if response is None:
+        raise RuntimeError("关闭 Thinking 模式后未返回结构化结果")
+    return response
+
+
 def invoke_agent_structured(
     messages: Sequence[BaseMessage],
     schema: type,
@@ -221,8 +258,9 @@ def invoke_agent_structured(
     model=None,
 ):
     prompt, conversation = _split_messages(messages)
+    selected_model = model or get_llm()
     agent = create_agent(
-        model or get_llm(),
+        selected_model,
         tools=[],
         system_prompt=prompt,
         response_format=schema,
@@ -243,9 +281,23 @@ def invoke_agent_structured(
         )
         inc_counter("a3_llm_requests_total", mode="structured", status="completed")
         return response
-    except Exception:
-        inc_counter("a3_llm_requests_total", mode="structured", status="failed")
-        raise
+    except Exception as exc:
+        if not _is_thinking_tool_choice_incompatibility(exc):
+            inc_counter("a3_llm_requests_total", mode="structured", status="failed")
+            raise
+        try:
+            response = _invoke_without_thinking(selected_model, prompt, conversation, schema)
+        except Exception:
+            inc_counter("a3_llm_requests_total", mode="structured", status="failed")
+            raise
+        inc_counter(
+            "a3_llm_tokens_total",
+            _estimated_tokens(response),
+            direction="output",
+            mode="structured_non_thinking_retry",
+        )
+        inc_counter("a3_llm_requests_total", mode="structured_non_thinking_retry", status="completed")
+        return response
     finally:
         observe("a3_llm_request_duration_seconds", perf_counter() - started, mode="structured")
 
